@@ -1,4 +1,5 @@
 import { Controller, Post, Get, Delete, Body, Param, UseGuards, Req } from '@nestjs/common'
+import { Throttle } from '@nestjs/throttler'
 import { SocialUseCase } from '@application/social/social.usecase'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 
@@ -9,6 +10,7 @@ export class SocialController {
   // ── 좋아요 ──
 
   /** 좋아요 토글 (인증 필요) */
+  @Throttle({ default: { ttl: 60000, limit: 30 } })  // 분당 30회
   @Post('likes/:episodeId')
   @UseGuards(JwtAuthGuard)
   async toggleLike(@Req() req: any, @Param('episodeId') episodeId: string) {
@@ -48,6 +50,7 @@ export class SocialController {
   // ── 댓글 ──
 
   /** 댓글 작성 (인증 필요) */
+  @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Post('comments/:episodeId')
   @UseGuards(JwtAuthGuard)
   async createComment(@Req() req: any, @Param('episodeId') episodeId: string, @Body() body: { content: string }) {

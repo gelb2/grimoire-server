@@ -1,4 +1,5 @@
 import { Controller, Post, Body, Get, Req, UseGuards } from '@nestjs/common'
+import { Throttle } from '@nestjs/throttler'
 import { AuthUseCase } from '@application/auth/auth.usecase'
 import { RegisterDto, LoginDto } from '@adapter/inbound/http/dto/auth.dto'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
@@ -7,6 +8,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 export class AuthController {
   constructor(private readonly authUseCase: AuthUseCase) {}
 
+  @Throttle({ default: { ttl: 3600000, limit: 5 } })  // 시간당 5회
   @Post('register')
   async register(@Body() dto: RegisterDto) {
     const { author, token } = await this.authUseCase.register(dto)
@@ -22,6 +24,7 @@ export class AuthController {
     }
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Post('login')
   async login(@Body() dto: LoginDto) {
     const { author, token } = await this.authUseCase.login(dto)

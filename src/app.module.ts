@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common'
+import { APP_GUARD } from '@nestjs/core'
 import { JwtModule } from '@nestjs/jwt'
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler'
 
 // 인프라
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
@@ -53,6 +55,10 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
       secret: process.env.JWT_SECRET || 'grimoire-dev-secret',
       signOptions: { expiresIn: '7d' },
     }),
+    ThrottlerModule.forRoot([{
+      ttl: 60000,   // 기본: 1분
+      limit: 60,    // 기본: 분당 60회
+    }]),
   ],
   controllers: [
     HealthController,
@@ -91,6 +97,9 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     NovelAnalysisUseCase,
     SocialUseCase,
     JwtAuthGuard,
+
+    // 글로벌 Rate Limiting 가드
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
 
     // 포트 → 어댑터 바인딩 (토큰 기반 DI)
     { provide: 'AuthorRepositoryPort', useClass: PrismaAuthorRepository },
