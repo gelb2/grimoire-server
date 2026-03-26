@@ -9,8 +9,12 @@ export function validateEnv(): void {
     process.exit(1)
   }
 
-  // JWT_SECRET: 선택 (미설정 시 개발용 기본값 사용)
+  // JWT_SECRET: 프로덕션에서 필수 — 미설정 시 서버 부팅 차단
   if (!process.env.JWT_SECRET) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('CRITICAL: JWT_SECRET이 프로덕션에서 설정되지 않았습니다. 서버를 시작할 수 없습니다.')
+      process.exit(1)
+    }
     console.warn('JWT_SECRET 미설정 — 개발용 기본값 사용 (프로덕션에서는 반드시 설정할 것)')
   }
 

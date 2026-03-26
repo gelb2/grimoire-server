@@ -1,4 +1,4 @@
-import { bakeThemeToCSS } from './theme-baker'
+import { bakeThemeToCSS, sanitizeCssValue } from './theme-baker'
 
 describe('bakeThemeToCSS', () => {
   it('테마 JSON을 CSS 변수로 변환한다', () => {
@@ -55,10 +55,57 @@ describe('bakeThemeToCSS', () => {
     expect(css).toContain('--u-border:')
   })
 
-  it('알 수 없는 폰트는 원본 값 그대로 사용한다', () => {
+  it('허용되지 않은 폰트는 무시한다 (인젝션 방지)', () => {
     const theme = { fontBody: 'Pretendard', fontHeading: 'Arial' }
     const css = bakeThemeToCSS(theme, 'custom-font')
-    expect(css).toContain('--u-serif: Pretendard;')
-    expect(css).toContain('--u-sans: Arial;')
+    expect(css).not.toContain('Pretendard')
+    expect(css).not.toContain('Arial')
+  })
+
+  it('CSS 인젝션 공격을 차단한다', () => {
+    const theme = {
+      bgPrimary: '#0a0a0a; } body { background: red',
+      textPrimary: 'expression(alert(1))',
+      accent: 'url(javascript:alert(1))',
+    }
+    const css = bakeThemeToCSS(theme, 'attacker')
+    expect(css).not.toContain('expression')
+    expect(css).not.toContain('javascript')
+    expect(css).not.toContain('alert')
+    expect(css).not.toContain('background: red')
+  })
+})
+
+describe('sanitizeCssValue', () => {
+  it('유효한 hex 색상을 허용한다', () => {
+    expect(sanitizeCssValue('#fff')).toBe('#fff')
+    expect(sanitizeCssValue('#0a0a0a')).toBe('#0a0a0a')
+    expect(sanitizeCssValue('#FF00FF')).toBe('#FF00FF')
+  })
+
+  it('유효한 rgb/hsl 색상을 허용한다', () => {
+    expect(sanitizeCssValue('rgb(255, 0, 0)')).toBe('rgb(255, 0, 0)')
+    expect(sanitizeCssValue('hsl(120, 50%, 50%)')).toBe('hsl(120, 50%, 50%)')
+  })
+
+  it('명명된 색상을 허용한다', () => {
+    expect(sanitizeCssValue('red')).toBe('red')
+    expect(sanitizeCssValue('transparent')).toBe('transparent')
+  })
+
+  it('세미콜론이 포함된 값을 차단한다', () => {
+    expect(sanitizeCssValue('#fff; } body { display: none')).toBeNull()
+  })
+
+  it('url()을 차단한다', () => {
+    expect(sanitizeCssValue('url(http://evil.com)')).toBeNull()
+  })
+
+  it('expression()을 차단한다', () => {
+    expect(sanitizeCssValue('expression(alert(1))')).toBeNull()
+  })
+
+  it('javascript:를 차단한다', () => {
+    expect(sanitizeCssValue('javascript:alert(1)')).toBeNull()
   })
 })

@@ -64,13 +64,14 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
   }
 }
 
-function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; credits: number; createdAt: Date }): Author {
+function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; role: string; credits: number; createdAt: Date }): Author {
   return {
     id: row.id,
     slug: row.slug,
     name: row.name,
     email: row.email,
     passwordHash: row.passwordHash ?? undefined,
+    role: row.role,
     credits: row.credits,
     createdAt: row.createdAt,
   }

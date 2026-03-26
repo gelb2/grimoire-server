@@ -48,6 +48,7 @@ import { PrismaSocialRepository } from '@adapter/outbound/persistence/prisma-soc
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
 import { PayappAdapter } from '@adapter/outbound/payment/payapp.adapter'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
+import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
 
 @Module({
   imports: [
@@ -97,6 +98,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     NovelAnalysisUseCase,
     SocialUseCase,
     JwtAuthGuard,
+    AdminGuard,
 
     // 글로벌 Rate Limiting 가드
     { provide: APP_GUARD, useClass: ThrottlerGuard },
