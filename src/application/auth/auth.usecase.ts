@@ -82,8 +82,12 @@ export class AuthUseCase {
       author = await this.authorRepo.findByEmail(payload.email)
 
       if (!author) {
-        // 신규 가입
-        const slug = payload.email.split('@')[0].toLowerCase().replace(/[^a-z0-9-]/g, '-')
+        // 신규 가입 — 슬러그 충돌 시 랜덤 4자리 접미사 추가
+        let slug = payload.email.split('@')[0].toLowerCase().replace(/[^a-z0-9-]/g, '-')
+        const existingSlug = await this.authorRepo.findBySlug(slug)
+        if (existingSlug) {
+          slug = `${slug}-${Math.random().toString(36).substring(2, 6)}`
+        }
         author = await this.authorRepo.create({
           email: payload.email,
           name: payload.name || payload.email.split('@')[0],

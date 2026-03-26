@@ -44,6 +44,7 @@ import { PrismaCreditRepository } from '@adapter/outbound/persistence/prisma-cre
 import { PrismaReaderRepository } from '@adapter/outbound/persistence/prisma-reader.repository'
 import { PrismaSocialRepository } from '@adapter/outbound/persistence/prisma-social.repository'
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
+import { PayappAdapter } from '@adapter/outbound/payment/payapp.adapter'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 
 @Module({
@@ -99,6 +100,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     { provide: 'ReaderRepositoryPort', useClass: PrismaReaderRepository },
     { provide: 'ClaudeApiPort', useClass: ClaudeThemeAdapter },
     { provide: 'SocialRepositoryPort', useClass: PrismaSocialRepository },
+    { provide: 'PaymentGatewayPort', useClass: PayappAdapter },
   ],
 })
 export class AppModule {}

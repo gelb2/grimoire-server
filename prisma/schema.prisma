@@ -151,3 +151,17 @@ model Comment {
 
   @@map("comments")
 }
+
+model Payment {
+  id            String    @id @default(uuid())
+  authorId      String    @map("author_id")
+  productId     String    @map("product_id")
+  amount        Int
+  credits       Int
+  payappTradeNo String?   @unique @map("payapp_trade_no")
+  status        String    @default("pending")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  completedAt   DateTime? @map("completed_at")
+
+  @@map("payments")
+}
