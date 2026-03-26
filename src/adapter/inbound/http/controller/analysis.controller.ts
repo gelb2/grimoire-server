@@ -1,6 +1,9 @@
-import { Controller, Post, Get, Body, Param, UseGuards } from '@nestjs/common'
+import { Controller, Post, Get, Body, Param, UseGuards, BadRequestException } from '@nestjs/common'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
+
+const RAW_TEXT_MIN_LENGTH = 10
+const RAW_TEXT_MAX_LENGTH = 50000
 
 @Controller('analysis')
 export class AnalysisController {
@@ -10,6 +13,7 @@ export class AnalysisController {
   @UseGuards(JwtAuthGuard)
   @Post('index')
   async indexEpisode(@Body() body: { episodeId: string; workId: string; rawText: string }) {
+    this.validateRawText(body.rawText)
     return this.analysisUseCase.indexEpisode(body.episodeId, body.workId, body.rawText)
   }
 
@@ -19,6 +23,7 @@ export class AnalysisController {
   async analyzeEpisode(
     @Body() body: { workId: string; newEpisodeText: string; types?: ('consistency' | 'tone' | 'character')[] },
   ) {
+    this.validateRawText(body.newEpisodeText)
     return this.analysisUseCase.analyzeNewEpisode(body.workId, body.newEpisodeText, body.types)
   }
 
@@ -27,5 +32,18 @@ export class AnalysisController {
   @Get('status/:workId')
   async getStatus(@Param('workId') workId: string) {
     return this.analysisUseCase.getIndexStatus(workId)
+  }
+
+  /** rawText 입력 검증 (10~50000자) */
+  private validateRawText(text: string | undefined): void {
+    if (!text || typeof text !== 'string') {
+      throw new BadRequestException('텍스트가 필요합니다')
+    }
+    if (text.length < RAW_TEXT_MIN_LENGTH) {
+      throw new BadRequestException(`텍스트는 최소 ${RAW_TEXT_MIN_LENGTH}자 이상이어야 합니다`)
+    }
+    if (text.length > RAW_TEXT_MAX_LENGTH) {
+      throw new BadRequestException(`텍스트는 최대 ${RAW_TEXT_MAX_LENGTH}자까지 허용됩니다`)
+    }
   }
 }
