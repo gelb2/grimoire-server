@@ -17,7 +17,8 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "seed:deerdevil": "npx tsx scripts/seed-deerdevil.ts"
+    "seed:deerdevil": "npx tsx scripts/seed-deerdevil.ts",
+    "seed:classics": "npx tsx scripts/seed-classics.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
