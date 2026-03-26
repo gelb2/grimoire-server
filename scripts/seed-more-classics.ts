@@ -14,6 +14,13 @@ import { PrismaClient } from '@prisma/client'
 import * as bcrypt from 'bcryptjs'
 import { parseEpisodeBlocks } from '../src/lib/md-parser'
 
+// DATABASE_URL 환경변수 확인
+if (!process.env.DATABASE_URL) {
+  console.error('ERROR: DATABASE_URL 환경변수가 필요합니다.')
+  console.error('실행 예시: DATABASE_URL="postgresql://..." npx tsx scripts/seed-more-classics.ts')
+  process.exit(1)
+}
+
 const prisma = new PrismaClient()
 
 // ── 작품 데이터 정의 ──────────────────────────────────────

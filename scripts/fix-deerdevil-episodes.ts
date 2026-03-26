@@ -9,6 +9,13 @@
 
 import { PrismaClient } from '@prisma/client'
 
+// DATABASE_URL 환경변수 확인
+if (!process.env.DATABASE_URL) {
+  console.error('ERROR: DATABASE_URL 환경변수가 필요합니다.')
+  console.error('실행 예시: DATABASE_URL="postgresql://..." npx tsx scripts/fix-deerdevil-episodes.ts')
+  process.exit(1)
+}
+
 const prisma = new PrismaClient()
 
 const EPISODE_MAP = [
