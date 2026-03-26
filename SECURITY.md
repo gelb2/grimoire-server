@@ -44,6 +44,44 @@
 - 잔액 음수 방지: 트랜잭션 내 체크 + 에러 throw
 - credit_logs: INSERT only (수정/삭제 불가 — 감사 로그)
 
+### 결제 원자성 (Atomicity) — 절대 원칙
+
+> **금융 트랜잭션의 핵심: 전부 성공하거나, 전부 실패하거나. 중간 상태는 존재하지 않는다.**
+
+결제 웹훅 처리 시 아래 3개 작업을 **단일 Prisma `$transaction`** 으로 묶어야 한다:
+
+1. Payment 상태 → `completed` 변경
+2. Author 크레딧 잔액 증가 (`{ increment: N }`)
+3. CreditLog 기록 생성
+
+```typescript
+// src/application/payment/payment.usecase.ts — processWebhook()
+await this.prisma.$transaction(async (tx) => {
+  await tx.payment.update({ ... status: 'completed' })
+  await tx.author.update({ ... credits: { increment } })
+  await tx.creditLog.create({ ... })
+})
+```
+
+**왜 반드시 원자적이어야 하는가:**
+- Payment만 completed 되고 크레딧이 안 들어가면 → 사용자가 돈만 낸 상황
+- 크레딧만 들어가고 Payment가 pending이면 → 웹훅 재시도 시 크레딧 중복 부여
+- 어느 한쪽이라도 실패하면 전체 롤백 → 재시도 가능한 안전한 상태 유지
+
+**관련 코드:**
+- `src/application/payment/payment.usecase.ts` — `processWebhook()`
+- `src/adapter/outbound/persistence/prisma-credit.repository.ts` — `adjustCredits()` (크레딧 차감도 동일 원칙)
+- `src/application/payment/payment.usecase.spec.ts` — 원자성 검증 테스트
+
+**참고:** Tajook 프로젝트의 크레딧 시스템에서 동일 패턴 사용.
+
+### 결제 보안
+
+- PAYAPP 웹훅: HMAC-SHA256 서명 검증 필수 (`src/adapter/outbound/payment/payapp.adapter.ts`)
+- 중복 웹훅 방지: tradeNo 기반 멱등성 (이미 completed면 무시)
+- 결제 기록: Payment 테이블에 전부 기록 (감사 추적)
+- 결제 시작 → 완료 사이: pending 상태로 추적
+
 ### 재가입 방지
 - signup_history: OAuth provider ID로 추적
 - 재가입 시 보너스 크레딧 미지급

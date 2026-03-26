@@ -147,7 +147,23 @@ function tryParseJSON(raw: string): ThemeJSON {
 
 ---
 
-## 8. 빌드 환경
+## 8. 결제/크레딧 — 원자성 원칙
+
+> **절대 규칙:** 돈이 오가는 로직은 반드시 단일 DB 트랜잭션으로 묶는다.
+
+결제 웹훅 성공 시 아래 3개를 `$transaction`으로 원자 처리:
+1. Payment 상태 → completed
+2. Author 크레딧 증가
+3. CreditLog 기록
+
+**하나라도 실패하면 전부 롤백.** 중간 상태(돈은 냈는데 크레딧 없음) 절대 불가.
+
+상세: `SECURITY.md` §3 "결제 원자성" 참조.
+관련 코드: `src/application/payment/payment.usecase.ts` → `processWebhook()`
+
+---
+
+## 9. 빌드 환경
 
 ```bash
 npm run start:dev        # 로컬 개발 (port 3000)
