@@ -15,6 +15,9 @@ import { ContentUseCase } from '@application/content/content.usecase'
 import { AuthUseCase } from '@application/auth/auth.usecase'
 import { WorkManagementUseCase } from '@application/work/work-management.usecase'
 import { PaymentUseCase } from '@application/payment/payment.usecase'
+import { ReaderUseCase } from '@application/reader/reader.usecase'
+import { DiscoveryUseCase } from '@application/discovery/discovery.usecase'
+import { AdminUseCase } from '@application/admin/admin.usecase'
 
 // 컨트롤러
 import { HealthController } from '@adapter/inbound/http/controller/health.controller'
@@ -25,12 +28,16 @@ import { ContentController } from '@adapter/inbound/http/controller/content.cont
 import { AuthController } from '@adapter/inbound/http/controller/auth.controller'
 import { WorkManagementController, EpisodeManagementController } from '@adapter/inbound/http/controller/work-management.controller'
 import { PaymentController } from '@adapter/inbound/http/controller/payment.controller'
+import { ReaderController } from '@adapter/inbound/http/controller/reader.controller'
+import { DiscoveryController } from '@adapter/inbound/http/controller/discovery.controller'
+import { AdminController } from '@adapter/inbound/http/controller/admin.controller'
 
 // 아웃바운드 어댑터
 import { PrismaAuthorRepository } from '@adapter/outbound/persistence/prisma-author.repository'
 import { PrismaThemeRepository } from '@adapter/outbound/persistence/prisma-theme.repository'
 import { PrismaWorkRepository } from '@adapter/outbound/persistence/prisma-work.repository'
 import { PrismaCreditRepository } from '@adapter/outbound/persistence/prisma-credit.repository'
+import { PrismaReaderRepository } from '@adapter/outbound/persistence/prisma-reader.repository'
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 
@@ -51,6 +58,9 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     WorkManagementController,
     EpisodeManagementController,
     PaymentController,
+    ReaderController,
+    DiscoveryController,
+    AdminController,
   ],
   providers: [
     // 인프라
@@ -67,6 +77,9 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     AuthUseCase,
     WorkManagementUseCase,
     PaymentUseCase,
+    ReaderUseCase,
+    DiscoveryUseCase,
+    AdminUseCase,
     JwtAuthGuard,
 
     // 포트 → 어댑터 바인딩 (토큰 기반 DI)
@@ -74,6 +87,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     { provide: 'ThemeRepositoryPort', useClass: PrismaThemeRepository },
     { provide: 'WorkRepositoryPort', useClass: PrismaWorkRepository },
     { provide: 'CreditRepositoryPort', useClass: PrismaCreditRepository },
+    { provide: 'ReaderRepositoryPort', useClass: PrismaReaderRepository },
     { provide: 'ClaudeApiPort', useClass: ClaudeThemeAdapter },
   ],
 })
