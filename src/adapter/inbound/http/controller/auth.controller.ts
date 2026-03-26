@@ -37,6 +37,21 @@ export class AuthController {
     }
   }
 
+  @Post('google')
+  async googleLogin(@Body() body: { token: string }) {
+    const { author, token } = await this.authUseCase.googleLogin(body.token)
+    return {
+      user: {
+        id: author.id,
+        slug: author.slug,
+        name: author.name,
+        email: author.email,
+        credits: author.credits,
+      },
+      token,
+    }
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('profile')
   async profile(@Req() req: any) {

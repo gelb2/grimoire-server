@@ -13,6 +13,8 @@ import { CreditUseCase } from '@application/credit/credit.usecase'
 import { AuthorUseCase } from '@application/author/author.usecase'
 import { ContentUseCase } from '@application/content/content.usecase'
 import { AuthUseCase } from '@application/auth/auth.usecase'
+import { WorkManagementUseCase } from '@application/work/work-management.usecase'
+import { PaymentUseCase } from '@application/payment/payment.usecase'
 
 // 컨트롤러
 import { HealthController } from '@adapter/inbound/http/controller/health.controller'
@@ -21,6 +23,8 @@ import { ManuscriptController } from '@adapter/inbound/http/controller/manuscrip
 import { AuthorController } from '@adapter/inbound/http/controller/author.controller'
 import { ContentController } from '@adapter/inbound/http/controller/content.controller'
 import { AuthController } from '@adapter/inbound/http/controller/auth.controller'
+import { WorkManagementController, EpisodeManagementController } from '@adapter/inbound/http/controller/work-management.controller'
+import { PaymentController } from '@adapter/inbound/http/controller/payment.controller'
 
 // 아웃바운드 어댑터
 import { PrismaAuthorRepository } from '@adapter/outbound/persistence/prisma-author.repository'
@@ -44,6 +48,9 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     AuthorController,
     ContentController,
     AuthController,
+    WorkManagementController,
+    EpisodeManagementController,
+    PaymentController,
   ],
   providers: [
     // 인프라
@@ -58,6 +65,8 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     AuthorUseCase,
     ContentUseCase,
     AuthUseCase,
+    WorkManagementUseCase,
+    PaymentUseCase,
     JwtAuthGuard,
 
     // 포트 → 어댑터 바인딩 (토큰 기반 DI)
