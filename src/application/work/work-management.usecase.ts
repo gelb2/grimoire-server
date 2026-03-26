@@ -74,32 +74,25 @@ export class WorkManagementUseCase {
     await this.workRepo.deleteEpisode(episodeId)
   }
 
-  /** rawContent를 Block[]으로 변환 */
+  /** rawContent를 Block[]으로 변환 — DeerDevil 원본 파서(md-parser.ts) 사용 */
   private parseContentToBlocks(rawContent: string): Block[] {
-    // frontmatter 제거 (파일 시작 부분의 ---...--- 블록)
-    const content = this.stripFrontmatter(rawContent)
-    const lines = content.split('\n')
-    const blocks: Block[] = []
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mdParser = require('../../lib/md-parser')
 
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-
-      if (trimmed.startsWith('# ')) {
-        blocks.push({ type: 'heading', title: trimmed.slice(2) })
-      } else if (trimmed === '***' || trimmed === '---') {
-        blocks.push({ type: 'separator' })
-      } else {
-        blocks.push({ type: 'paragraph', text: trimmed })
-      }
+    // frontmatter 제거 후 본문 추출
+    let body = rawContent
+    try {
+      const parsed = mdParser.parseFrontmatter(rawContent)
+      body = parsed.body
+    } catch {
+      // frontmatter 없으면 rawContent 그대로 사용
+      // 단, 수동으로 --- 블록 제거
+      const match = rawContent.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)$/)
+      if (match) body = match[1]
     }
 
+    // DeerDevil 원본 파서로 블록 파싱 (chapter, refrain, italic, epilogue 등 전부 지원)
+    const { blocks } = mdParser.parseEpisodeBlocks(body)
     return blocks
-  }
-
-  /** YAML frontmatter를 제거한다 (--- 마커 사이의 메타데이터) */
-  private stripFrontmatter(content: string): string {
-    const match = content.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)$/)
-    return match ? match[1] : content
   }
 }

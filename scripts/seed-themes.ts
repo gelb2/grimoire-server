@@ -24,6 +24,15 @@ const prisma = new PrismaClient()
 
 // ── 테마 타입 (web/src/features/theme/presets.ts 와 동일) ──
 
+interface ThemeDecorations {
+  dividerIcon: 'antler' | 'star' | 'dot' | 'line' | 'none'
+  dividerColor: string
+  headerIcon: 'antler' | 'quill' | 'book' | 'none'
+  headerSubtitle: string
+  cardAccentPosition: 'left' | 'top' | 'none'
+  footerText: string
+}
+
 interface AuthorTheme {
   bgPrimary: string
   bgSecondary: string
@@ -38,6 +47,8 @@ interface AuthorTheme {
   fontHeading: 'serif' | 'sans-serif' | 'monospace'
   animation: 'typing' | 'fade' | 'slide' | 'none'
   tone: 'dark' | 'light' | 'sepia'
+  layout: 'universe' | 'grid' | 'classic'
+  decorations: ThemeDecorations
   // 추가 시각 요소 (optional)
   typingSpeed?: number
   cardRadius?: string
@@ -56,13 +67,13 @@ interface AuthorSeed {
 }
 
 const AUTHORS: AuthorSeed[] = [
-  // DeerDevil — web presets.ts midnight 테마 EXACT copy
+  // DeerDevil — web presets.ts midnight 테마 + layout/decorations
   {
     name: '사슴악마',
     slug: 'deerdevil',
     email: 'deerdevil@grimoire.app',
     preset: 'midnight',
-    description: 'A24 감성 K-다크 판타지. 어둡고 묵직한 밤의 분위기.',
+    description: 'A24 감성 K-다크 판타지. 어둡고 묵직한 밤의 분위기. 사슴뿔 아이콘과 타이핑 애니메이션.',
     theme: {
       bgPrimary: '#07070a',
       bgSecondary: '#0d0d12',
@@ -77,8 +88,17 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'typing',
       tone: 'dark',
-      typingSpeed: 50,
-      cardRadius: '12px',
+      layout: 'universe',
+      decorations: {
+        dividerIcon: 'antler',
+        dividerColor: '#9a8060',
+        headerIcon: 'antler',
+        headerSubtitle: 'Short Fiction Anthology',
+        cardAccentPosition: 'left',
+        footerText: 'Inspired by the sensibility of A24',
+      },
+      typingSpeed: 15,
+      cardRadius: '8px',
       navOpacity: 0.95,
     },
   },
@@ -104,6 +124,8 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'fade',
       tone: 'sepia',
+      layout: 'grid',
+      decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' },
     },
   },
 
@@ -128,6 +150,8 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'fade',
       tone: 'light',
+      layout: 'grid',
+      decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' },
     },
   },
 
@@ -152,6 +176,8 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'fade',
       tone: 'dark',
+      layout: 'grid',
+      decorations: { dividerIcon: 'star', dividerColor: '#c8a854', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' },
     },
   },
 
@@ -176,6 +202,8 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'sans-serif',
       animation: 'none',
       tone: 'dark',
+      layout: 'grid',
+      decorations: { dividerIcon: 'line', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'none', footerText: '' },
     },
   },
 
@@ -200,6 +228,8 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'sans-serif',
       animation: 'slide',
       tone: 'sepia',
+      layout: 'grid',
+      decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' },
     },
   },
 
@@ -224,6 +254,8 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'fade',
       tone: 'light',
+      layout: 'grid',
+      decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' },
     },
   },
 
@@ -248,6 +280,8 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'slide',
       tone: 'sepia',
+      layout: 'grid',
+      decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' },
     },
   },
 
@@ -272,6 +306,8 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'fade',
       tone: 'light',
+      layout: 'grid',
+      decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' },
     },
   },
 
@@ -296,6 +332,8 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'fade',
       tone: 'dark',
+      layout: 'grid',
+      decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' },
     },
   },
 
@@ -320,6 +358,8 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'none',
       tone: 'light',
+      layout: 'grid',
+      decorations: { dividerIcon: 'line', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' },
     },
   },
 ]
