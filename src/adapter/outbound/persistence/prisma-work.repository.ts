@@ -127,20 +127,40 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     return rows.map(toWorkDomain)
   }
 
-  async findPopular(limit: number): Promise<Work[]> {
+  async findPopular(limit: number): Promise<any[]> {
     const rows = await this.prisma.work.findMany({
       take: limit,
       orderBy: { viewCount: 'desc' },
+      include: {
+        author: { select: { name: true, slug: true } },
+        _count: { select: { episodes: true } },
+      },
     })
-    return rows.map(toWorkDomain)
+    return rows.map((r) => ({
+      ...toWorkDomain(r),
+      authorName: r.author.name,
+      authorSlug: r.author.slug,
+      episodeCount: r._count.episodes,
+      viewCount: (r as any).viewCount ?? 0,
+    }))
   }
 
-  async findRecent(limit: number): Promise<Work[]> {
+  async findRecent(limit: number): Promise<any[]> {
     const rows = await this.prisma.work.findMany({
       take: limit,
       orderBy: { createdAt: 'desc' },
+      include: {
+        author: { select: { name: true, slug: true } },
+        _count: { select: { episodes: true } },
+      },
     })
-    return rows.map(toWorkDomain)
+    return rows.map((r) => ({
+      ...toWorkDomain(r),
+      authorName: r.author.name,
+      authorSlug: r.author.slug,
+      episodeCount: r._count.episodes,
+      viewCount: (r as any).viewCount ?? 0,
+    }))
   }
 }
 
