@@ -1,5 +1,33 @@
 # Changelog — grimoire-server
 
+## [0.2.0] - 2026-03-26
+
+### Phase 2 — 인증 시스템 + DB 스키마 v0.2 + TXT 파서
+
+#### Added
+- JWT 기반 회원가입/로그인 API (`POST /api/auth/register`, `POST /api/auth/login`)
+- 인증 프로필 조회 API (`GET /api/auth/profile`) + JwtAuthGuard
+- bcryptjs 비밀번호 해싱
+- TXT 파서 (`src/lib/txt-parser.ts`) — 줄바꿈 기반 문단 분리 + 구분선 인식
+- 포맷 자동 감지 (`detectFormat`) — markdown/txt/html 판별
+- AuthUseCase 테스트 6개 (register, login 정상/예외)
+- txt-parser 테스트 11개 (문단 분리, 구분선, Windows 줄바꿈, 포맷 감지)
+
+#### Changed
+- DB 스키마 v0.2:
+  - Author 모델에 `passwordHash` 추가
+  - Theme 모델에 `bakedCssUrl` 추가 (§11 Baking 파이프라인 대비)
+  - Work 모델에 `viewCount` 추가
+  - Episode 모델에 `viewCount`, `sourceFormat` 추가
+  - SocialAccount 모델 신규 (소셜 로그인 1:N 연동)
+- AuthorRepositoryPort: create 메서드에 passwordHash 파라미터 추가
+- app.module.ts: JwtModule, AuthController, AuthUseCase, JwtAuthGuard 등록
+
+#### Stats
+- 테스트: 60개 통과 (기존 43 + 신규 17)
+
+---
+
 ## [0.1.0] - 2026-03-26
 
 ### Phase 1 — 백엔드 초기 구축
