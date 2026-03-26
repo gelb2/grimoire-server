@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
-import { Work, Episode, EpisodeSummary } from '@domain/model/work'
+import { Work, Episode, EpisodeSummary, WorkWithMeta } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 
 @Injectable()
@@ -127,7 +127,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     return rows.map(toWorkDomain)
   }
 
-  async findPopular(limit: number): Promise<any[]> {
+  async findPopular(limit: number): Promise<WorkWithMeta[]> {
     const rows = await this.prisma.work.findMany({
       take: limit,
       orderBy: { viewCount: 'desc' },
@@ -141,11 +141,10 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
       authorName: r.author.name,
       authorSlug: r.author.slug,
       episodeCount: r._count.episodes,
-      viewCount: (r as any).viewCount ?? 0,
     }))
   }
 
-  async findRecent(limit: number): Promise<any[]> {
+  async findRecent(limit: number): Promise<WorkWithMeta[]> {
     const rows = await this.prisma.work.findMany({
       take: limit,
       orderBy: { createdAt: 'desc' },
@@ -159,16 +158,15 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
       authorName: r.author.name,
       authorSlug: r.author.slug,
       episodeCount: r._count.episodes,
-      viewCount: (r as any).viewCount ?? 0,
     }))
   }
 }
 
 function toWorkDomain(row: {
   id: string; authorId: string; slug: string; title: string;
-  subtitle: string | null; description: string | null; createdAt: Date
+  subtitle: string | null; description: string | null; viewCount?: number; createdAt: Date
 }): Work {
-  return { id: row.id, authorId: row.authorId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, createdAt: row.createdAt }
+  return { id: row.id, authorId: row.authorId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, viewCount: row.viewCount ?? 0, createdAt: row.createdAt }
 }
 
 function toEpisodeDomain(row: {

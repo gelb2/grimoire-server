@@ -10,9 +10,18 @@ export interface Author {
   createdAt: Date
 }
 
+/** 외부 노출용 작가 정보 (민감 필드 제거) */
+export type SafeAuthor = Omit<Author, 'passwordHash' | 'email'>
+
+/** Author → SafeAuthor 변환 (passwordHash, email 제거) */
+export function toSafeAuthor(author: Author): SafeAuthor {
+  const { passwordHash, email, ...safe } = author
+  return safe
+}
+
 /** 작가 공간 데이터 (테마 + 작품 목록 포함) */
 export interface AuthorSpace {
-  author: Author
+  author: SafeAuthor
   theme: Theme | null
   works: WorkSummary[]
 }

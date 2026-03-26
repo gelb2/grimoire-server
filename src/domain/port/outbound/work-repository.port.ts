@@ -1,4 +1,4 @@
-import { Work, Episode, EpisodeSummary } from '@domain/model/work'
+import { Work, Episode, EpisodeSummary, WorkWithMeta } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 
 export interface WorkRepositoryPort {
@@ -27,7 +27,7 @@ export interface WorkRepositoryPort {
   /** 제목으로 작품 검색 (LIKE) */
   searchByTitle(query: string, limit: number): Promise<Work[]>
   /** 인기 작품 조회 (viewCount 내림차순) */
-  findPopular(limit: number): Promise<Work[]>
+  findPopular(limit: number): Promise<WorkWithMeta[]>
   /** 최신 작품 조회 (createdAt 내림차순) */
-  findRecent(limit: number): Promise<Work[]>
+  findRecent(limit: number): Promise<WorkWithMeta[]>
 }

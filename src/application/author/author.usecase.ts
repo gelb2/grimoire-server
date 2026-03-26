@@ -2,7 +2,7 @@ import { Injectable, Inject, NotFoundException } from '@nestjs/common'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { ThemeRepositoryPort } from '@domain/port/outbound/theme-repository.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
-import { AuthorSpace, WorkSummary } from '@domain/model/author'
+import { AuthorSpace, WorkSummary, toSafeAuthor } from '@domain/model/author'
 
 @Injectable()
 export class AuthorUseCase {
@@ -35,6 +35,6 @@ export class AuthorUseCase {
       }),
     )
 
-    return { author, theme, works: workSummaries }
+    return { author: toSafeAuthor(author), theme, works: workSummaries }
   }
 }
