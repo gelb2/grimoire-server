@@ -14,8 +14,10 @@ const THEME_SYSTEM_PROMPT = `당신은 웹 테마 디자인 전문가입니다.
   "bgSecondary": "#hex",     // 카드/섹션 배경
   "textPrimary": "#hex",     // 본문 텍스트
   "textMuted": "#hex",       // 보조 텍스트
-  "textBright": "#hex",      // 강조 텍스트
+  "textBright": "#hex",      // 강조 텍스트 (제목, 하이라이트)
+  "textDim": "#hex",         // 매우 흐린 텍스트 (장식/플레이스홀더용)
   "accent": "#hex",          // 강조색 (링크, 버튼)
+  "accent2": "#hex",         // 보조 강조색 (accent의 밝은/연한 변형)
   "border": "#hex",          // 경계선
 
   "fontBody": "serif" | "sans-serif" | "monospace" | "handwriting",

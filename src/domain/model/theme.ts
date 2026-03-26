@@ -8,7 +8,9 @@ export interface AuthorTheme {
   textPrimary: string
   textMuted: string
   textBright: string
+  textDim: string
   accent: string
+  accent2: string
   border: string
 
   fontBody: 'serif' | 'sans-serif' | 'monospace' | 'handwriting'

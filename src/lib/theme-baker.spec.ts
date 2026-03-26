@@ -58,7 +58,7 @@ describe('bakeThemeToCSS', () => {
   it('알 수 없는 폰트는 원본 값 그대로 사용한다', () => {
     const theme = { fontBody: 'Pretendard', fontHeading: 'Arial' }
     const css = bakeThemeToCSS(theme, 'custom-font')
-    expect(css).toContain('--u-font-body: Pretendard;')
-    expect(css).toContain('--u-font-heading: Arial;')
+    expect(css).toContain('--u-serif: Pretendard;')
+    expect(css).toContain('--u-sans: Arial;')
   })
 })

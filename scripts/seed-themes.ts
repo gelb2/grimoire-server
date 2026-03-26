@@ -38,6 +38,10 @@ interface AuthorTheme {
   fontHeading: 'serif' | 'sans-serif' | 'monospace'
   animation: 'typing' | 'fade' | 'slide' | 'none'
   tone: 'dark' | 'light' | 'sepia'
+  // 추가 시각 요소 (optional)
+  typingSpeed?: number
+  cardRadius?: string
+  navOpacity?: number
 }
 
 // ── 작가별 테마 데이터 ──────────────────────────────────
@@ -73,6 +77,9 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'typing',
       tone: 'dark',
+      typingSpeed: 50,
+      cardRadius: '12px',
+      navOpacity: 0.95,
     },
   },
 
