@@ -1,5 +1,21 @@
 # Changelog — grimoire-server
 
+## [0.5.0] - 2026-03-26
+
+### Added
+- 좋아요 토글 API (`POST /social/likes/:episodeId`)
+- 구독 토글 API (`POST /social/subscriptions/:authorId`)
+- 댓글 CRUD API (생성/목록/삭제)
+- Like, Subscription, Comment Prisma 모델
+- SocialRepositoryPort + PrismaSocialRepository
+- 댓글 내용 검증 (1~500자, 공백 트림)
+
+### Fixed
+- 전수조사: DTO 프로퍼티 definite assignment(!) 추가 (TS2564 해결)
+- docs/api-contract.md 37개 전체 엔드포인트 문서화
+
+---
+
 ## [0.2.0] - 2026-03-26
 
 ### Phase 2 — 인증 시스템 + DB 스키마 v0.2 + TXT 파서
