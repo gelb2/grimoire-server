@@ -104,21 +104,32 @@ export class PaymentUseCase {
     }
 
     if (payload.status === 'success') {
-      // 결제 성공: 상태 업데이트 + 크레딧 부여
-      await this.prisma.payment.update({
-        where: { id: payment.id },
-        data: { status: 'completed', completedAt: new Date() },
-      })
+      // 결제 성공: Payment 상태 + 크레딧 부여를 단일 트랜잭션으로 원자 처리
+      // → 둘 중 하나라도 실패하면 전부 롤백 (돈 냈는데 크레딧 안 들어오는 사고 방지)
+      await this.prisma.$transaction(async (tx) => {
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: { status: 'completed', completedAt: new Date() },
+        })
 
-      await this.creditUseCase.grant(
-        payment.authorId,
-        payment.credits,
-        `purchase_${payment.productId}_${payment.id}`,
-      )
+        const author = await tx.author.update({
+          where: { id: payment.authorId },
+          data: { credits: { increment: payment.credits } },
+        })
+
+        // 크레딧 로그 기록
+        await tx.creditLog.create({
+          data: {
+            authorId: payment.authorId,
+            amount: payment.credits,
+            reason: `purchase_${payment.productId}_${payment.id}`,
+          },
+        })
+      })
 
       return { processed: true, credits: payment.credits }
     } else {
-      // 결제 실패/취소: 상태 업데이트
+      // 결제 실패/취소: 상태 업데이트만
       await this.prisma.payment.update({
         where: { id: payment.id },
         data: { status: 'failed' },

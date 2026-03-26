@@ -20,13 +20,28 @@ describe('PaymentUseCase', () => {
   }
 
   beforeEach(() => {
+    // $transaction mock: 콜백을 받아서 동일한 mock prisma를 tx로 넘긴다
+    const paymentMock = {
+      create: jest.fn().mockResolvedValue(mockPayment),
+      update: jest.fn().mockResolvedValue({ ...mockPayment, payappTradeNo: 'TRADE-001' }),
+      findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([mockPayment]),
+    }
+    const authorMock = {
+      update: jest.fn().mockResolvedValue({ id: 'author-1', credits: 13 }),
+    }
+    const creditLogMock = {
+      create: jest.fn().mockResolvedValue({ id: 'log-1' }),
+    }
+
     mockPrisma = {
-      payment: {
-        create: jest.fn().mockResolvedValue(mockPayment),
-        update: jest.fn().mockResolvedValue({ ...mockPayment, payappTradeNo: 'TRADE-001' }),
-        findUnique: jest.fn(),
-        findMany: jest.fn().mockResolvedValue([mockPayment]),
-      },
+      payment: paymentMock,
+      author: authorMock,
+      creditLog: creditLogMock,
+      $transaction: jest.fn(async (cb: (tx: any) => Promise<any>) => {
+        // 트랜잭션 콜백에 동일한 mock을 tx로 전달
+        return cb({ payment: paymentMock, author: authorMock, creditLog: creditLogMock })
+      }),
     }
 
     mockCreditUseCase = {
@@ -149,7 +164,7 @@ describe('PaymentUseCase', () => {
       expect(mockCreditUseCase.grant).not.toHaveBeenCalled()
     })
 
-    it('성공 웹훅 시 크레딧을 부여하고 상태를 completed로 변경한다', async () => {
+    it('성공 웹훅 시 원자적 트랜잭션으로 크레딧 부여 + 상태 변경한다', async () => {
       mockPrisma.payment.findUnique.mockResolvedValue({
         ...mockPayment,
         payappTradeNo: 'TRADE-001',
@@ -159,15 +174,25 @@ describe('PaymentUseCase', () => {
 
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(10)
+      // $transaction이 호출되었는지 (원자성 보장)
+      expect(mockPrisma.$transaction).toHaveBeenCalled()
+      // 트랜잭션 내에서 payment 상태 변경
       expect(mockPrisma.payment.update).toHaveBeenCalledWith({
         where: { id: 'pay-1' },
         data: { status: 'completed', completedAt: expect.any(Date) },
       })
-      expect(mockCreditUseCase.grant).toHaveBeenCalledWith(
-        'author-1',
-        10,
-        'purchase_credit-10_pay-1',
-      )
+      // 트랜잭션 내에서 크레딧 증가
+      expect(mockPrisma.author.update).toHaveBeenCalledWith({
+        where: { id: 'author-1' },
+        data: { credits: { increment: 10 } },
+      })
+      // 트랜잭션 내에서 크레딧 로그 생성
+      expect(mockPrisma.creditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          authorId: 'author-1',
+          amount: 10,
+        }),
+      })
     })
 
     it('실패 웹훅 시 상태를 failed로 변경하고 크레딧을 부여하지 않는다', async () => {
