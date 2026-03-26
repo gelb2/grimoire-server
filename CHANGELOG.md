@@ -1,18 +1,91 @@
 # Changelog — grimoire-server
 
+## [0.6.0] - 2026-03-26
+
+### CRITICAL 보안 수정 + 인프라
+
+#### Fixed
+- passwordHash 응답 노출 차단 (작가 조회 API에서 민감 필드 제거)
+- admin 엔드포인트 인증 추가
+- docker-entrypoint.sh 빌드 경로 유연화
+- discovery API에 authorName/episodeCount/viewCount 포함
+- ANTHROPIC_API_KEY를 선택적 환경변수로 변경
+
+#### Added
+- 작가 테마 시드 스크립트 (11명 테스트 계정)
+- 고전 문학 30개 시드 스크립트
+- DeerDevil DB 시드 스크립트
+- Prisma 초기 마이그레이션 (dev DB 테이블 생성)
+- 테마 시스템 전면 감사 + 서버 측 갭 수정
+
+---
+
 ## [0.5.0] - 2026-03-26
 
-### Added
+### Phase 5 — 좋아요/구독/댓글 + RAG/Vector + Rate Limiting
+
+#### Added
 - 좋아요 토글 API (`POST /social/likes/:episodeId`)
 - 구독 토글 API (`POST /social/subscriptions/:authorId`)
 - 댓글 CRUD API (생성/목록/삭제)
 - Like, Subscription, Comment Prisma 모델
 - SocialRepositoryPort + PrismaSocialRepository
 - 댓글 내용 검증 (1~500자, 공백 트림)
+- RAG/Vector 소설 분석 시스템 (YECHANGPE 이식)
+  - 작품 벡터 인덱싱 API
+  - 설정 일관성 검사 API
+  - 인덱싱 상태 조회 API
+  - 텍스트 청킹 + OpenAI 임베딩 + 벡터 저장소
+- 서버 Rate Limiting 전면 적용 (NestJS Throttler)
 
-### Fixed
+#### Fixed
 - 전수조사: DTO 프로퍼티 definite assignment(!) 추가 (TS2564 해결)
 - docs/api-contract.md 37개 전체 엔드포인트 문서화
+
+---
+
+## [0.4.0] - 2026-03-26
+
+### Phase 4 — 북마크 + 검색 + 관리자 + 결제 + 인프라
+
+#### Added
+- 북마크 토글 + 목록 API (`/api/reader/bookmarks`)
+- 읽기 진행도 저장/조회 API (`/api/reader/progress`)
+- Bookmark, ReadingProgress Prisma 모델
+- ReaderRepositoryPort + PrismaReaderRepository
+- 작가 검색 API (`GET /api/discover/authors?q=`)
+- 인기/최신 작품 API (`GET /api/discover/works/popular`, `/recent`)
+- 관리자 통계 API (`GET /api/admin/stats`)
+- 관리자 크레딧 부여 API (`POST /api/admin/credits`)
+- 크레딧 상품 목록 API (`GET /api/payments/products`)
+- PAYAPP 결제 웹훅 API (`POST /api/payments/webhook`)
+- 크레딧 잔액 조회 API (`GET /api/payments/credits`)
+- Payment Prisma 모델 + PaymentGatewayPort + PayappAdapter
+- 결제 웹훅 원자성(Atomicity) 보장 — Prisma $transaction
+- Azure 인프라 + CI/CD + Docker 완전 구축
+  - Azure Container Apps (서버), Azure Database for PostgreSQL
+  - Azure Container Registry + GitHub Actions CI/CD
+  - 멀티스테이지 Docker 빌드 + docker-entrypoint.sh
+
+#### Fixed
+- 결제 웹훅 원자성(Atomicity) 보장 문서화
+
+---
+
+## [0.3.0] - 2026-03-26
+
+### Phase 3 — Google OAuth + 작품 CRUD + 테마 Baking + DOCX 파서
+
+#### Added
+- Google OAuth 로그인 API (`POST /api/auth/google`)
+- 작품 생성/수정/삭제 API (`POST/PATCH/DELETE /api/works`)
+- 에피소드 생성/삭제 API (`POST /api/works/:workId/episodes`, `DELETE /api/episodes/:id`)
+- WorkManagementUseCase + WorkManagement Controller
+- DOCX 파서 (`src/lib/docx-parser.ts`) — mammoth 기반 HTML→Block[] 변환
+- 테마 Baking API (`POST /api/themes/publish/:authorSlug`)
+- Baked CSS 서빙 API (`GET /api/themes/css/:authorSlug`)
+- theme-baker.ts — 테마 JSON → CSS Variables 변환
+- PAYAPP 키 연동 완전체 + OAuth 슬러그 충돌 해결 + 환경변수 검증
 
 ---
 
@@ -32,15 +105,12 @@
 #### Changed
 - DB 스키마 v0.2:
   - Author 모델에 `passwordHash` 추가
-  - Theme 모델에 `bakedCssUrl` 추가 (§11 Baking 파이프라인 대비)
+  - Theme 모델에 `bakedCssUrl` 추가 (Baking 파이프라인 대비)
   - Work 모델에 `viewCount` 추가
   - Episode 모델에 `viewCount`, `sourceFormat` 추가
   - SocialAccount 모델 신규 (소셜 로그인 1:N 연동)
 - AuthorRepositoryPort: create 메서드에 passwordHash 파라미터 추가
 - app.module.ts: JwtModule, AuthController, AuthUseCase, JwtAuthGuard 등록
-
-#### Stats
-- 테스트: 60개 통과 (기존 43 + 신규 17)
 
 ---
 
@@ -60,6 +130,6 @@
 - 작가 공간 API: `GET /api/authors/:slug`
 - 작품/에피소드 조회 API: `GET /api/works/...`, `GET /api/episodes/...`
 - 크레딧 시스템: 즉시 차감 + 감사 로그 (Tajook 패턴)
-- Jest 테스트 43개 통과 (json-parser, md-parser, generate-theme, credit)
+- Jest 테스트 (json-parser, md-parser, generate-theme, credit)
 - Dockerfile (멀티스테이지 빌드 + docker-entrypoint.sh)
 - Health check 엔드포인트: `GET /api/health`

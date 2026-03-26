@@ -8,7 +8,9 @@
 ## 1. 개요
 
 작가의 텍스트 설명을 Claude API로 해석하여 테마를 생성하고,
-MD 원고를 파싱하여 블록 데이터로 변환하는 백엔드 서버.
+MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 서버.
+
+현재 구현 현황은 `TECH_STATUS.md` 참조.
 
 ---
 
@@ -16,16 +18,16 @@ MD 원고를 파싱하여 블록 데이터로 변환하는 백엔드 서버.
 
 | 순서 | 문서 | 역할 |
 |------|------|------|
-| 1 | `docs/api-contract.md` (정본) | API 엔드포인트 명세 |
+| 1 | `docs/api-contract.md` (정본) | API 엔드포인트 전체 명세 |
 | 2 | `docs/data-model.md` (정본) | DB 스키마 정의 |
 | 3 | `docs/theme-spec.md` | 테마 파라미터 (Claude API 응답 형식) |
 | 4 | `docs/environments.md` (정본) | 빌드 환경 + Azure 배포 |
 | 5 | `docs/glossary.md` (정본) | 용어 정의 |
-| 6 | `SCHEMA.md` | Prisma 스키마 구현 상세 (`docs/data-model.md` 구현) |
-| 7 | `INFRASTRUCTURE.md` | Azure 인프라 구성 (`docs/environments.md` 구현) |
+| 6 | `SCHEMA.md` | Prisma 스키마 구현 상세 |
+| 7 | `INFRASTRUCTURE.md` | Azure 인프라 구성 |
 | 8 | `SECURITY.md` | 보안 정책 + 배포 전 체크리스트 |
 | 9 | `TECH_STATUS.md` | 현재 구현 상태 + 배포 현황 |
-| 10 | `TESTING.md` | 테스트 전략 + 현황 |
+| 10 | `TESTING.md` | 테스트 전략 |
 
 ---
 
@@ -39,49 +41,61 @@ MD 원고를 파싱하여 블록 데이터로 변환하는 백엔드 서버.
 
 ## 4. 기술 스택
 
-| 항목 | 기술 | 버전 |
-|------|------|------|
-| 프레임워크 | NestJS | 10.x |
-| 언어 | TypeScript (strict) | 5.x |
-| ORM | Prisma | 7.x |
-| DB | PostgreSQL | Azure Database |
-| AI | Anthropic Claude API (SDK) | 0.78+ |
-| 컨테이너 | Docker | Azure Container Apps |
-| 테스트 | Jest | - |
+| 항목 | 기술 |
+|------|------|
+| 프레임워크 | NestJS |
+| 언어 | TypeScript (strict) |
+| ORM | Prisma |
+| DB | PostgreSQL (Azure Database) |
+| AI | Anthropic Claude API (SDK) |
+| 컨테이너 | Docker (Azure Container Apps) |
+| Rate Limiting | @nestjs/throttler |
+| DOCX 파싱 | mammoth |
+| 테스트 | Jest |
+
+> 정확한 버전은 `package.json` 참조.
 
 ---
 
 ## 5. 아키텍처 — Hexagonal
 
+### 규칙
+
+Hexagonal Architecture를 따른다. 새 기능 추가 시 아래 순서를 지킨다:
+
+1. `domain/model/` — 값 객체/도메인 모델 정의
+2. `domain/port/outbound/` — Repository/외부 서비스 인터페이스 정의
+3. `adapter/outbound/` — 인터페이스 구현 (Prisma, 외부 API 등)
+4. `application/` — UseCase 비즈니스 로직
+5. `adapter/inbound/http/controller/` — HTTP 엔드포인트
+
+### 폴더 구조
+
 ```
 src/
-├── domain/                     # 순수 비즈니스 로직
-│   ├── model/                  # 값 객체 (Author, Theme, Work, Episode, Block, Credit, Frontmatter)
-│   └── port/
-│       └── outbound/           # Repository + AI 포트 (5개 인터페이스)
-├── application/                # Use Cases (6개)
-│   ├── theme/                  # GenerateThemeUseCase, GetThemeUseCase
-│   ├── manuscript/             # ParseManuscriptUseCase
-│   ├── credit/                 # CreditUseCase
-│   ├── author/                 # AuthorUseCase
-│   └── content/                # ContentUseCase
+├── domain/                        # 순수 비즈니스 로직
+│   ├── model/                     # 값 객체
+│   └── port/outbound/             # Repository + AI + Payment 포트 인터페이스
+├── application/                   # Use Cases (모듈별 1 디렉토리)
 ├── adapter/
 │   ├── inbound/http/
-│   │   ├── controller/         # Health, Theme, Manuscript, Author, Content
-│   │   └── dto/                # GenerateThemeDto, ParseManuscriptDto
+│   │   ├── controller/            # HTTP 컨트롤러
+│   │   ├── dto/                   # Request/Response DTO
+│   │   └── guard/                 # JwtAuthGuard
 │   └── outbound/
-│       ├── persistence/        # PrismaAuthor/Theme/Work/CreditRepository
-│       └── ai/                 # ClaudeThemeAdapter
+│       ├── persistence/           # Prisma Repository 구현
+│       ├── ai/                    # ClaudeThemeAdapter
+│       └── payment/               # PayappAdapter
 ├── infrastructure/
-│   ├── prisma/                 # PrismaService (PrismaClient 확장)
-│   └── config/                 # 환경변수 검증
-├── lib/
-│   ├── claude.ts               # Claude API 래퍼 (YECHANGPE 패턴)
-│   ├── json-parser.ts          # JSON 에러 복구 (3단계)
-│   └── md-parser.ts            # MD → Block[] 파서 (DeerDevil에서 이관)
-├── app.module.ts               # 루트 모듈 (포트-어댑터 DI 바인딩)
-└── main.ts                     # 부트스트랩 (ValidationPipe, CORS, Prefix)
+│   ├── prisma/                    # PrismaService
+│   └── config/                    # 환경변수 검증
+├── lib/                           # 유틸리티 (파서, AI 래퍼, RAG)
+├── app.module.ts                  # 루트 모듈 (포트-어댑터 DI 바인딩)
+└── main.ts                        # 부트스트랩
 ```
+
+> 현재 구현된 컨트롤러/UseCase 목록은 `src/` 디렉토리 직접 확인.
+> 아키텍처 레이어별 수량은 `TECH_STATUS.md` 참조.
 
 ---
 
@@ -89,65 +103,42 @@ src/
 
 ### 래퍼 함수
 
-```typescript
-// src/lib/claude.ts
-export async function askClaude(
-  systemPrompt: string,
-  userMessage: string,
-  options?: { maxTokens?: number }
-): Promise<string>
-```
+`src/lib/claude.ts` — YECHANGPE 패턴. `askClaude(systemPrompt, userMessage, options?)` 시그니처.
 
 ### 테마 생성 흐름
 
 ```
 POST /api/themes/generate
-  body: { description: "어둡고 묵직한 A24 감성" }
-    ↓
-ThemeUseCase.generate(description)
-    ↓
-askClaude(THEME_SYSTEM_PROMPT, description, { maxTokens: 1024 })
-    ↓
-JSON 파싱 (에러 복구 포함)
-    ↓
-DB 저장 (themes 테이블)
-    ↓
-응답: { themeId, preview: AuthorTheme }
+  → ThemeUseCase.generate(description)
+  → askClaude(THEME_SYSTEM_PROMPT, description)
+  → JSON 파싱 (에러 복구 포함)
+  → DB 저장 (themes 테이블)
+  → 응답: { themeId, preview: AuthorTheme }
 ```
 
-### JSON 파싱 에러 복구 (YECHANGPE 패턴)
+테마 파라미터 스키마: `docs/theme-spec.md` 참조.
 
-```typescript
-function tryParseJSON(raw: string): ThemeJSON {
-  // 1. 직접 파싱 시도
-  // 2. trailing comma 제거: /,\s*([\]}])/g
-  // 3. 마지막 유효한 }까지 잘라내기
-  // 4. 점진적 슬라이스
-}
-```
+### JSON 파싱 에러 복구
+
+`src/lib/json-parser.ts` — 3단계 복구 (직접 파싱 → trailing comma 제거 → 마지막 `}`까지 슬라이스).
 
 ---
 
 ## 7. API 엔드포인트
 
-| Method | Path | 용도 | Phase | 상태 |
-|--------|------|------|-------|------|
-| GET | `/api/health` | 헬스체크 | 1 | 구현 완료 |
-| POST | `/api/themes/generate` | Claude API로 테마 생성 | 1 | 구현 완료 |
-| GET | `/api/themes/:authorSlug` | 작가 테마 조회 | 1 | 구현 완료 |
-| POST | `/api/manuscripts/parse` | MD 텍스트 → Block[] 파싱 | 1 | 구현 완료 |
-| GET | `/api/authors/:slug` | 작가 공간 데이터 (테마 + 작품 목록) | 1 | 구현 완료 |
-| GET | `/api/works/:authorSlug/:workSlug` | 작품 데이터 (에피소드 목록 포함) | 1 | 구현 완료 |
-| GET | `/api/episodes/:authorSlug/:workSlug/:episodeSlug` | 에피소드 데이터 (Block[] 포함) | 1 | 구현 완료 |
-| POST | `/api/auth/register` | 작가 가입 (JWT 발급) | 2 | 구현 완료 |
-| POST | `/api/auth/login` | 로그인 (JWT 발급) | 2 | 구현 완료 |
-| GET | `/api/auth/profile` | 인증된 유저 프로필 조회 | 2 | 구현 완료 |
-
-상세 명세는 `docs/api-contract.md` 참조. 현재 상태는 `TECH_STATUS.md` 참조.
+전체 API 명세: `docs/api-contract.md` 참조.
 
 ---
 
-## 8. 결제/크레딧 — 원자성 원칙
+## 8. DB 스키마
+
+- Prisma 스키마: `prisma/schema.prisma` 참조
+- 스키마 설명: `SCHEMA.md` 참조
+- 공유 스키마 문서: `docs/data-model.md` 참조
+
+---
+
+## 9. 결제/크레딧 — 원자성 원칙
 
 > **절대 규칙:** 돈이 오가는 로직은 반드시 단일 DB 트랜잭션으로 묶는다.
 
@@ -163,21 +154,22 @@ function tryParseJSON(raw: string): ThemeJSON {
 
 ---
 
-## 9. 빌드 환경
+## 10. 빌드 환경
 
 ```bash
 npm run start:dev        # 로컬 개발 (port 3000)
 npm run build            # 프로덕션 빌드
-npm test                 # Jest 테스트
+npm test                 # Jest 테스트 (현재 수는 npm test 실행으로 확인)
 docker build -t grimoire-server .
 ```
 
 ---
 
-## 9. 참고 프로젝트
+## 11. 참고 프로젝트
 
 | 프로젝트 | 참고 대상 |
 |---------|----------|
 | DeerDevil | parse-md.ts (MD 파서), Block 타입 시스템 |
 | projectZenith (server) | Hexagonal 구조, Prisma 설정, Docker, Azure Container Apps |
-| YECHANGPE | claude.ts 래퍼, 구조화 프롬프트, JSON 에러 복구, 결과 캐싱, 토큰 관리 |
+| YECHANGPE | claude.ts 래퍼, 구조화 프롬프트, JSON 에러 복구, 결과 캐싱 |
+| Tajook | 크레딧 시스템, 재가입 방지, 감사 로그 |

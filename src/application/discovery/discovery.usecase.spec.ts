@@ -5,8 +5,8 @@ describe('DiscoveryUseCase', () => {
   let mockAuthorRepo: { search: jest.Mock }
   let mockWorkRepo: { searchByTitle: jest.Mock; findPopular: jest.Mock; findRecent: jest.Mock }
 
-  const mockAuthor = { id: 'author-1', slug: 'test-author', name: '테스트작가', email: 'test@test.com', credits: 3, createdAt: new Date() }
-  const mockWork = { id: 'work-1', authorId: 'author-1', slug: 'test-work', title: '테스트작품', subtitle: null, description: null, createdAt: new Date() }
+  const mockAuthor = { id: 'author-1', slug: 'test-author', name: '테스트작가', email: 'test@test.com', passwordHash: 'hashed', credits: 3, createdAt: new Date() }
+  const mockWork = { id: 'work-1', authorId: 'author-1', slug: 'test-work', title: '테스트작품', subtitle: null, description: null, viewCount: 0, createdAt: new Date() }
 
   beforeEach(() => {
     mockAuthorRepo = {
@@ -22,12 +22,15 @@ describe('DiscoveryUseCase', () => {
   })
 
   describe('searchAuthors', () => {
-    it('쿼리로 작가를 검색한다', async () => {
+    it('쿼리로 작가를 검색한다 (민감 필드 제거)', async () => {
       const result = await useCase.searchAuthors('테스트')
 
       expect(mockAuthorRepo.search).toHaveBeenCalledWith('테스트', 10)
       expect(result).toHaveLength(1)
       expect(result[0].name).toBe('테스트작가')
+      // passwordHash, email이 제거되었는지 확인
+      expect((result[0] as any).passwordHash).toBeUndefined()
+      expect((result[0] as any).email).toBeUndefined()
     })
 
     it('limit 파라미터를 전달한다', async () => {

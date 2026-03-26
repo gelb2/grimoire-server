@@ -59,6 +59,7 @@ model Episode {
   slug         String
   title        String
   subtitle     String?
+  type         String   @default("episode")
   orderNum     Int      @map("order_num")
   blocks       Json
   rawMd        String   @map("raw_md")

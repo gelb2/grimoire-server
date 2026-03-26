@@ -1,7 +1,7 @@
 # Phase 1 작업지시서 — grimoire-server
 
-> 이 문서는 grimoire-server 채팅방에서 작업을 시작할 때 참고하는 지시서입니다.
-> 루트 CLAUDE.md, 기획서, 공유 문서를 모두 읽은 뒤 작업을 시작하세요.
+> **Phase 1 완료.** 현재 상태: `TECH_STATUS.md` 참조.
+> 이 문서는 Phase 1 작업 시 참고용으로 보존한다.
 
 ---
 

@@ -42,8 +42,8 @@ export class WorkManagementUseCase {
     if (!work) throw new NotFoundException('작품을 찾을 수 없습니다')
     if (work.authorId !== authorId) throw new ForbiddenException('에피소드 생성 권한이 없습니다')
 
-    // 슬러그 생성 (타이틀 기반)
-    const slug = input.title.toLowerCase().replace(/[^a-z0-9가-힣-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+    // 슬러그 생성 (타이틀 기반, ASCII만 허용 — 한글 제외)
+    const slug = input.title.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
 
     // 다음 orderNum 계산
     const episodeCount = await this.workRepo.countEpisodesByWorkId(work.id)
@@ -74,24 +74,25 @@ export class WorkManagementUseCase {
     await this.workRepo.deleteEpisode(episodeId)
   }
 
-  /** rawContent를 Block[]으로 변환 */
+  /** rawContent를 Block[]으로 변환 — DeerDevil 원본 파서(md-parser.ts) 사용 */
   private parseContentToBlocks(rawContent: string): Block[] {
-    const lines = rawContent.split('\n')
-    const blocks: Block[] = []
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mdParser = require('../../lib/md-parser')
 
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-
-      if (trimmed.startsWith('# ')) {
-        blocks.push({ type: 'heading', title: trimmed.slice(2) })
-      } else if (trimmed === '***' || trimmed === '---') {
-        blocks.push({ type: 'separator' })
-      } else {
-        blocks.push({ type: 'paragraph', text: trimmed })
-      }
+    // frontmatter 제거 후 본문 추출
+    let body = rawContent
+    try {
+      const parsed = mdParser.parseFrontmatter(rawContent)
+      body = parsed.body
+    } catch {
+      // frontmatter 없으면 rawContent 그대로 사용
+      // 단, 수동으로 --- 블록 제거
+      const match = rawContent.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)$/)
+      if (match) body = match[1]
     }
 
+    // DeerDevil 원본 파서로 블록 파싱 (chapter, refrain, italic, epilogue 등 전부 지원)
+    const { blocks } = mdParser.parseEpisodeBlocks(body)
     return blocks
   }
 }

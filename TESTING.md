@@ -1,6 +1,7 @@
 # TESTING.md — grimoire-server
 
-> 테스트 전략 + 현황.
+> 테스트 전략과 패턴.
+> 현재 테스트 수: `npm test` 실행으로 확인.
 
 ---
 
@@ -10,7 +11,7 @@
 |------|------|
 | Jest | 유닛 + 통합 테스트 |
 | ts-jest | TypeScript 변환 |
-| supertest | HTTP 통합 테스트 (Phase 2) |
+| supertest | HTTP 통합 테스트 |
 
 ---
 
@@ -26,44 +27,20 @@ npm run test:cov      # 커버리지 리포트
 
 ## 3. 테스트 구조
 
-```
-src/
-├── lib/
-│   ├── json-parser.spec.ts      # JSON 에러 복구 (7개)
-│   ├── md-parser.spec.ts        # MD 파서 (16개)
-│   └── txt-parser.spec.ts       # TXT 파서 + 포맷 감지 (11개)
-├── application/
-│   ├── auth/
-│   │   └── auth.usecase.spec.ts             # 인증 (등록/로그인) (6개)
-│   ├── theme/
-│   │   └── generate-theme.usecase.spec.ts  # 테마 생성 로직 (6개)
-│   └── credit/
-│       └── credit.usecase.spec.ts          # 크레딧 차감/적립 (14개)
-```
+- 유닛 테스트: `src/lib/*.spec.ts`, `src/lib/rag/*.spec.ts` (파서, 유틸리티)
+- UseCase 테스트: `src/application/*/*.spec.ts` (비즈니스 로직)
+- 전체 테스트 파일 목록: `find src -name "*.spec.ts"` 실행으로 확인
+- 현재 테스트 수: `npm test` 실행으로 확인
 
 ---
 
-## 4. 현황
-
-| 구분 | 테스트 수 | 상태 |
-|------|----------|------|
-| json-parser | 7 | 통과 |
-| md-parser | 16 | 통과 |
-| txt-parser | 11 | 통과 |
-| auth.usecase | 6 | 통과 |
-| generate-theme.usecase | 6 | 통과 |
-| credit.usecase | 14 | 통과 |
-| **합계** | **60** | **전부 통과** |
-
----
-
-## 5. 테스트 패턴
+## 4. 테스트 패턴
 
 ### Mock 전략
 
 - UseCase 테스트: Repository 포트를 jest.fn()으로 모킹
 - Claude API: ClaudeApiPort를 모킹 (실제 API 호출 방지)
-- Prisma: 통합 테스트에서만 실제 DB 사용 (Phase 2)
+- Payment Gateway: PaymentGatewayPort를 모킹
 
 ### 네이밍
 
@@ -73,7 +50,7 @@ src/
 
 ---
 
-## 6. 커밋 전 필수
+## 5. 커밋 전 필수
 
 1. `npm test` 전부 통과
 2. `npm run build` 성공
@@ -81,7 +58,7 @@ src/
 
 ---
 
-## 7. 참조 문서
+## 6. 참조 문서
 
 - `CLAUDE.md` §3 — 테스트 필수 규칙
 - 루트 `CLAUDE.md` §2 — 테스트 미통과 커밋 금지

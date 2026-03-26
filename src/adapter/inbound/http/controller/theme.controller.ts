@@ -7,6 +7,7 @@ import {
   Res,
   NotFoundException,
 } from '@nestjs/common'
+import { Throttle } from '@nestjs/throttler'
 import { Response } from 'express'
 import { GenerateThemeUseCase } from '@application/theme/generate-theme.usecase'
 import { GetThemeUseCase } from '@application/theme/get-theme.usecase'
@@ -22,6 +23,7 @@ export class ThemeController {
     private readonly bakeTheme: BakeThemeUseCase,
   ) {}
 
+  @Throttle({ default: { ttl: 60000, limit: 5 } })  // AI API 호출 — 분당 5회
   @Post('generate')
   async generate(@Body() dto: GenerateThemeDto) {
     const theme = await this.generateTheme.execute(dto.authorId, dto.description)
