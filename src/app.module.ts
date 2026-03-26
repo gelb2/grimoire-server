@@ -18,6 +18,7 @@ import { PaymentUseCase } from '@application/payment/payment.usecase'
 import { ReaderUseCase } from '@application/reader/reader.usecase'
 import { DiscoveryUseCase } from '@application/discovery/discovery.usecase'
 import { AdminUseCase } from '@application/admin/admin.usecase'
+import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
 
 // 컨트롤러
 import { HealthController } from '@adapter/inbound/http/controller/health.controller'
@@ -31,6 +32,7 @@ import { PaymentController } from '@adapter/inbound/http/controller/payment.cont
 import { ReaderController } from '@adapter/inbound/http/controller/reader.controller'
 import { DiscoveryController } from '@adapter/inbound/http/controller/discovery.controller'
 import { AdminController } from '@adapter/inbound/http/controller/admin.controller'
+import { AnalysisController } from '@adapter/inbound/http/controller/analysis.controller'
 
 // 아웃바운드 어댑터
 import { PrismaAuthorRepository } from '@adapter/outbound/persistence/prisma-author.repository'
@@ -61,6 +63,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     ReaderController,
     DiscoveryController,
     AdminController,
+    AnalysisController,
   ],
   providers: [
     // 인프라
@@ -80,6 +83,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     ReaderUseCase,
     DiscoveryUseCase,
     AdminUseCase,
+    NovelAnalysisUseCase,
     JwtAuthGuard,
 
     // 포트 → 어댑터 바인딩 (토큰 기반 DI)
