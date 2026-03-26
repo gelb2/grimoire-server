@@ -9,23 +9,33 @@
 
 | 리소스 | 서비스 | 용도 |
 |--------|--------|------|
-| grimoire-server-{env} | Azure Container Apps | API 서버 |
-| grimoire-db-{env} | Azure Database for PostgreSQL | 데이터베이스 |
-| grimoire-acr | Azure Container Registry | Docker 이미지 저장소 |
+| grimoire-rg | Resource Group | 전체 리소스 그룹 |
+| grimoireacr | Azure Container Registry (Basic) | Docker 이미지 저장소 |
+| grimoire-db-{dev/inhouse/prod} | Azure Database for PostgreSQL Flexible (B1ms) | 데이터베이스 |
+| grimoire-env | Azure Container Apps Environment | 컨테이너 앱 환경 |
+| grimoire-server-{dev/inhouse/prod} | Azure Container Apps | API 서버 |
+| grimoire-web-{dev/inhouse/prod} | Azure Container Apps | 웹 프론트엔드 |
 
-> Phase 1에서는 로컬 개발만 사용. Azure 리소스는 Phase 2 배포 시 생성 예정.
+> 리전: **Korea Central**
 
 ---
 
-## 2. 환경별 구성
+## 2. 환경별 URL 매핑
+
+| 환경 | Web URL | API URL | DB 서버 |
+|------|---------|---------|---------|
+| development | localhost:3001 | localhost:3000 | Docker/로컬 PostgreSQL |
+| inhouse | inhouse.grimoire.app | inhouse-api.grimoire.app | grimoire-db-inhouse |
+| production | grimoire.app | api.grimoire.app | grimoire-db-prod |
+
+### 환경별 설정
 
 | 항목 | development | inhouse | production |
 |------|-------------|---------|------------|
-| API URL | localhost:3000 | inhouse-api.grimoire.app | api.grimoire.app |
-| DB | Docker/로컬 PostgreSQL | Azure PostgreSQL | Azure PostgreSQL |
 | Swagger | 활성화 | 활성화 | **비활성화** |
 | CORS | localhost:* | inhouse.grimoire.app | grimoire.app |
 | 로깅 | verbose | info | warn |
+| 마이그레이션 | 자동 | 자동 | RUN_MIGRATION=true 필요 |
 
 상세 환경변수는 `docs/environments.md` 참조.
 
@@ -33,31 +43,29 @@
 
 ## 3. Docker 운영
 
-### 빌드
+### 로컬 개발 (docker-compose)
+
+```bash
+# 전체 스택 실행 (NestJS + PostgreSQL)
+docker-compose up -d
+
+# 인하우스 모드
+docker-compose -f docker-compose.yml -f docker-compose.inhouse.yml up -d
+
+# 프로덕션 모드
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# 로그 확인
+docker-compose logs -f server
+
+# 종료
+docker-compose down
+```
+
+### 단독 빌드
 
 ```bash
 docker build -t grimoire-server .
-```
-
-### 로컬 실행 (PostgreSQL 포함)
-
-```bash
-# PostgreSQL 컨테이너
-docker run -d --name grimoire-db \
-  -e POSTGRES_USER=grimoire \
-  -e POSTGRES_PASSWORD=REMOVED_CREDENTIAL_016 \
-  -e POSTGRES_DB=grimoire \
-  -p 5432:5432 \
-  postgres:16-alpine
-
-# 서버 컨테이너
-docker run -d --name grimoire-server \
-  -e DATABASE_URL=postgresql://grimoire:REMOVED_CREDENTIAL_016@host.docker.internal:5432/grimoire \
-  -e ANTHROPIC_API_KEY=sk-ant-... \
-  -e CORS_ORIGIN=http://localhost:3001 \
-  -e RUN_MIGRATION=true \
-  -p 3000:3000 \
-  grimoire-server
 ```
 
 ### 마이그레이션 제어
@@ -70,19 +78,196 @@ docker run -d --name grimoire-server \
 
 ---
 
-## 4. CI/CD 파이프라인 (Phase 2 예정)
+## 4. CI/CD 파이프라인
+
+### 워크플로우 구성 (8개)
+
+| 레포 | 워크플로우 | 트리거 | 용도 |
+|------|-----------|--------|------|
+| server | ci.yml | PR → develop/inhouse/main | 빌드 + 테스트 + Docker 검증 |
+| server | deploy-dev.yml | push → develop | 개발 환경 배포 |
+| server | deploy-inhouse.yml | push → inhouse | 인하우스 배포 |
+| server | deploy-prod.yml | push → main | 프로덕션 배포 |
+| web | ci.yml | PR → develop/inhouse/main | 빌드 + 테스트 + E2E |
+| web | deploy-dev.yml | push → develop | 개발 환경 배포 |
+| web | deploy-inhouse.yml | push → inhouse | 인하우스 배포 |
+| web | deploy-prod.yml | push → main | 프로덕션 배포 |
+
+### 배포 흐름
 
 ```
-develop push → build:dev → Azure Container Apps (grimoire-server-dev)
-inhouse push → build:inhouse → Azure Container Apps (grimoire-server-inhouse)
-main push → build:prod → Azure Container Apps (grimoire-server-prod)
+develop push → docker build → ACR push → Container Apps 업데이트
+inhouse push → docker build → ACR push → Container Apps 업데이트
+main push    → docker build → ACR push → Container Apps 업데이트
 ```
 
-`.github/workflows/` 참조.
+### 이미지 태그 전략
+
+```
+grimoireacr.azurecr.io/grimoire-server:{env}-{SHA}
+grimoireacr.azurecr.io/grimoire-server:{env}-latest
+grimoireacr.azurecr.io/grimoire-web:{env}-{SHA}
+grimoireacr.azurecr.io/grimoire-web:{env}-latest
+```
 
 ---
 
-## 5. 참조 문서
+## 5. GitHub Secrets 설정
+
+| Secret | 용도 |
+|--------|------|
+| AZURE_CREDENTIALS | Azure 서비스 주체 JSON |
+| ACR_LOGIN_SERVER | grimoireacr.azurecr.io |
+| ACR_USERNAME | ACR 관리자 사용자명 |
+| ACR_PASSWORD | ACR 관리자 비밀번호 |
+| DEV_API_URL | 개발 API URL (web 전용) |
+| INHOUSE_API_URL | 인하우스 API URL (web 전용) |
+| PROD_API_URL | 프로덕션 API URL (web 전용) |
+
+### Azure 서비스 주체 생성
+
+```bash
+az ad sp create-for-rbac \
+  --name "grimoire-github-actions" \
+  --role contributor \
+  --scopes /subscriptions/{SUBSCRIPTION_ID}/resourceGroups/grimoire-rg \
+  --sdk-auth
+```
+
+---
+
+## 6. 수동 배포 명령어
+
+### ACR 로그인
+
+```bash
+az acr login --name grimoireacr
+```
+
+### 수동 빌드 + 푸시 (server)
+
+```bash
+docker build -t grimoireacr.azurecr.io/grimoire-server:dev-manual .
+docker push grimoireacr.azurecr.io/grimoire-server:dev-manual
+az containerapp update \
+  --name grimoire-server-dev \
+  --resource-group grimoire-rg \
+  --image grimoireacr.azurecr.io/grimoire-server:dev-manual
+```
+
+### 수동 빌드 + 푸시 (web)
+
+```bash
+docker build \
+  --build-arg NEXT_PUBLIC_API_URL=https://grimoire-server-dev.{FQDN} \
+  -t grimoireacr.azurecr.io/grimoire-web:dev-manual .
+docker push grimoireacr.azurecr.io/grimoire-web:dev-manual
+az containerapp update \
+  --name grimoire-web-dev \
+  --resource-group grimoire-rg \
+  --image grimoireacr.azurecr.io/grimoire-web:dev-manual
+```
+
+---
+
+## 7. 로그 확인
+
+```bash
+# 실시간 로그 스트리밍
+az containerapp logs show \
+  --name grimoire-server-dev \
+  --resource-group grimoire-rg \
+  --follow
+
+# 최근 로그 조회
+az containerapp logs show \
+  --name grimoire-server-dev \
+  --resource-group grimoire-rg \
+  --tail 100
+
+# 리비전 목록
+az containerapp revision list \
+  --name grimoire-server-dev \
+  --resource-group grimoire-rg \
+  -o table
+```
+
+---
+
+## 8. 방화벽 관리 (마이그레이션용)
+
+```bash
+# 로컬 IP에서 DB 접근 허용 (마이그레이션 실행 시)
+az postgres flexible-server firewall-rule create \
+  --resource-group grimoire-rg \
+  --name grimoire-db-dev \
+  --rule-name AllowMyIP \
+  --start-ip-address {MY_IP} \
+  --end-ip-address {MY_IP}
+
+# 마이그레이션 실행
+DATABASE_URL="postgresql://grimoireadmin:{PW}@grimoire-db-dev.postgres.database.azure.com:5432/grimoire?sslmode=require" \
+npx prisma migrate deploy
+
+# 방화벽 규칙 제거 (마이그레이션 완료 후)
+az postgres flexible-server firewall-rule delete \
+  --resource-group grimoire-rg \
+  --name grimoire-db-dev \
+  --rule-name AllowMyIP \
+  --yes
+```
+
+---
+
+## 9. 비용 예측
+
+| 리소스 | 단가 | 수량 | 월 비용 |
+|--------|------|------|---------|
+| PostgreSQL B1ms | ~$12/월 | 3 | ~$36 |
+| Container Apps | 사용량 기반 | 6 | ~$3-5 |
+| Container Registry Basic | $5/월 | 1 | $5 |
+| **합계** | | | **~$44-46/월** |
+
+> 예산 알림: $50/월 설정 (`az consumption budget`)
+
+---
+
+## 10. Cloudflare DNS 설정 가이드
+
+### CNAME 레코드 설정
+
+| 레코드 | 이름 | 대상 |
+|--------|------|------|
+| CNAME | grimoire.app | grimoire-web-prod.{FQDN} |
+| CNAME | inhouse.grimoire.app | grimoire-web-inhouse.{FQDN} |
+| CNAME | api.grimoire.app | grimoire-server-prod.{FQDN} |
+| CNAME | inhouse-api.grimoire.app | grimoire-server-inhouse.{FQDN} |
+
+> FQDN은 Azure Container Apps 생성 후 확인 가능:
+> ```bash
+> az containerapp show --name grimoire-server-prod --resource-group grimoire-rg --query "properties.configuration.ingress.fqdn" -o tsv
+> ```
+
+### SSL 설정
+
+- Cloudflare SSL: Full (strict)
+- Azure Container Apps: 자동 HTTPS 인증서
+
+---
+
+## 11. 초기 세팅
+
+```bash
+# Azure 리소스 일괄 생성
+chmod +x scripts/azure-setup.sh
+./scripts/azure-setup.sh
+```
+
+상세: `scripts/azure-setup.sh` 참조.
+
+---
+
+## 12. 참조 문서
 
 - `docs/environments.md` — 빌드 환경 + 배포 전략 (정본)
 - `SECURITY.md` — 보안 정책 + 배포 전 체크리스트
