@@ -30,8 +30,11 @@ npm run test:cov      # 커버리지 리포트
 src/
 ├── lib/
 │   ├── json-parser.spec.ts      # JSON 에러 복구 (7개)
-│   └── md-parser.spec.ts        # MD 파서 (16개)
+│   ├── md-parser.spec.ts        # MD 파서 (16개)
+│   └── txt-parser.spec.ts       # TXT 파서 + 포맷 감지 (11개)
 ├── application/
+│   ├── auth/
+│   │   └── auth.usecase.spec.ts             # 인증 (등록/로그인) (6개)
 │   ├── theme/
 │   │   └── generate-theme.usecase.spec.ts  # 테마 생성 로직 (6개)
 │   └── credit/
@@ -46,9 +49,11 @@ src/
 |------|----------|------|
 | json-parser | 7 | 통과 |
 | md-parser | 16 | 통과 |
+| txt-parser | 11 | 통과 |
+| auth.usecase | 6 | 통과 |
 | generate-theme.usecase | 6 | 통과 |
 | credit.usecase | 14 | 통과 |
-| **합계** | **43** | **전부 통과** |
+| **합계** | **60** | **전부 통과** |
 
 ---
 

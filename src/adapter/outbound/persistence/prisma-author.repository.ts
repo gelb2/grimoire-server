@@ -22,7 +22,7 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
     return row ? toDomain(row) : null
   }
 
-  async create(input: { slug: string; name: string; email: string }): Promise<Author> {
+  async create(input: { slug: string; name: string; email: string; passwordHash?: string }): Promise<Author> {
     const row = await this.prisma.author.create({ data: input })
     return toDomain(row)
   }
@@ -36,12 +36,13 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
   }
 }
 
-function toDomain(row: { id: string; slug: string; name: string; email: string; credits: number; createdAt: Date }): Author {
+function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; credits: number; createdAt: Date }): Author {
   return {
     id: row.id,
     slug: row.slug,
     name: row.name,
     email: row.email,
+    passwordHash: row.passwordHash ?? undefined,
     credits: row.credits,
     createdAt: row.createdAt,
   }
