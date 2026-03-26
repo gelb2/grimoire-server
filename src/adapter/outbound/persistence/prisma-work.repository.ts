@@ -132,7 +132,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
   async findPopular(limit: number): Promise<WorkWithMeta[]> {
     const rows = await this.prisma.work.findMany({
       take: limit,
-      orderBy: { viewCount: 'desc' },
+      orderBy: [{ viewCount: 'desc' }, { createdAt: 'asc' }],
       include: {
         author: { select: { name: true, slug: true } },
         _count: { select: { episodes: true } },
