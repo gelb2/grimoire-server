@@ -20,4 +20,4 @@ else
 fi
 
 echo "=== 서버 시작..."
-exec node dist/src/main.js
+exec node dist/main.js
