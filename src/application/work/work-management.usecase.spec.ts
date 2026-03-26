@@ -22,6 +22,7 @@ describe('WorkManagementUseCase', () => {
     slug: 'episode-1',
     title: '에피소드 1',
     subtitle: null,
+    type: 'episode',
     orderNum: 1,
     blocks: [],
     rawMd: '본문',

@@ -36,7 +36,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     const rows = await this.prisma.episode.findMany({
       where: { workId },
       orderBy: { orderNum: 'asc' },
-      select: { id: true, slug: true, title: true, subtitle: true, orderNum: true },
+      select: { id: true, slug: true, title: true, subtitle: true, type: true, orderNum: true },
     })
     return rows
   }
@@ -86,6 +86,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     slug: string
     title: string
     subtitle?: string
+    type?: string
     orderNum: number
     blocks: Block[]
     rawMd: string
@@ -97,6 +98,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
         slug: input.slug,
         title: input.title,
         subtitle: input.subtitle,
+        type: input.type || 'episode',
         orderNum: input.orderNum,
         blocks: input.blocks as object[],
         rawMd: input.rawMd,
@@ -171,7 +173,7 @@ function toWorkDomain(row: {
 
 function toEpisodeDomain(row: {
   id: string; workId: string; slug: string; title: string;
-  subtitle: string | null; orderNum: number; blocks: unknown; rawMd: string; createdAt: Date
+  subtitle: string | null; type: string; orderNum: number; blocks: unknown; rawMd: string; createdAt: Date
 }): Episode {
-  return { id: row.id, workId: row.workId, slug: row.slug, title: row.title, subtitle: row.subtitle, orderNum: row.orderNum, blocks: row.blocks as Block[], rawMd: row.rawMd, createdAt: row.createdAt }
+  return { id: row.id, workId: row.workId, slug: row.slug, title: row.title, subtitle: row.subtitle, type: row.type, orderNum: row.orderNum, blocks: row.blocks as Block[], rawMd: row.rawMd, createdAt: row.createdAt }
 }

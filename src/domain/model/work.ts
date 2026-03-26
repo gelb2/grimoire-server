@@ -24,6 +24,7 @@ export interface Episode {
   slug: string
   title: string
   subtitle: string | null
+  type: string
   orderNum: number
   blocks: Block[]
   rawMd: string
@@ -35,6 +36,7 @@ export interface EpisodeSummary {
   slug: string
   title: string
   subtitle: string | null
+  type: string
   orderNum: number
 }
 
