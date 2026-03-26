@@ -21,7 +21,7 @@ const prisma = new PrismaClient({
   datasources: { db: { url: AZURE_DB_URL } },
 })
 
-const MD_DIR = '/Users/sokol/Desktop/Git/DeerDevil/DeerDevil_MDfiles'
+const MD_DIR = join(__dirname, '../../grimoire-web/DeerDevil_MDfiles')
 const AUTHOR_SLUG = 'deerdevil'
 const WORK_SLUG = 'deerdevil'
 

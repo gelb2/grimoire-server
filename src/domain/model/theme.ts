@@ -20,6 +20,9 @@ export interface AuthorTheme {
   animation: 'typing' | 'fade' | 'slide' | 'none'
   cardStyle: 'sharp' | 'rounded' | 'minimal'
   tone: 'dark' | 'light' | 'sepia' | 'custom'
+
+  tagline?: string           // 작가별 대표 문구 (e.g., "결핍은 질문을 삼킨다.")
+  dividerIcon?: string       // 'antler' | 'flower' | 'star' | 'geometric' | 'brush' | 'leaf' | 'camellia' | 'umbrella' | 'waterwheel' | 'none'
 }
 
 /** DB에 저장되는 테마 엔티티 */
