@@ -16,7 +16,10 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "seed:deerdevil": "npx tsx scripts/seed-deerdevil.ts",
+    "seed:classics": "npx tsx scripts/seed-classics.ts",
+    "seed:themes": "npx tsx scripts/seed-themes.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -24,6 +27,7 @@
     "@nestjs/core": "^10.4.0",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/platform-express": "^10.4.0",
+    "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "^6.5.0",
     "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",

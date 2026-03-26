@@ -12,6 +12,7 @@ describe('WorkManagementUseCase', () => {
     title: '테스트 작품',
     subtitle: null,
     description: null,
+    viewCount: 0,
     createdAt: new Date(),
   }
 
@@ -21,6 +22,7 @@ describe('WorkManagementUseCase', () => {
     slug: 'episode-1',
     title: '에피소드 1',
     subtitle: null,
+    type: 'episode',
     orderNum: 1,
     blocks: [],
     rawMd: '본문',
@@ -138,6 +140,50 @@ describe('WorkManagementUseCase', () => {
           orderNum: 1,
         }),
       )
+    })
+
+    it('frontmatter가 있는 rawContent에서 메타데이터를 제거하고 블록을 생성한다', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.countEpisodesByWorkId.mockResolvedValue(0)
+      mockWorkRepo.createEpisode.mockResolvedValue(mockEpisode)
+
+      const rawContent = `---
+slug: ep1
+type: episode
+title: "테스트"
+---
+# 에피소드 제목
+
+본문 내용입니다.`
+
+      await useCase.createEpisode('author-1', 'work-1', {
+        title: 'Episode 1',
+        rawContent,
+      })
+
+      const calledWith = mockWorkRepo.createEpisode.mock.calls[0][0]
+      // frontmatter 메타데이터가 블록에 포함되지 않아야 한다
+      const paragraphTexts = calledWith.blocks
+        .filter((b: any) => b.type === 'paragraph')
+        .map((b: any) => b.text)
+      expect(paragraphTexts).not.toContain('slug: ep1')
+      expect(paragraphTexts).not.toContain('type: episode')
+      expect(paragraphTexts).toContain('본문 내용입니다.')
+    })
+
+    it('한글 제목의 슬러그에서 한글을 제거한다', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.countEpisodesByWorkId.mockResolvedValue(0)
+      mockWorkRepo.createEpisode.mockResolvedValue(mockEpisode)
+
+      await useCase.createEpisode('author-1', 'work-1', {
+        title: '서시',
+        rawContent: '본문',
+      })
+
+      const calledWith = mockWorkRepo.createEpisode.mock.calls[0][0]
+      // 한글만 있는 제목은 빈 문자열 → fallback slug 사용
+      expect(calledWith.slug).toBe('episode-1')
     })
 
     it('소유자가 아니면 ForbiddenException을 던진다', async () => {

@@ -56,21 +56,30 @@ export function parseEpisodeBlocks(body: string): { title: string; blocks: Block
       continue
     }
 
-    // # 제목 (H1)
+    // # 제목 (H1) → title 추출 + heading-1 블록
     if (trimmed.startsWith('# ') && !trimmed.startsWith('## ') && !trimmed.startsWith('### ')) {
       title = trimmed.slice(2).trim()
+      blocks.push({ type: 'heading-1', title })
       i++
       continue
     }
 
-    // ## 부제 (H2) → 무시 (frontmatter에서 관리)
-    if (trimmed.startsWith('## ')) {
+    // ## 부제 (H2) → heading-2 블록
+    if (trimmed.startsWith('## ') && !trimmed.startsWith('### ')) {
+      blocks.push({ type: 'heading-2', title: trimmed.slice(3).trim() })
       i++
       continue
     }
 
-    // --- 구분선
+    // --- 구분선 → separator 블록
     if (/^-{3,}$/.test(trimmed)) {
+      blocks.push({ type: 'separator' })
+      i++
+      continue
+    }
+
+    // * * * 또는 · · · → divider 블록
+    if (/^(\*\s*\*\s*\*|·\s*·\s*·)$/.test(trimmed)) {
       blocks.push({ type: 'divider' })
       i++
       continue
@@ -95,6 +104,13 @@ export function parseEpisodeBlocks(body: string): { title: string; blocks: Block
       continue
     }
 
+    // ### 일반 제목 (번호 없는 챕터) → chapter 블록 (num 없음)
+    if (trimmed.startsWith('### ')) {
+      blocks.push({ type: 'chapter', title: trimmed.slice(4).trim() })
+      i++
+      continue
+    }
+
     // > 인용문
     if (trimmed.startsWith('> ')) {
       const quoteText = trimmed.slice(2).trim()
@@ -110,6 +126,14 @@ export function parseEpisodeBlocks(body: string): { title: string; blocks: Block
       }
 
       blocks.push({ type: 'refrain', text: quoteText })
+      i++
+      continue
+    }
+
+    // **전체 볼드 문단**
+    const boldMatch = trimmed.match(/^\*\*([^*]+)\*\*$/)
+    if (boldMatch) {
+      blocks.push({ type: 'bold', text: boldMatch[1] })
       i++
       continue
     }

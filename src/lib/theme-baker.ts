@@ -28,12 +28,12 @@ export function bakeThemeToCSS(
   }
   if (theme.fontBody) {
     cssVars.push(
-      `  --u-font-body: ${fontMap[theme.fontBody] || theme.fontBody};`,
+      `  --u-serif: ${fontMap[theme.fontBody] || theme.fontBody};`,
     )
   }
   if (theme.fontHeading) {
     cssVars.push(
-      `  --u-font-heading: ${fontMap[theme.fontHeading] || theme.fontHeading};`,
+      `  --u-sans: ${fontMap[theme.fontHeading] || theme.fontHeading};`,
     )
   }
 

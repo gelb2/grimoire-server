@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
-import { Work, Episode, EpisodeSummary } from '@domain/model/work'
+import { Work, Episode, EpisodeSummary, WorkWithMeta } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 
 @Injectable()
@@ -36,7 +36,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     const rows = await this.prisma.episode.findMany({
       where: { workId },
       orderBy: { orderNum: 'asc' },
-      select: { id: true, slug: true, title: true, subtitle: true, orderNum: true },
+      select: { id: true, slug: true, title: true, subtitle: true, type: true, orderNum: true },
     })
     return rows
   }
@@ -86,6 +86,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     slug: string
     title: string
     subtitle?: string
+    type?: string
     orderNum: number
     blocks: Block[]
     rawMd: string
@@ -97,6 +98,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
         slug: input.slug,
         title: input.title,
         subtitle: input.subtitle,
+        type: input.type || 'episode',
         orderNum: input.orderNum,
         blocks: input.blocks as object[],
         rawMd: input.rawMd,
@@ -127,33 +129,51 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     return rows.map(toWorkDomain)
   }
 
-  async findPopular(limit: number): Promise<Work[]> {
+  async findPopular(limit: number): Promise<WorkWithMeta[]> {
     const rows = await this.prisma.work.findMany({
       take: limit,
       orderBy: { viewCount: 'desc' },
+      include: {
+        author: { select: { name: true, slug: true } },
+        _count: { select: { episodes: true } },
+      },
     })
-    return rows.map(toWorkDomain)
+    return rows.map((r) => ({
+      ...toWorkDomain(r),
+      authorName: r.author.name,
+      authorSlug: r.author.slug,
+      episodeCount: r._count.episodes,
+    }))
   }
 
-  async findRecent(limit: number): Promise<Work[]> {
+  async findRecent(limit: number): Promise<WorkWithMeta[]> {
     const rows = await this.prisma.work.findMany({
       take: limit,
       orderBy: { createdAt: 'desc' },
+      include: {
+        author: { select: { name: true, slug: true } },
+        _count: { select: { episodes: true } },
+      },
     })
-    return rows.map(toWorkDomain)
+    return rows.map((r) => ({
+      ...toWorkDomain(r),
+      authorName: r.author.name,
+      authorSlug: r.author.slug,
+      episodeCount: r._count.episodes,
+    }))
   }
 }
 
 function toWorkDomain(row: {
   id: string; authorId: string; slug: string; title: string;
-  subtitle: string | null; description: string | null; createdAt: Date
+  subtitle: string | null; description: string | null; viewCount?: number; createdAt: Date
 }): Work {
-  return { id: row.id, authorId: row.authorId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, createdAt: row.createdAt }
+  return { id: row.id, authorId: row.authorId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, viewCount: row.viewCount ?? 0, createdAt: row.createdAt }
 }
 
 function toEpisodeDomain(row: {
   id: string; workId: string; slug: string; title: string;
-  subtitle: string | null; orderNum: number; blocks: unknown; rawMd: string; createdAt: Date
+  subtitle: string | null; type: string; orderNum: number; blocks: unknown; rawMd: string; createdAt: Date
 }): Episode {
-  return { id: row.id, workId: row.workId, slug: row.slug, title: row.title, subtitle: row.subtitle, orderNum: row.orderNum, blocks: row.blocks as Block[], rawMd: row.rawMd, createdAt: row.createdAt }
+  return { id: row.id, workId: row.workId, slug: row.slug, title: row.title, subtitle: row.subtitle, type: row.type, orderNum: row.orderNum, blocks: row.blocks as Block[], rawMd: row.rawMd, createdAt: row.createdAt }
 }

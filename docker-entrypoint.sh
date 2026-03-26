@@ -20,4 +20,13 @@ else
 fi
 
 echo "=== 서버 시작..."
-exec node dist/main.js
+# NestJS 빌드 출력 경로가 환경에 따라 dist/main.js 또는 dist/src/main.js
+if [ -f dist/main.js ]; then
+  exec node dist/main.js
+elif [ -f dist/src/main.js ]; then
+  exec node dist/src/main.js
+else
+  echo "=== ERROR: main.js를 찾을 수 없습니다"
+  ls -R dist/ | head -20
+  exit 1
+fi

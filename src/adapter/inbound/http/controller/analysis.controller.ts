@@ -1,4 +1,5 @@
 import { Controller, Post, Get, Body, Param, UseGuards, BadRequestException } from '@nestjs/common'
+import { Throttle } from '@nestjs/throttler'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 
@@ -10,6 +11,7 @@ export class AnalysisController {
   constructor(private readonly analysisUseCase: NovelAnalysisUseCase) {}
 
   /** 에피소드 인덱싱 (벡터화) */
+  @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @UseGuards(JwtAuthGuard)
   @Post('index')
   async indexEpisode(@Body() body: { episodeId: string; workId: string; rawText: string }) {
@@ -18,6 +20,7 @@ export class AnalysisController {
   }
 
   /** 새 에피소드 일관성 분석 */
+  @Throttle({ default: { ttl: 60000, limit: 3 } })  // AI API 호출 — 분당 3회
   @UseGuards(JwtAuthGuard)
   @Post('check')
   async analyzeEpisode(
