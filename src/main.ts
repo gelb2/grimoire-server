@@ -1,0 +1,41 @@
+import { NestFactory } from '@nestjs/core'
+import { ValidationPipe } from '@nestjs/common'
+import { AppModule } from './app.module'
+import { validateEnv } from '@infrastructure/config/env.validation'
+
+async function bootstrap() {
+  validateEnv()
+
+  const app = await NestFactory.create(AppModule)
+
+  app.setGlobalPrefix('api')
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  )
+
+  app.enableCors({
+    origin: process.env.CORS_ORIGIN || 'http://localhost:3001',
+  })
+
+  const port = process.env.PORT || 3000
+  await app.listen(port)
+  console.log(`grimoire-server 시작 — 포트: ${port}`)
+
+  // 그레이스풀 셧다운
+  const shutdown = async (signal: string) => {
+    console.log(`${signal} 수신 — 그레이스풀 셧다운 시작...`)
+    await app.close()
+    console.log('서버 정상 종료 완료')
+    process.exit(0)
+  }
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
+  process.on('SIGINT', () => shutdown('SIGINT'))
+}
+
+bootstrap()

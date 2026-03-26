@@ -1,0 +1,83 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Author {
+  id        String      @id @default(uuid())
+  slug      String      @unique
+  name      String
+  email     String      @unique
+  credits   Int         @default(3)
+  theme     Theme?
+  works     Work[]
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  @@map("authors")
+}
+
+model Theme {
+  id             String   @id @default(uuid())
+  author         Author   @relation(fields: [authorId], references: [id])
+  authorId       String   @unique @map("author_id")
+  preset         String   @default("midnight")
+  overrides      Json?
+  rawDescription String?  @map("raw_description")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("themes")
+}
+
+model Work {
+  id          String    @id @default(uuid())
+  author      Author    @relation(fields: [authorId], references: [id])
+  authorId    String    @map("author_id")
+  slug        String
+  title       String
+  subtitle    String?
+  description String?
+  episodes    Episode[]
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@unique([authorId, slug])
+  @@map("works")
+}
+
+model Episode {
+  id        String   @id @default(uuid())
+  work      Work     @relation(fields: [workId], references: [id])
+  workId    String   @map("work_id")
+  slug      String
+  title     String
+  subtitle  String?
+  orderNum  Int      @map("order_num")
+  blocks    Json
+  rawMd     String   @map("raw_md")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([workId, slug])
+  @@map("episodes")
+}
+
+model CreditLog {
+  id        String   @id @default(uuid())
+  authorId  String   @map("author_id")
+  amount    Int
+  reason    String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("credit_logs")
+}
+
+model SignupHistory {
+  providerId    String   @id @map("provider_id")
+  firstSignupAt DateTime @default(now()) @map("first_signup_at")
+  signupCount   Int      @default(1) @map("signup_count")
+
+  @@map("signup_history")
+}

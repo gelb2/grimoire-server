@@ -21,8 +21,11 @@ MD 원고를 파싱하여 블록 데이터로 변환하는 백엔드 서버.
 | 3 | `docs/theme-spec.md` | 테마 파라미터 (Claude API 응답 형식) |
 | 4 | `docs/environments.md` (정본) | 빌드 환경 + Azure 배포 |
 | 5 | `docs/glossary.md` (정본) | 용어 정의 |
-| 6 | `SCHEMA.md` | Prisma 스키마 구현 상세 |
-| 7 | `INFRASTRUCTURE.md` | Azure 인프라 구성 |
+| 6 | `SCHEMA.md` | Prisma 스키마 구현 상세 (`docs/data-model.md` 구현) |
+| 7 | `INFRASTRUCTURE.md` | Azure 인프라 구성 (`docs/environments.md` 구현) |
+| 8 | `SECURITY.md` | 보안 정책 + 배포 전 체크리스트 |
+| 9 | `TECH_STATUS.md` | 현재 구현 상태 + 배포 현황 |
+| 10 | `TESTING.md` | 테스트 전략 + 현황 |
 
 ---
 
@@ -53,23 +56,31 @@ MD 원고를 파싱하여 블록 데이터로 변환하는 백엔드 서버.
 ```
 src/
 ├── domain/                     # 순수 비즈니스 로직
-│   ├── model/                  # 값 객체 (Theme, Block, Author)
-│   └── port/                   # 인터페이스 (inbound/outbound)
-├── application/                # Use Cases
-│   ├── theme/                  # 테마 생성/조회
-│   ├── manuscript/             # 원고 파싱/저장
-│   └── auth/                   # 인증
+│   ├── model/                  # 값 객체 (Author, Theme, Work, Episode, Block, Credit, Frontmatter)
+│   └── port/
+│       └── outbound/           # Repository + AI 포트 (5개 인터페이스)
+├── application/                # Use Cases (6개)
+│   ├── theme/                  # GenerateThemeUseCase, GetThemeUseCase
+│   ├── manuscript/             # ParseManuscriptUseCase
+│   ├── credit/                 # CreditUseCase
+│   ├── author/                 # AuthorUseCase
+│   └── content/                # ContentUseCase
 ├── adapter/
-│   ├── inbound/http/           # Controllers (REST API)
+│   ├── inbound/http/
+│   │   ├── controller/         # Health, Theme, Manuscript, Author, Content
+│   │   └── dto/                # GenerateThemeDto, ParseManuscriptDto
 │   └── outbound/
-│       ├── persistence/        # Prisma Repository 구현
-│       └── ai/                 # Claude API 클라이언트
+│       ├── persistence/        # PrismaAuthor/Theme/Work/CreditRepository
+│       └── ai/                 # ClaudeThemeAdapter
 ├── infrastructure/
-│   ├── prisma/                 # DB 설정
-│   └── config/                 # 환경변수
-└── lib/
-    ├── claude.ts               # Claude API 래퍼 (YECHANGPE 패턴)
-    └── md-parser.ts            # MD → Block[] 파서 (DeerDevil에서 이관)
+│   ├── prisma/                 # PrismaService (PrismaClient 확장)
+│   └── config/                 # 환경변수 검증
+├── lib/
+│   ├── claude.ts               # Claude API 래퍼 (YECHANGPE 패턴)
+│   ├── json-parser.ts          # JSON 에러 복구 (3단계)
+│   └── md-parser.ts            # MD → Block[] 파서 (DeerDevil에서 이관)
+├── app.module.ts               # 루트 모듈 (포트-어댑터 DI 바인딩)
+└── main.ts                     # 부트스트랩 (ValidationPipe, CORS, Prefix)
 ```
 
 ---
@@ -117,20 +128,21 @@ function tryParseJSON(raw: string): ThemeJSON {
 
 ---
 
-## 7. API 엔드포인트 (초안)
+## 7. API 엔드포인트
 
-| Method | Path | 용도 |
-|--------|------|------|
-| POST | `/api/auth/register` | 작가 가입 |
-| POST | `/api/auth/login` | 로그인 |
-| POST | `/api/themes/generate` | Claude API로 테마 생성 |
-| GET | `/api/themes/:authorSlug` | 작가 테마 조회 |
-| POST | `/api/manuscripts/parse` | MD 파일 → Block[] 파싱 |
-| GET | `/api/authors/:slug` | 작가 공간 데이터 |
-| GET | `/api/works/:authorSlug/:workSlug` | 작품 데이터 |
-| GET | `/api/episodes/:authorSlug/:workSlug/:episodeSlug` | 에피소드 데이터 |
+| Method | Path | 용도 | Phase | 상태 |
+|--------|------|------|-------|------|
+| GET | `/api/health` | 헬스체크 | 1 | 구현 완료 |
+| POST | `/api/themes/generate` | Claude API로 테마 생성 | 1 | 구현 완료 |
+| GET | `/api/themes/:authorSlug` | 작가 테마 조회 | 1 | 구현 완료 |
+| POST | `/api/manuscripts/parse` | MD 텍스트 → Block[] 파싱 | 1 | 구현 완료 |
+| GET | `/api/authors/:slug` | 작가 공간 데이터 (테마 + 작품 목록) | 1 | 구현 완료 |
+| GET | `/api/works/:authorSlug/:workSlug` | 작품 데이터 (에피소드 목록 포함) | 1 | 구현 완료 |
+| GET | `/api/episodes/:authorSlug/:workSlug/:episodeSlug` | 에피소드 데이터 (Block[] 포함) | 1 | 구현 완료 |
+| POST | `/api/auth/register` | 작가 가입 | 3 | 미구현 |
+| POST | `/api/auth/login` | 로그인 | 3 | 미구현 |
 
-상세 명세는 `docs/api-contract.md` 참조.
+상세 명세는 `docs/api-contract.md` 참조. 현재 상태는 `TECH_STATUS.md` 참조.
 
 ---
 
