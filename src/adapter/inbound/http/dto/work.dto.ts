@@ -1,10 +1,10 @@
 import { IsString, IsOptional, MinLength } from 'class-validator'
 
 export class CreateWorkDto {
-  @IsString() @MinLength(1) title: string
+  @IsString() @MinLength(1) title!: string
   @IsString() @IsOptional() subtitle?: string
   @IsString() @IsOptional() description?: string
-  @IsString() @MinLength(1) slug: string
+  @IsString() @MinLength(1) slug!: string
 }
 
 export class UpdateWorkDto {
@@ -14,7 +14,7 @@ export class UpdateWorkDto {
 }
 
 export class CreateEpisodeDto {
-  @IsString() @MinLength(1) title: string
-  @IsString() rawContent: string
+  @IsString() @MinLength(1) title!: string
+  @IsString() rawContent!: string
   @IsString() @IsOptional() sourceFormat?: string // 'markdown' | 'txt' | 'docx'
 }

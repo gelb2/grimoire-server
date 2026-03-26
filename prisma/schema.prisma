@@ -53,12 +53,12 @@ model Work {
 }
 
 model Episode {
-  id        String   @id @default(uuid())
-  work      Work     @relation(fields: [workId], references: [id])
-  workId    String   @map("work_id")
-  slug      String
-  title     String
-  subtitle  String?
+  id           String   @id @default(uuid())
+  work         Work     @relation(fields: [workId], references: [id])
+  workId       String   @map("work_id")
+  slug         String
+  title        String
+  subtitle     String?
   orderNum     Int      @map("order_num")
   blocks       Json
   rawMd        String   @map("raw_md")
@@ -112,11 +112,11 @@ model Bookmark {
 }
 
 model ReadingProgress {
-  id          String   @id @default(uuid())
-  authorId    String   @map("author_id")
-  episodeId   String   @map("episode_id")
-  blockIndex  Int      @map("block_index")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id         String   @id @default(uuid())
+  authorId   String   @map("author_id")
+  episodeId  String   @map("episode_id")
+  blockIndex Int      @map("block_index")
+  updatedAt  DateTime @updatedAt @map("updated_at")
 
   @@unique([authorId, episodeId])
   @@map("reading_progress")
@@ -133,10 +133,10 @@ model Like {
 }
 
 model Subscription {
-  id              String   @id @default(uuid())
-  subscriberId    String   @map("subscriber_id")
-  targetAuthorId  String   @map("target_author_id")
-  createdAt       DateTime @default(now()) @map("created_at")
+  id             String   @id @default(uuid())
+  subscriberId   String   @map("subscriber_id")
+  targetAuthorId String   @map("target_author_id")
+  createdAt      DateTime @default(now()) @map("created_at")
 
   @@unique([subscriberId, targetAuthorId])
   @@map("subscriptions")
