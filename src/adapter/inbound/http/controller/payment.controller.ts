@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common'
+import { SkipThrottle, Throttle } from '@nestjs/throttler'
 import { PaymentUseCase } from '@application/payment/payment.usecase'
 import { CreditUseCase } from '@application/credit/credit.usecase'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
@@ -18,6 +19,7 @@ export class PaymentController {
   }
 
   /** 결제 시작 (인증 필요) */
+  @Throttle({ default: { ttl: 60000, limit: 3 } })  // 분당 3회
   @UseGuards(JwtAuthGuard)
   @Post('initiate')
   async initiatePayment(@Req() req: any, @Body() body: { productId: string; returnUrl: string }) {
@@ -25,6 +27,7 @@ export class PaymentController {
   }
 
   /** PAYAPP 웹훅 콜백 (공개, 서명 검증) */
+  @SkipThrottle()  // 외부 서비스 호출 — 제한 없음
   @Post('webhook')
   async webhook(@Body() body: WebhookPayload) {
     return this.paymentUseCase.processWebhook(body)
