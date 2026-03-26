@@ -9,11 +9,14 @@
 | 변수 | 민감도 | 관리 방식 |
 |------|--------|----------|
 | DATABASE_URL | 높음 | Azure Key Vault / GitHub Secrets |
-| ANTHROPIC_API_KEY | 높음 | Azure Key Vault / GitHub Secrets |
+| ANTHROPIC_API_KEY | 높음 (선택적) | Azure Key Vault / GitHub Secrets |
+| JWT_SECRET | 높음 | Azure Key Vault / GitHub Secrets |
 | CORS_ORIGIN | 중간 | 환경별 설정 |
 
 - `.env` 파일은 `.gitignore`에 포함 (절대 커밋 금지)
 - `.env.example`만 커밋 (실제 값 미포함)
+
+> 환경변수 전체 목록: `docs/environments.md` 참조.
 
 ---
 
@@ -30,10 +33,15 @@
 - DTO 기반 검증: `class-validator` 데코레이터
 - transform: true (타입 자동 변환)
 
-### 인증 (Phase 3)
-- OAuth 2.0 (Kakao/Google)
-- JWT 토큰 기반 인증 미들웨어
-- Phase 1~2에서는 인증 없음 (공개 API)
+### 인증
+- JWT 토큰 기반 인증 (`JwtAuthGuard`)
+- 이메일/비밀번호 회원가입 + 로그인 (bcryptjs 해싱)
+- Google OAuth 로그인 (`POST /api/auth/google`)
+- `passwordHash` 필드는 API 응답에서 제외
+
+### Rate Limiting
+- NestJS Throttler 전면 적용
+- 전체 엔드포인트에 요청 속도 제한
 
 ---
 
@@ -54,15 +62,6 @@
 2. Author 크레딧 잔액 증가 (`{ increment: N }`)
 3. CreditLog 기록 생성
 
-```typescript
-// src/application/payment/payment.usecase.ts — processWebhook()
-await this.prisma.$transaction(async (tx) => {
-  await tx.payment.update({ ... status: 'completed' })
-  await tx.author.update({ ... credits: { increment } })
-  await tx.creditLog.create({ ... })
-})
-```
-
 **왜 반드시 원자적이어야 하는가:**
 - Payment만 completed 되고 크레딧이 안 들어가면 → 사용자가 돈만 낸 상황
 - 크레딧만 들어가고 Payment가 pending이면 → 웹훅 재시도 시 크레딧 중복 부여
@@ -70,10 +69,8 @@ await this.prisma.$transaction(async (tx) => {
 
 **관련 코드:**
 - `src/application/payment/payment.usecase.ts` — `processWebhook()`
-- `src/adapter/outbound/persistence/prisma-credit.repository.ts` — `adjustCredits()` (크레딧 차감도 동일 원칙)
+- `src/adapter/outbound/persistence/prisma-credit.repository.ts` — `adjustCredits()`
 - `src/application/payment/payment.usecase.spec.ts` — 원자성 검증 테스트
-
-**참고:** Tajook 프로젝트의 크레딧 시스템에서 동일 패턴 사용.
 
 ### 결제 보안
 
@@ -95,7 +92,7 @@ await this.prisma.$transaction(async (tx) => {
 - [ ] `npm test` 전부 통과
 - [ ] `npm run build` 성공
 - [ ] `docker build` 성공
-- [ ] 환경변수 설정 확인 (DATABASE_URL, ANTHROPIC_API_KEY)
+- [ ] 환경변수 설정 확인 (DATABASE_URL, ANTHROPIC_API_KEY, JWT_SECRET)
 - [ ] Prisma 마이그레이션 완료
 - [ ] API 엔드포인트 응답 확인
 - [ ] CORS 설정 확인 (`*` 아닌지)
@@ -114,4 +111,4 @@ await this.prisma.$transaction(async (tx) => {
 
 - `INFRASTRUCTURE.md` — Azure 리소스 구성
 - `docs/environments.md` — 환경별 설정 (정본)
-- 루트 `CLAUDE.md` §7 — 빌드 환경
+- 루트 `CLAUDE.md` §11 — 전수검사 체크리스트

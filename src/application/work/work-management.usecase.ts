@@ -42,8 +42,8 @@ export class WorkManagementUseCase {
     if (!work) throw new NotFoundException('작품을 찾을 수 없습니다')
     if (work.authorId !== authorId) throw new ForbiddenException('에피소드 생성 권한이 없습니다')
 
-    // 슬러그 생성 (타이틀 기반)
-    const slug = input.title.toLowerCase().replace(/[^a-z0-9가-힣-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+    // 슬러그 생성 (타이틀 기반, ASCII만 허용 — 한글 제외)
+    const slug = input.title.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
 
     // 다음 orderNum 계산
     const episodeCount = await this.workRepo.countEpisodesByWorkId(work.id)
@@ -76,7 +76,9 @@ export class WorkManagementUseCase {
 
   /** rawContent를 Block[]으로 변환 */
   private parseContentToBlocks(rawContent: string): Block[] {
-    const lines = rawContent.split('\n')
+    // frontmatter 제거 (파일 시작 부분의 ---...--- 블록)
+    const content = this.stripFrontmatter(rawContent)
+    const lines = content.split('\n')
     const blocks: Block[] = []
 
     for (const line of lines) {
@@ -93,5 +95,11 @@ export class WorkManagementUseCase {
     }
 
     return blocks
+  }
+
+  /** YAML frontmatter를 제거한다 (--- 마커 사이의 메타데이터) */
+  private stripFrontmatter(content: string): string {
+    const match = content.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)$/)
+    return match ? match[1] : content
   }
 }
