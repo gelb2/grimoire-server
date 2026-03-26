@@ -3,7 +3,10 @@
  *
  * 10명의 작가 등록 → 30개 작품 생성 → 에피소드 업로드
  * 대상: 저작권 만료된 한국 근대문학 작품
- * 대상 서버: dev 환경 (Azure Container Apps)
+ *
+ * 사용 시점: 고전문학 시드 데이터를 API 경유로 등록할 때 일회성 실행
+ * 전제조건: SEED_API_URL 환경변수 (미설정 시 dev 환경 기본값 사용)
+ * 실행: npx tsx scripts/seed-classics.ts
  */
 
 import { readFileSync, readdirSync } from 'fs'

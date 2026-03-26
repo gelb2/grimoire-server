@@ -4,69 +4,17 @@
  * 기존 작가에 ~60개 작품 추가 + 신규 작가 2명(현진건, 나도향) 생성
  * 직접 Prisma 접근 방식 (DATABASE_URL 환경변수 필요)
  *
+ * 사용 시점: 고전문학 시드 데이터를 DB에 추가할 때 일회성 실행
+ * 전제조건: DATABASE_URL 환경변수 설정 필요
  * 실행: DATABASE_URL="postgresql://..." npx tsx scripts/seed-more-classics.ts
  * 또는 .env에 DATABASE_URL이 설정되어 있으면 그대로 사용
  */
 
 import { PrismaClient } from '@prisma/client'
 import * as bcrypt from 'bcryptjs'
+import { parseEpisodeBlocks } from '../src/lib/md-parser'
 
 const prisma = new PrismaClient()
-
-// ── 블록 파싱 (md-parser 간소화 버전) ──────────────────────
-// tsx에서 path alias가 안 되므로 인라인 구현
-
-interface Block {
-  type: string
-  num?: string
-  title?: string
-  text?: string
-  children?: Block[]
-}
-
-function parseContentToBlocks(rawContent: string): Block[] {
-  const lines = rawContent.split('\n')
-  const blocks: Block[] = []
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (trimmed === '') continue
-
-    if (trimmed.startsWith('# ') && !trimmed.startsWith('## ')) {
-      blocks.push({ type: 'heading-1', title: trimmed.slice(2).trim() })
-      continue
-    }
-    if (trimmed.startsWith('## ') && !trimmed.startsWith('### ')) {
-      blocks.push({ type: 'heading-2', title: trimmed.slice(3).trim() })
-      continue
-    }
-    if (/^-{3,}$/.test(trimmed)) {
-      blocks.push({ type: 'separator' })
-      continue
-    }
-    if (/^(\*\s*\*\s*\*|·\s*·\s*·)$/.test(trimmed)) {
-      blocks.push({ type: 'divider' })
-      continue
-    }
-    if (trimmed.startsWith('> ')) {
-      blocks.push({ type: 'refrain', text: trimmed.slice(2).trim() })
-      continue
-    }
-    const boldMatch = trimmed.match(/^\*\*([^*]+)\*\*$/)
-    if (boldMatch) {
-      blocks.push({ type: 'bold', text: boldMatch[1] })
-      continue
-    }
-    const italicMatch = trimmed.match(/^\*([^*]+)\*$/)
-    if (italicMatch) {
-      blocks.push({ type: 'italic', text: italicMatch[1] })
-      continue
-    }
-    blocks.push({ type: 'paragraph', text: trimmed })
-  }
-
-  return blocks
-}
 
 // ── 작품 데이터 정의 ──────────────────────────────────────
 
@@ -1186,7 +1134,7 @@ async function main() {
         const episodeCount = await prisma.episode.count({ where: { workId: work.id } })
 
         // 블록 파싱
-        const blocks = parseContentToBlocks(workDef.content)
+        const { blocks } = parseEpisodeBlocks(workDef.content)
 
         // 에피소드 생성
         const episodeSlug = workDef.slug

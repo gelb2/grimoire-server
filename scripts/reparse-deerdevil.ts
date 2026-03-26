@@ -4,7 +4,9 @@
  * 원본 MD 파일을 DeerDevil 파서(chapter, refrain, italic, epilogue 등)로
  * 다시 파싱하여 DB의 blocks 필드를 업데이트한다.
  *
- * 실행: npx tsx scripts/reparse-deerdevil.ts
+ * 사용 시점: MD 파서 로직이 변경되어 기존 에피소드 블록을 재생성해야 할 때
+ * 전제조건: DATABASE_URL 환경변수 설정, grimoire-web/DeerDevil_MDfiles 디렉토리 존재
+ * 실행: DATABASE_URL="postgresql://..." npx tsx scripts/reparse-deerdevil.ts
  */
 
 import { PrismaClient } from '@prisma/client'
@@ -13,13 +15,12 @@ import { readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { Block } from '../src/domain/model/block'
 
-// Azure dev DB에 직접 연결 (.env의 로컬 DB URL 무시)
-const AZURE_DB_URL =
-  'postgresql://grimoireadmin:REMOVED_CREDENTIAL_009@grimoire-db-dev.postgres.database.azure.com:5432/grimoire?sslmode=require'
+if (!process.env.DATABASE_URL) {
+  console.error('ERROR: DATABASE_URL 환경변수가 필요합니다.')
+  process.exit(1)
+}
 
-const prisma = new PrismaClient({
-  datasources: { db: { url: AZURE_DB_URL } },
-})
+const prisma = new PrismaClient()
 
 const MD_DIR = join(__dirname, '../../grimoire-web/DeerDevil_MDfiles')
 const AUTHOR_SLUG = 'deerdevil'
@@ -131,7 +132,7 @@ async function main() {
 
   if (episodes.length !== mdEntries.length) {
     console.warn(
-      `  ⚠ DB 에피소드 수(${episodes.length})와 MD 파일 수(${mdEntries.length})가 다릅니다`,
+      `  경고: DB 에피소드 수(${episodes.length})와 MD 파일 수(${mdEntries.length})가 다릅니다`,
     )
   }
 
@@ -166,12 +167,12 @@ async function main() {
 
       updated++
       console.log(
-        `  ✓ [${ep.slug}] ${ep.title} ← ${md.filename} (${blocks.length} blocks)`,
+        `  [${ep.slug}] ${ep.title} <- ${md.filename} (${blocks.length} blocks)`,
       )
     } catch (err: any) {
       failed++
       console.error(
-        `  ✗ [${ep.slug}] ${ep.title} ← ${md.filename}: ${err.message}`,
+        `  실패 [${ep.slug}] ${ep.title} <- ${md.filename}: ${err.message}`,
       )
     }
   }
