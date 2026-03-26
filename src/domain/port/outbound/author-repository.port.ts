@@ -8,4 +8,6 @@ export interface AuthorRepositoryPort {
   create(input: { slug: string; name: string; email: string; passwordHash?: string }): Promise<Author>
   updateCredits(id: string, credits: number): Promise<Author>
   linkSocialAccount(authorId: string, provider: string, providerId: string, email?: string): Promise<void>
+  /** 이름 또는 슬러그로 작가 검색 (LIKE) */
+  search(query: string, limit: number): Promise<Author[]>
 }

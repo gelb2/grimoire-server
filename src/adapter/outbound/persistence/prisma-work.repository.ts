@@ -117,6 +117,31 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
   async countEpisodesByWorkId(workId: string): Promise<number> {
     return this.prisma.episode.count({ where: { workId } })
   }
+
+  async searchByTitle(query: string, limit: number): Promise<Work[]> {
+    const rows = await this.prisma.work.findMany({
+      where: { title: { contains: query, mode: 'insensitive' } },
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+    })
+    return rows.map(toWorkDomain)
+  }
+
+  async findPopular(limit: number): Promise<Work[]> {
+    const rows = await this.prisma.work.findMany({
+      take: limit,
+      orderBy: { viewCount: 'desc' },
+    })
+    return rows.map(toWorkDomain)
+  }
+
+  async findRecent(limit: number): Promise<Work[]> {
+    const rows = await this.prisma.work.findMany({
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+    })
+    return rows.map(toWorkDomain)
+  }
 }
 
 function toWorkDomain(row: {

@@ -24,4 +24,10 @@ export interface WorkRepositoryPort {
   deleteEpisode(id: string): Promise<void>
   countByAuthorId(authorId: string): Promise<number>
   countEpisodesByWorkId(workId: string): Promise<number>
+  /** 제목으로 작품 검색 (LIKE) */
+  searchByTitle(query: string, limit: number): Promise<Work[]>
+  /** 인기 작품 조회 (viewCount 내림차순) */
+  findPopular(limit: number): Promise<Work[]>
+  /** 최신 작품 조회 (createdAt 내림차순) */
+  findRecent(limit: number): Promise<Work[]>
 }

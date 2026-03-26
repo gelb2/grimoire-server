@@ -48,6 +48,20 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
       data: { authorId, provider, providerId, providerEmail: email },
     })
   }
+
+  async search(query: string, limit: number): Promise<Author[]> {
+    const rows = await this.prisma.author.findMany({
+      where: {
+        OR: [
+          { name: { contains: query, mode: 'insensitive' } },
+          { slug: { contains: query, mode: 'insensitive' } },
+        ],
+      },
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+    })
+    return rows.map(toDomain)
+  }
 }
 
 function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; credits: number; createdAt: Date }): Author {

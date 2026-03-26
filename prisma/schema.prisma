@@ -100,3 +100,24 @@ model SignupHistory {
 
   @@map("signup_history")
 }
+
+model Bookmark {
+  id        String   @id @default(uuid())
+  authorId  String   @map("author_id")
+  episodeId String   @map("episode_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([authorId, episodeId])
+  @@map("bookmarks")
+}
+
+model ReadingProgress {
+  id          String   @id @default(uuid())
+  authorId    String   @map("author_id")
+  episodeId   String   @map("episode_id")
+  blockIndex  Int      @map("block_index")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([authorId, episodeId])
+  @@map("reading_progress")
+}
