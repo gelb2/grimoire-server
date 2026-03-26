@@ -9,14 +9,16 @@ datasource db {
 }
 
 model Author {
-  id        String      @id @default(uuid())
-  slug      String      @unique
-  name      String
-  email     String      @unique
-  credits   Int         @default(3)
-  theme     Theme?
-  works     Work[]
-  createdAt DateTime    @default(now()) @map("created_at")
+  id             String          @id @default(uuid())
+  slug           String          @unique
+  name           String
+  email          String          @unique
+  passwordHash   String?         @map("password_hash")
+  credits        Int             @default(3)
+  theme          Theme?
+  works          Work[]
+  socialAccounts SocialAccount[]
+  createdAt      DateTime        @default(now()) @map("created_at")
 
   @@map("authors")
 }
@@ -28,6 +30,7 @@ model Theme {
   preset         String   @default("midnight")
   overrides      Json?
   rawDescription String?  @map("raw_description")
+  bakedCssUrl    String?  @map("baked_css_url")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   @@map("themes")
@@ -41,6 +44,7 @@ model Work {
   title       String
   subtitle    String?
   description String?
+  viewCount   Int       @default(0) @map("view_count")
   episodes    Episode[]
   createdAt   DateTime  @default(now()) @map("created_at")
 
@@ -55,10 +59,12 @@ model Episode {
   slug      String
   title     String
   subtitle  String?
-  orderNum  Int      @map("order_num")
-  blocks    Json
-  rawMd     String   @map("raw_md")
-  createdAt DateTime @default(now()) @map("created_at")
+  orderNum     Int      @map("order_num")
+  blocks       Json
+  rawMd        String   @map("raw_md")
+  viewCount    Int      @default(0) @map("view_count")
+  sourceFormat String   @default("markdown") @map("source_format")
+  createdAt    DateTime @default(now()) @map("created_at")
 
   @@unique([workId, slug])
   @@map("episodes")
@@ -72,6 +78,19 @@ model CreditLog {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("credit_logs")
+}
+
+model SocialAccount {
+  id            String   @id @default(uuid())
+  author        Author   @relation(fields: [authorId], references: [id])
+  authorId      String   @map("author_id")
+  provider      String
+  providerId    String   @map("provider_id")
+  providerEmail String?  @map("provider_email")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([provider, providerId])
+  @@map("social_accounts")
 }
 
 model SignupHistory {

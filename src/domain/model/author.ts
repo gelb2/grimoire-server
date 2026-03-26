@@ -5,6 +5,7 @@ export interface Author {
   slug: string
   name: string
   email: string
+  passwordHash?: string
   credits: number
   createdAt: Date
 }
