@@ -27,5 +27,6 @@ export interface Theme {
   preset: string
   overrides: AuthorTheme | null
   rawDescription: string | null
+  bakedCssUrl: string | null
   updatedAt: Date
 }

@@ -15,7 +15,7 @@ describe('GenerateThemeUseCase', () => {
     fontBody: 'serif' as const, fontHeading: 'serif' as const, fontSize: 'normal' as const,
     animation: 'typing' as const, cardStyle: 'sharp' as const, tone: 'dark' as const,
   }
-  const mockTheme = { id: 'theme-1', authorId: 'author-1', preset: 'midnight', overrides: mockThemeData, rawDescription: '어둡고 묵직한', updatedAt: new Date() }
+  const mockTheme = { id: 'theme-1', authorId: 'author-1', preset: 'midnight', overrides: mockThemeData, rawDescription: '어둡고 묵직한', bakedCssUrl: null, updatedAt: new Date() }
 
   beforeEach(() => {
     mockClaudeApi = { generateTheme: jest.fn().mockResolvedValue(mockThemeData) }
