@@ -34,8 +34,15 @@ export class GenerateThemeUseCase {
     // 크레딧 즉시 차감 (Tajook 패턴)
     await this.creditRepo.adjustCredits(authorId, -1, reason)
 
-    // Claude API로 테마 생성
-    const themeData = await this.claudeApi.generateTheme(description)
+    // Claude API로 테마 생성 — 실패 시 크레딧 환불
+    let themeData: any
+    try {
+      themeData = await this.claudeApi.generateTheme(description)
+    } catch (error) {
+      // AI 호출 실패 → 크레딧 환불
+      await this.creditRepo.adjustCredits(authorId, 1, 'theme_generate_refund')
+      throw error
+    }
 
     // tone 기반으로 프리셋 결정
     const preset = themeData.tone === 'dark' ? 'midnight'

@@ -14,6 +14,7 @@ model Author {
   name           String
   email          String          @unique
   passwordHash   String?         @map("password_hash")
+  role           String          @default("user")
   credits        Int             @default(3)
   theme          Theme?
   works          Work[]
@@ -49,6 +50,7 @@ model Work {
   createdAt   DateTime  @default(now()) @map("created_at")
 
   @@unique([authorId, slug])
+  @@index([authorId])
   @@map("works")
 }
 
@@ -68,6 +70,7 @@ model Episode {
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@unique([workId, slug])
+  @@index([workId, orderNum])
   @@map("episodes")
 }
 
@@ -109,6 +112,7 @@ model Bookmark {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@unique([authorId, episodeId])
+  @@index([authorId])
   @@map("bookmarks")
 }
 
@@ -150,6 +154,7 @@ model Comment {
   content   String
   createdAt DateTime @default(now()) @map("created_at")
 
+  @@index([episodeId, createdAt])
   @@map("comments")
 }
 

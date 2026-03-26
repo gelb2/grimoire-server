@@ -7,13 +7,24 @@ export class JwtAuthGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest()
-    const authHeader = request.headers.authorization
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    // 1순위: Authorization 헤더 (API 클라이언트)
+    const authHeader = request.headers.authorization
+    let token: string | undefined
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7)
+    }
+
+    // 2순위: HttpOnly 쿠키 (브라우저)
+    if (!token && request.cookies?.grimoire_token) {
+      token = request.cookies.grimoire_token
+    }
+
+    if (!token) {
       throw new UnauthorizedException('인증 토큰이 필요합니다')
     }
 
-    const token = authHeader.substring(7)
     try {
       const payload = this.jwtService.verify(token)
       request.user = payload

@@ -136,9 +136,12 @@ describe('PaymentUseCase', () => {
     }
 
     it('서명 검증에 실패하면 예외를 던진다', async () => {
+      const originalSecret = process.env.PAYAPP_SECRET
+      process.env.PAYAPP_SECRET = 'test-secret'
       mockPaymentGateway.verifyWebhookSignature.mockReturnValue(false)
 
       await expect(useCase.processWebhook(successPayload)).rejects.toThrow('웹훅 서명 검증 실패')
+      process.env.PAYAPP_SECRET = originalSecret || ''
     })
 
     it('tradeNo에 해당하는 결제가 없으면 무시한다 (멱등성)', async () => {
