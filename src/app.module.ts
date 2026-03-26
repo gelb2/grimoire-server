@@ -7,6 +7,7 @@ import { PrismaService } from '@infrastructure/prisma/prisma.service'
 // 유스케이스
 import { GenerateThemeUseCase } from '@application/theme/generate-theme.usecase'
 import { GetThemeUseCase } from '@application/theme/get-theme.usecase'
+import { BakeThemeUseCase } from '@application/theme/bake-theme.usecase'
 import { ParseManuscriptUseCase } from '@application/manuscript/parse-manuscript.usecase'
 import { CreditUseCase } from '@application/credit/credit.usecase'
 import { AuthorUseCase } from '@application/author/author.usecase'
@@ -51,6 +52,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     // 유스케이스
     GenerateThemeUseCase,
     GetThemeUseCase,
+    BakeThemeUseCase,
     ParseManuscriptUseCase,
     CreditUseCase,
     AuthorUseCase,

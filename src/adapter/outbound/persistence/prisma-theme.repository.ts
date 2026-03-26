@@ -43,6 +43,13 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
     })
     return toDomain(row)
   }
+
+  async updateBakedCssUrl(authorId: string, url: string): Promise<void> {
+    await this.prisma.theme.update({
+      where: { authorId },
+      data: { bakedCssUrl: url },
+    })
+  }
 }
 
 function toDomain(row: {
@@ -51,6 +58,7 @@ function toDomain(row: {
   preset: string
   overrides: unknown
   rawDescription: string | null
+  bakedCssUrl: string | null
   updatedAt: Date
 }): Theme {
   return {
@@ -59,6 +67,7 @@ function toDomain(row: {
     preset: row.preset,
     overrides: row.overrides as AuthorTheme | null,
     rawDescription: row.rawDescription,
+    bakedCssUrl: row.bakedCssUrl,
     updatedAt: row.updatedAt,
   }
 }
