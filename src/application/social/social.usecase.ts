@@ -39,7 +39,7 @@ export class SocialUseCase {
 
   // ── 댓글 ──
 
-  /** 댓글 작성 (내용 1~500자 검증) */
+  /** 댓글 작성 (내용 1~500자 검증 + HTML 이스케이프) */
   async createComment(authorId: string, episodeId: string, content: string): Promise<Comment> {
     if (!content || content.trim().length === 0) {
       throw new BadRequestException('댓글 내용을 입력해주세요')
@@ -47,7 +47,18 @@ export class SocialUseCase {
     if (content.length > 500) {
       throw new BadRequestException('댓글은 500자 이내로 작성해주세요')
     }
-    return this.socialRepo.createComment(authorId, episodeId, content.trim())
+    const sanitized = this.escapeHtml(content.trim())
+    return this.socialRepo.createComment(authorId, episodeId, sanitized)
+  }
+
+  /** HTML 특수문자 이스케이프 — XSS 방지 */
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#x27;')
   }
 
   /** 에피소드 댓글 목록 조회 */

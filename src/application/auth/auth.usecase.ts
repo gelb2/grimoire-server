@@ -42,7 +42,7 @@ export class AuthUseCase {
     await this.creditUseCase.grant(author.id, 3, 'signup_bonus')
 
     // JWT 발급
-    const token = this.jwtService.sign({ sub: author.id, slug: author.slug })
+    const token = this.jwtService.sign({ sub: author.id, slug: author.slug, role: author.role })
 
     return { author, token }
   }
@@ -59,7 +59,7 @@ export class AuthUseCase {
       throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다')
     }
 
-    const token = this.jwtService.sign({ sub: author.id, slug: author.slug })
+    const token = this.jwtService.sign({ sub: author.id, slug: author.slug, role: author.role })
     return { author, token }
   }
 
@@ -100,7 +100,7 @@ export class AuthUseCase {
       await this.authorRepo.linkSocialAccount(author.id, 'google', payload.sub!, payload.email)
     }
 
-    const token = this.jwtService.sign({ sub: author.id, slug: author.slug })
+    const token = this.jwtService.sign({ sub: author.id, slug: author.slug, role: author.role })
     return { author, token }
   }
 

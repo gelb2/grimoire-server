@@ -81,11 +81,16 @@ export class PaymentUseCase {
 
   /** 웹훅 처리 — 서명 검증 + 크레딧 부여 */
   async processWebhook(payload: WebhookPayload) {
-    // 서명 검증
+    // 서명 검증 — 프로덕션에서 시크릿 미설정 시 모든 웹훅 거부
     const secret = process.env.PAYAPP_SECRET || ''
-    const valid = this.paymentGateway.verifyWebhookSignature(payload, secret)
-    if (!valid) {
-      throw new BadRequestException('웹훅 서명 검증 실패')
+    if (!secret && process.env.NODE_ENV === 'production') {
+      throw new BadRequestException('PAYAPP_SECRET 미설정 — 프로덕션에서 웹훅을 처리할 수 없습니다')
+    }
+    if (secret) {
+      const valid = this.paymentGateway.verifyWebhookSignature(payload, secret)
+      if (!valid) {
+        throw new BadRequestException('웹훅 서명 검증 실패')
+      }
     }
 
     // tradeNo로 Payment 조회
