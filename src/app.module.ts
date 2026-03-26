@@ -19,6 +19,7 @@ import { ReaderUseCase } from '@application/reader/reader.usecase'
 import { DiscoveryUseCase } from '@application/discovery/discovery.usecase'
 import { AdminUseCase } from '@application/admin/admin.usecase'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
+import { SocialUseCase } from '@application/social/social.usecase'
 
 // 컨트롤러
 import { HealthController } from '@adapter/inbound/http/controller/health.controller'
@@ -33,6 +34,7 @@ import { ReaderController } from '@adapter/inbound/http/controller/reader.contro
 import { DiscoveryController } from '@adapter/inbound/http/controller/discovery.controller'
 import { AdminController } from '@adapter/inbound/http/controller/admin.controller'
 import { AnalysisController } from '@adapter/inbound/http/controller/analysis.controller'
+import { SocialController } from '@adapter/inbound/http/controller/social.controller'
 
 // 아웃바운드 어댑터
 import { PrismaAuthorRepository } from '@adapter/outbound/persistence/prisma-author.repository'
@@ -40,6 +42,7 @@ import { PrismaThemeRepository } from '@adapter/outbound/persistence/prisma-them
 import { PrismaWorkRepository } from '@adapter/outbound/persistence/prisma-work.repository'
 import { PrismaCreditRepository } from '@adapter/outbound/persistence/prisma-credit.repository'
 import { PrismaReaderRepository } from '@adapter/outbound/persistence/prisma-reader.repository'
+import { PrismaSocialRepository } from '@adapter/outbound/persistence/prisma-social.repository'
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 
@@ -64,6 +67,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     DiscoveryController,
     AdminController,
     AnalysisController,
+    SocialController,
   ],
   providers: [
     // 인프라
@@ -84,6 +88,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     DiscoveryUseCase,
     AdminUseCase,
     NovelAnalysisUseCase,
+    SocialUseCase,
     JwtAuthGuard,
 
     // 포트 → 어댑터 바인딩 (토큰 기반 DI)
@@ -93,6 +98,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
     { provide: 'CreditRepositoryPort', useClass: PrismaCreditRepository },
     { provide: 'ReaderRepositoryPort', useClass: PrismaReaderRepository },
     { provide: 'ClaudeApiPort', useClass: ClaudeThemeAdapter },
+    { provide: 'SocialRepositoryPort', useClass: PrismaSocialRepository },
   ],
 })
 export class AppModule {}

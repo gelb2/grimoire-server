@@ -121,3 +121,33 @@ model ReadingProgress {
   @@unique([authorId, episodeId])
   @@map("reading_progress")
 }
+
+model Like {
+  id        String   @id @default(uuid())
+  authorId  String   @map("author_id")
+  episodeId String   @map("episode_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([authorId, episodeId])
+  @@map("likes")
+}
+
+model Subscription {
+  id              String   @id @default(uuid())
+  subscriberId    String   @map("subscriber_id")
+  targetAuthorId  String   @map("target_author_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@unique([subscriberId, targetAuthorId])
+  @@map("subscriptions")
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  authorId  String   @map("author_id")
+  episodeId String   @map("episode_id")
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("comments")
+}
