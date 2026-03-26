@@ -18,6 +18,11 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     return rows.map(toWorkDomain)
   }
 
+  async findById(id: string): Promise<Work | null> {
+    const row = await this.prisma.work.findUnique({ where: { id } })
+    return row ? toWorkDomain(row) : null
+  }
+
   async findByAuthorAndWorkSlug(authorSlug: string, workSlug: string): Promise<Work | null> {
     const author = await this.prisma.author.findUnique({ where: { slug: authorSlug } })
     if (!author) return null
@@ -34,6 +39,11 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
       select: { id: true, slug: true, title: true, subtitle: true, orderNum: true },
     })
     return rows
+  }
+
+  async findEpisodeById(id: string): Promise<Episode | null> {
+    const row = await this.prisma.episode.findUnique({ where: { id } })
+    return row ? toEpisodeDomain(row) : null
   }
 
   async findEpisode(authorSlug: string, workSlug: string, episodeSlug: string): Promise<Episode | null> {
@@ -60,6 +70,17 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     return toWorkDomain(row)
   }
 
+  async updateWork(id: string, input: { title?: string; subtitle?: string; description?: string }): Promise<Work> {
+    const row = await this.prisma.work.update({ where: { id }, data: input })
+    return toWorkDomain(row)
+  }
+
+  async deleteWork(id: string): Promise<void> {
+    // 에피소드 먼저 삭제 (cascade)
+    await this.prisma.episode.deleteMany({ where: { workId: id } })
+    await this.prisma.work.delete({ where: { id } })
+  }
+
   async createEpisode(input: {
     workId: string
     slug: string
@@ -68,6 +89,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     orderNum: number
     blocks: Block[]
     rawMd: string
+    sourceFormat?: string
   }): Promise<Episode> {
     const row = await this.prisma.episode.create({
       data: {
@@ -78,13 +100,22 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
         orderNum: input.orderNum,
         blocks: input.blocks as object[],
         rawMd: input.rawMd,
+        sourceFormat: input.sourceFormat || 'markdown',
       },
     })
     return toEpisodeDomain(row)
   }
 
+  async deleteEpisode(id: string): Promise<void> {
+    await this.prisma.episode.delete({ where: { id } })
+  }
+
   async countByAuthorId(authorId: string): Promise<number> {
     return this.prisma.work.count({ where: { authorId } })
+  }
+
+  async countEpisodesByWorkId(workId: string): Promise<number> {
+    return this.prisma.episode.count({ where: { workId } })
   }
 }
 

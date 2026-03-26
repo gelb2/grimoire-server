@@ -1,6 +1,7 @@
 import { Injectable, Inject, BadRequestException, UnauthorizedException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import * as bcrypt from 'bcryptjs'
+import { OAuth2Client } from 'google-auth-library'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { CreditUseCase } from '@application/credit/credit.usecase'
 
@@ -56,6 +57,43 @@ export class AuthUseCase {
     const valid = await bcrypt.compare(input.password, author.passwordHash)
     if (!valid) {
       throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다')
+    }
+
+    const token = this.jwtService.sign({ sub: author.id, slug: author.slug })
+    return { author, token }
+  }
+
+  /** Google OAuth 로그인 */
+  async googleLogin(googleToken: string) {
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
+
+    const ticket = await client.verifyIdToken({
+      idToken: googleToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    })
+    const payload = ticket.getPayload()
+    if (!payload?.email) throw new UnauthorizedException('Google 인증 실패')
+
+    // 이미 소셜 계정으로 연결된 유저 찾기
+    let author = await this.authorRepo.findBySocialAccount('google', payload.sub!)
+
+    if (!author) {
+      // 이메일로 기존 유저 찾기
+      author = await this.authorRepo.findByEmail(payload.email)
+
+      if (!author) {
+        // 신규 가입
+        const slug = payload.email.split('@')[0].toLowerCase().replace(/[^a-z0-9-]/g, '-')
+        author = await this.authorRepo.create({
+          email: payload.email,
+          name: payload.name || payload.email.split('@')[0],
+          slug,
+        })
+        await this.creditUseCase.grant(author.id, 3, 'signup_bonus')
+      }
+
+      // 소셜 계정 연결
+      await this.authorRepo.linkSocialAccount(author.id, 'google', payload.sub!, payload.email)
     }
 
     const token = this.jwtService.sign({ sub: author.id, slug: author.slug })

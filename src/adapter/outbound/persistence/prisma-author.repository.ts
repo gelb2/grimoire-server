@@ -27,12 +27,26 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
     return toDomain(row)
   }
 
+  async findBySocialAccount(provider: string, providerId: string): Promise<Author | null> {
+    const social = await this.prisma.socialAccount.findUnique({
+      where: { provider_providerId: { provider, providerId } },
+      include: { author: true },
+    })
+    return social ? toDomain(social.author) : null
+  }
+
   async updateCredits(id: string, credits: number): Promise<Author> {
     const row = await this.prisma.author.update({
       where: { id },
       data: { credits },
     })
     return toDomain(row)
+  }
+
+  async linkSocialAccount(authorId: string, provider: string, providerId: string, email?: string): Promise<void> {
+    await this.prisma.socialAccount.create({
+      data: { authorId, provider, providerId, providerEmail: email },
+    })
   }
 }
 
