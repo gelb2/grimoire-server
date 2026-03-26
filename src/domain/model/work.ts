@@ -1,0 +1,36 @@
+import { Block } from './block'
+
+export interface Work {
+  id: string
+  authorId: string
+  slug: string
+  title: string
+  subtitle: string | null
+  description: string | null
+  createdAt: Date
+}
+
+export interface Episode {
+  id: string
+  workId: string
+  slug: string
+  title: string
+  subtitle: string | null
+  orderNum: number
+  blocks: Block[]
+  rawMd: string
+  createdAt: Date
+}
+
+export interface EpisodeSummary {
+  id: string
+  slug: string
+  title: string
+  subtitle: string | null
+  orderNum: number
+}
+
+export interface WorkDetail {
+  work: Work
+  episodes: EpisodeSummary[]
+}
