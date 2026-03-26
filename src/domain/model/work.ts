@@ -7,7 +7,15 @@ export interface Work {
   title: string
   subtitle: string | null
   description: string | null
+  viewCount: number
   createdAt: Date
+}
+
+/** 인기/최신 작품 조회 결과 (작가 정보 + 에피소드 수 포함) */
+export interface WorkWithMeta extends Work {
+  authorName: string
+  authorSlug: string
+  episodeCount: number
 }
 
 export interface Episode {

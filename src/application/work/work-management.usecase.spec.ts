@@ -12,6 +12,7 @@ describe('WorkManagementUseCase', () => {
     title: '테스트 작품',
     subtitle: null,
     description: null,
+    viewCount: 0,
     createdAt: new Date(),
   }
 
