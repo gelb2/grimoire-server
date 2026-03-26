@@ -1,0 +1,34 @@
+# Grimoire Server — 인하우스 배포용 Docker Compose (override)
+# 사용법: docker-compose -f docker-compose.yml -f docker-compose.inhouse.yml up
+
+services:
+  server:
+    build:
+      context: .
+      args:
+        MODE: inhouse
+    image: grimoire-server:inhouse
+    environment:
+      - DATABASE_URL=postgresql://grimoireadmin:REMOVED_CREDENTIAL_011@db:5432/grimoire
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - PORT=3000
+      - CORS_ORIGIN=https://inhouse.grimoire.app
+      - NODE_ENV=inhouse
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    # 리소스 제한 — 인하우스 환경
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 768M
+
+  # 실제 인하우스 환경에서는 Azure PostgreSQL Flexible Server를 사용할 것
+  # 이 로컬 DB 서비스는 테스트 용도로만 포함됨
+  db:
+    image: postgres:16-alpine

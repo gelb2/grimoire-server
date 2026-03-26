@@ -1,0 +1,35 @@
+# Grimoire Server — 운영 배포용 Docker Compose (override)
+# 사용법: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+
+services:
+  server:
+    build:
+      context: .
+      args:
+        MODE: production
+    # semver 태그 지원 — VERSION 환경변수로 이미지 버전 지정 (기본값: latest)
+    image: grimoire-server:${VERSION:-latest}
+    environment:
+      - DATABASE_URL=postgresql://grimoireadmin:REMOVED_CREDENTIAL_011@db:5432/grimoire
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - PORT=3000
+      - CORS_ORIGIN=https://grimoire.app
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    # 리소스 제한 — 운영 환경
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1024M
+
+  # 실제 운영 환경에서는 Azure PostgreSQL Flexible Server를 사용할 것
+  # 이 로컬 DB 서비스는 테스트 용도로만 포함됨
+  db:
+    image: postgres:16-alpine

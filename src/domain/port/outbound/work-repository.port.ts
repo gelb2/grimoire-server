@@ -1,0 +1,33 @@
+import { Work, Episode, EpisodeSummary } from '@domain/model/work'
+import { Block } from '@domain/model/block'
+
+export interface WorkRepositoryPort {
+  findByAuthorSlug(authorSlug: string): Promise<Work[]>
+  findById(id: string): Promise<Work | null>
+  findByAuthorAndWorkSlug(authorSlug: string, workSlug: string): Promise<Work | null>
+  findEpisodes(workId: string): Promise<EpisodeSummary[]>
+  findEpisode(authorSlug: string, workSlug: string, episodeSlug: string): Promise<Episode | null>
+  findEpisodeById(id: string): Promise<Episode | null>
+  createWork(input: { authorId: string; slug: string; title: string; subtitle?: string; description?: string }): Promise<Work>
+  updateWork(id: string, input: { title?: string; subtitle?: string; description?: string }): Promise<Work>
+  deleteWork(id: string): Promise<void>
+  createEpisode(input: {
+    workId: string
+    slug: string
+    title: string
+    subtitle?: string
+    orderNum: number
+    blocks: Block[]
+    rawMd: string
+    sourceFormat?: string
+  }): Promise<Episode>
+  deleteEpisode(id: string): Promise<void>
+  countByAuthorId(authorId: string): Promise<number>
+  countEpisodesByWorkId(workId: string): Promise<number>
+  /** 제목으로 작품 검색 (LIKE) */
+  searchByTitle(query: string, limit: number): Promise<Work[]>
+  /** 인기 작품 조회 (viewCount 내림차순) */
+  findPopular(limit: number): Promise<Work[]>
+  /** 최신 작품 조회 (createdAt 내림차순) */
+  findRecent(limit: number): Promise<Work[]>
+}

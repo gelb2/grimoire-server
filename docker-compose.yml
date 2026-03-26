@@ -1,0 +1,50 @@
+# Grimoire Server — 로컬 개발용 Docker Compose
+# NestJS + PostgreSQL을 로컬에서 한 번에 띄우는 구성
+
+services:
+  server:
+    build: .
+    image: grimoire-server:dev
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://grimoireadmin:REMOVED_CREDENTIAL_011@db:5432/grimoire
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - JWT_SECRET=${JWT_SECRET:-dev-jwt-secret}
+      - PORT=3000
+      - CORS_ORIGIN=http://localhost:3001
+      - NODE_ENV=development
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      db:
+        condition: service_healthy
+    # 리소스 제한 — 개발 환경 기본값
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=grimoireadmin
+      - POSTGRES_PASSWORD=REMOVED_CREDENTIAL_011
+      - POSTGRES_DB=grimoire
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U grimoireadmin"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
