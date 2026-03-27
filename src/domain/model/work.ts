@@ -44,3 +44,12 @@ export interface WorkDetail {
   work: Work
   episodes: EpisodeSummary[]
 }
+
+/** 페이지네이션 응답 */
+export interface PaginatedWorks {
+  works: WorkWithMeta[]
+  totalCount: number
+  page: number
+  pageSize: number
+  hasMore: boolean
+}

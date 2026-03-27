@@ -31,4 +31,8 @@ export interface WorkRepositoryPort {
   findPopular(limit: number): Promise<WorkWithMeta[]>
   /** 최신 작품 조회 (createdAt 내림차순) */
   findRecent(limit: number): Promise<WorkWithMeta[]>
+  /** 인기 작품 페이지네이션 조회 */
+  findPopularPaginated(page: number, pageSize: number): Promise<{ works: WorkWithMeta[]; totalCount: number }>
+  /** 최신 작품 페이지네이션 조회 */
+  findRecentPaginated(page: number, pageSize: number): Promise<{ works: WorkWithMeta[]; totalCount: number }>
 }

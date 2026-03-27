@@ -27,6 +27,7 @@ export class SocialController {
   // ── 구독 ──
 
   /** 구독 토글 (인증 필요) */
+  @Throttle({ default: { ttl: 60000, limit: 30 } })  // 분당 30회
   @Post('subscriptions/:authorId')
   @UseGuards(JwtAuthGuard)
   async toggleSubscription(@Req() req: any, @Param('authorId') authorId: string) {

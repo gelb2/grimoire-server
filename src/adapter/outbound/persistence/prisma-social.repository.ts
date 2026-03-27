@@ -10,22 +10,25 @@ export class PrismaSocialRepository implements SocialRepositoryPort {
   // ── 좋아요 ──
 
   async toggleLike(authorId: string, episodeId: string): Promise<{ liked: boolean; likeCount: number }> {
-    const existing = await this.prisma.like.findUnique({
-      where: { authorId_episodeId: { authorId, episodeId } },
+    // 트랜잭션으로 원자적 처리 — 동시 요청 시 중복 생성/삭제 방지
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.like.findUnique({
+        where: { authorId_episodeId: { authorId, episodeId } },
+      })
+
+      if (existing) {
+        await tx.like.delete({
+          where: { id: existing.id },
+        })
+      } else {
+        await tx.like.create({
+          data: { authorId, episodeId },
+        })
+      }
+
+      const likeCount = await tx.like.count({ where: { episodeId } })
+      return { liked: !existing, likeCount }
     })
-
-    if (existing) {
-      await this.prisma.like.delete({
-        where: { id: existing.id },
-      })
-    } else {
-      await this.prisma.like.create({
-        data: { authorId, episodeId },
-      })
-    }
-
-    const likeCount = await this.prisma.like.count({ where: { episodeId } })
-    return { liked: !existing, likeCount }
   }
 
   async getLikeCount(episodeId: string): Promise<number> {
@@ -40,21 +43,24 @@ export class PrismaSocialRepository implements SocialRepositoryPort {
   // ── 구독 ──
 
   async toggleSubscription(subscriberId: string, targetAuthorId: string): Promise<{ subscribed: boolean }> {
-    const existing = await this.prisma.subscription.findUnique({
-      where: { subscriberId_targetAuthorId: { subscriberId, targetAuthorId } },
-    })
-
-    if (existing) {
-      await this.prisma.subscription.delete({
-        where: { id: existing.id },
+    // 트랜잭션으로 원자적 처리 — 동시 요청 시 중복 생성/삭제 방지
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.subscription.findUnique({
+        where: { subscriberId_targetAuthorId: { subscriberId, targetAuthorId } },
       })
-      return { subscribed: false }
-    }
 
-    await this.prisma.subscription.create({
-      data: { subscriberId, targetAuthorId },
+      if (existing) {
+        await tx.subscription.delete({
+          where: { id: existing.id },
+        })
+        return { subscribed: false }
+      }
+
+      await tx.subscription.create({
+        data: { subscriberId, targetAuthorId },
+      })
+      return { subscribed: true }
     })
-    return { subscribed: true }
   }
 
   async getSubscriptions(subscriberId: string): Promise<Subscription[]> {

@@ -132,7 +132,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
   async findPopular(limit: number): Promise<WorkWithMeta[]> {
     const rows = await this.prisma.work.findMany({
       take: limit,
-      orderBy: { viewCount: 'desc' },
+      orderBy: [{ viewCount: 'desc' }, { createdAt: 'asc' }],
       include: {
         author: { select: { name: true, slug: true } },
         _count: { select: { episodes: true } },
@@ -161,6 +161,54 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
       authorSlug: r.author.slug,
       episodeCount: r._count.episodes,
     }))
+  }
+
+  async findPopularPaginated(page: number, pageSize: number): Promise<{ works: WorkWithMeta[]; totalCount: number }> {
+    const [rows, totalCount] = await Promise.all([
+      this.prisma.work.findMany({
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        orderBy: [{ viewCount: 'desc' }, { createdAt: 'asc' }],
+        include: {
+          author: { select: { name: true, slug: true } },
+          _count: { select: { episodes: true } },
+        },
+      }),
+      this.prisma.work.count(),
+    ])
+    return {
+      works: rows.map((r) => ({
+        ...toWorkDomain(r),
+        authorName: r.author.name,
+        authorSlug: r.author.slug,
+        episodeCount: r._count.episodes,
+      })),
+      totalCount,
+    }
+  }
+
+  async findRecentPaginated(page: number, pageSize: number): Promise<{ works: WorkWithMeta[]; totalCount: number }> {
+    const [rows, totalCount] = await Promise.all([
+      this.prisma.work.findMany({
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          author: { select: { name: true, slug: true } },
+          _count: { select: { episodes: true } },
+        },
+      }),
+      this.prisma.work.count(),
+    ])
+    return {
+      works: rows.map((r) => ({
+        ...toWorkDomain(r),
+        authorName: r.author.name,
+        authorSlug: r.author.slug,
+        episodeCount: r._count.episodes,
+      })),
+      totalCount,
+    }
   }
 }
 

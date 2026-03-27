@@ -16,5 +16,5 @@ export class UpdateWorkDto {
 export class CreateEpisodeDto {
   @IsString() @MinLength(1) title!: string
   @IsString() rawContent!: string
-  @IsString() @IsOptional() sourceFormat?: string // 'markdown' | 'txt' | 'docx'
+  @IsString() @IsOptional() sourceFormat?: string // 'markdown' | 'txt' | 'docx' | 'hwp' | 'hwpx'
 }
