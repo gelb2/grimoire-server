@@ -9,7 +9,7 @@ export interface WorkRepositoryPort {
   findEpisode(authorSlug: string, workSlug: string, episodeSlug: string): Promise<Episode | null>
   findEpisodeById(id: string): Promise<Episode | null>
   createWork(input: { authorId: string; slug: string; title: string; subtitle?: string; description?: string }): Promise<Work>
-  updateWork(id: string, input: { title?: string; subtitle?: string; description?: string }): Promise<Work>
+  updateWork(id: string, input: { title?: string; subtitle?: string; description?: string; coverImage?: string | null }): Promise<Work>
   deleteWork(id: string): Promise<void>
   createEpisode(input: {
     workId: string

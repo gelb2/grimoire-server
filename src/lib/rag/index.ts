@@ -1,4 +1,4 @@
+// lib/rag — 순수 유틸리티만 export
+// 외부 API 호출(임베딩, 벡터DB)은 adapter/outbound/ 계층에서 처리
 export { chunkText, type TextChunk } from './chunker'
-export { getEmbedding, getEmbeddingsBatch, EMBEDDING_DIM, EMBEDDING_MODEL } from './embeddings'
-export { ensureVectorTable, insertChunk, searchSimilarChunks, deleteChunksByWork, deleteChunksByEpisode, getChunkCountByWork } from './vector-db'
-export { checkConsistency, checkTone, checkCharacter, type AnalysisResult } from './novel-analyzer'
+export { checkConsistency, checkTone, checkCharacter, type AnalysisResult, type AskFn } from './novel-analyzer'

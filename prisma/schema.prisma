@@ -46,6 +46,7 @@ model Work {
   title       String
   subtitle    String?
   description String?
+  coverImage  String?   @map("cover_image")
   viewCount   Int       @default(0) @map("view_count")
   episodes    Episode[]
   createdAt   DateTime  @default(now()) @map("created_at")
