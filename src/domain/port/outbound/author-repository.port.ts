@@ -10,4 +10,6 @@ export interface AuthorRepositoryPort {
   linkSocialAccount(authorId: string, provider: string, providerId: string, email?: string): Promise<void>
   /** 이름 또는 슬러그로 작가 검색 (LIKE) */
   search(query: string, limit: number): Promise<Author[]>
+  /** 작가 bio 업데이트 */
+  updateBio(id: string, bio: string): Promise<Author>
 }

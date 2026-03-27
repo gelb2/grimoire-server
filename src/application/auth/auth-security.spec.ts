@@ -216,6 +216,7 @@ describe('보안 테스트', () => {
         'user-1',
         'ep-1',
         '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;',
+        undefined,
       )
     })
 
@@ -226,6 +227,7 @@ describe('보안 테스트', () => {
         'user-1',
         'ep-1',
         '좋은 소설이네요!',
+        undefined,
       )
     })
 
@@ -236,6 +238,7 @@ describe('보안 테스트', () => {
         'user-1',
         'ep-1',
         'Tom &amp; Jerry&#x27;s &quot;adventure&quot;',
+        undefined,
       )
     })
   })

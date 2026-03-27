@@ -50,12 +50,12 @@ export class SocialController {
 
   // ── 댓글 ──
 
-  /** 댓글 작성 (인증 필요) */
+  /** 댓글 작성 (인증 필요, parentId로 대댓글 지원) */
   @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Post('comments/:episodeId')
   @UseGuards(JwtAuthGuard)
-  async createComment(@Req() req: any, @Param('episodeId') episodeId: string, @Body() body: { content: string }) {
-    return this.socialUseCase.createComment(req.user.sub, episodeId, body.content)
+  async createComment(@Req() req: any, @Param('episodeId') episodeId: string, @Body() body: { content: string; parentId?: string }) {
+    return this.socialUseCase.createComment(req.user.sub, episodeId, body.content, body.parentId)
   }
 
   /** 에피소드 댓글 목록 조회 (공개) */

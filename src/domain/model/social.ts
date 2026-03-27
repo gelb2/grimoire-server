@@ -20,5 +20,6 @@ export interface Comment {
   authorId: string
   episodeId: string
   content: string
+  parentId?: string
   createdAt: Date
 }

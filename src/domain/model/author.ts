@@ -6,6 +6,7 @@ export interface Author {
   name: string
   email: string
   passwordHash?: string
+  bio?: string
   role: string
   credits: number
   createdAt: Date
@@ -13,6 +14,14 @@ export interface Author {
 
 /** 외부 노출용 작가 정보 (민감 필드 제거) */
 export type SafeAuthor = Omit<Author, 'passwordHash' | 'email' | 'role'>
+
+/** 작가 공개 프로필 — SafeAuthor + 통계 + 작품 목록 */
+export interface AuthorPublicProfile {
+  author: SafeAuthor
+  works: (WorkSummary & { viewCount: number })[]
+  subscriberCount: number
+  totalLikes: number
+}
 
 /** Author → SafeAuthor 변환 (passwordHash, email, role 제거) */
 export function toSafeAuthor(author: Author): SafeAuthor {
