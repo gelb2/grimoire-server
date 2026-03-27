@@ -71,4 +71,14 @@ export class SocialController {
     await this.socialUseCase.deleteComment(commentId, req.user.sub)
     return { deleted: true }
   }
+
+  // ── 크레딧 선물 ──
+
+  /** 작가에게 크레딧 선물 (인증 필요) */
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Post('gift/:authorSlug')
+  @UseGuards(JwtAuthGuard)
+  async giftCredits(@Req() req: any, @Param('authorSlug') authorSlug: string, @Body() body: { amount: number }) {
+    return this.socialUseCase.giftCredits(req.user.sub, authorSlug, body.amount)
+  }
 }

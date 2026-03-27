@@ -49,7 +49,9 @@ describe('SocialUseCase', () => {
       getTotalLikesForAuthor: jest.fn().mockResolvedValue(15),
     }
 
-    useCase = new SocialUseCase(mockSocialRepo as any)
+    const mockCreditRepo = { adjustCredits: jest.fn(), findLogsByAuthorId: jest.fn(), giftTransfer: jest.fn(), getGiftRanking: jest.fn() }
+    const mockAuthorRepo = { findById: jest.fn(), findBySlug: jest.fn(), findByEmail: jest.fn(), create: jest.fn(), updateCredits: jest.fn() }
+    useCase = new SocialUseCase(mockSocialRepo as any, mockCreditRepo as any, mockAuthorRepo as any)
   })
 
   // ── 좋아요 ──
