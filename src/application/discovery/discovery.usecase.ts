@@ -1,14 +1,24 @@
 import { Injectable, Inject } from '@nestjs/common'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
+import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
 import { SafeAuthor, toSafeAuthor } from '@domain/model/author'
 import { WorkWithMeta, PaginatedWorks } from '@domain/model/work'
+
+export interface GiftedAuthor {
+  id: string
+  slug: string
+  name: string
+  bio: string | null
+  totalGifted: number
+}
 
 @Injectable()
 export class DiscoveryUseCase {
   constructor(
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
+    @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
   ) {}
 
   /** 이름/슬러그로 작가 검색 (민감 필드 제거) */
@@ -49,5 +59,30 @@ export class DiscoveryUseCase {
       pageSize,
       hasMore: page * pageSize < totalCount,
     }
+  }
+
+  /** 응원받는 작가 — 크레딧 선물 총액 기준 랭킹 */
+  async getMostGiftedAuthors(limit = 8): Promise<GiftedAuthor[]> {
+    const ranking = await this.creditRepo.getGiftRanking(limit)
+    if (ranking.length === 0) return []
+
+    // 작가 정보 조회
+    const authors = await Promise.all(
+      ranking.map(r => this.authorRepo.findById(r.authorId)),
+    )
+
+    return ranking
+      .map((r, i) => {
+        const author = authors[i]
+        if (!author) return null
+        return {
+          id: author.id,
+          slug: author.slug,
+          name: author.name,
+          bio: author.bio ?? null,
+          totalGifted: r.totalGifted,
+        }
+      })
+      .filter((a): a is GiftedAuthor => a !== null)
   }
 }
