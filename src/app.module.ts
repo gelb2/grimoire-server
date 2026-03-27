@@ -22,6 +22,7 @@ import { DiscoveryUseCase } from '@application/discovery/discovery.usecase'
 import { AdminUseCase } from '@application/admin/admin.usecase'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
 import { SocialUseCase } from '@application/social/social.usecase'
+import { StatsUseCase } from '@application/stats/stats.usecase'
 
 // 컨트롤러
 import { HealthController } from '@adapter/inbound/http/controller/health.controller'
@@ -37,6 +38,7 @@ import { DiscoveryController } from '@adapter/inbound/http/controller/discovery.
 import { AdminController } from '@adapter/inbound/http/controller/admin.controller'
 import { AnalysisController } from '@adapter/inbound/http/controller/analysis.controller'
 import { SocialController } from '@adapter/inbound/http/controller/social.controller'
+import { StatsController } from '@adapter/inbound/http/controller/stats.controller'
 
 // 아웃바운드 어댑터
 import { PrismaAuthorRepository } from '@adapter/outbound/persistence/prisma-author.repository'
@@ -45,6 +47,7 @@ import { PrismaWorkRepository } from '@adapter/outbound/persistence/prisma-work.
 import { PrismaCreditRepository } from '@adapter/outbound/persistence/prisma-credit.repository'
 import { PrismaReaderRepository } from '@adapter/outbound/persistence/prisma-reader.repository'
 import { PrismaSocialRepository } from '@adapter/outbound/persistence/prisma-social.repository'
+import { PrismaStatsRepository } from '@adapter/outbound/persistence/prisma-stats.repository'
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
 import { PayappAdapter } from '@adapter/outbound/payment/payapp.adapter'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
@@ -76,6 +79,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     AdminController,
     AnalysisController,
     SocialController,
+    StatsController,
   ],
   providers: [
     // 인프라
@@ -97,6 +101,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     AdminUseCase,
     NovelAnalysisUseCase,
     SocialUseCase,
+    StatsUseCase,
     JwtAuthGuard,
     AdminGuard,
 
@@ -111,6 +116,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'ReaderRepositoryPort', useClass: PrismaReaderRepository },
     { provide: 'ClaudeApiPort', useClass: ClaudeThemeAdapter },
     { provide: 'SocialRepositoryPort', useClass: PrismaSocialRepository },
+    { provide: 'StatsRepositoryPort', useClass: PrismaStatsRepository },
     { provide: 'PaymentGatewayPort', useClass: PayappAdapter },
   ],
 })

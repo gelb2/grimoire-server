@@ -176,3 +176,13 @@ model Payment {
 
   @@map("payments")
 }
+
+model DailyView {
+  id     String   @id @default(uuid())
+  workId String   @map("work_id")
+  date   DateTime @db.Date
+  count  Int      @default(0)
+
+  @@unique([workId, date])
+  @@map("daily_views")
+}

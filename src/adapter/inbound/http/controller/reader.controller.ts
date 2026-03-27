@@ -7,6 +7,12 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 export class ReaderController {
   constructor(private readonly readerUseCase: ReaderUseCase) {}
 
+  /** 서재 조회 — 북마크 작품 + 구독 작품 */
+  @Get('library')
+  async getLibrary(@Req() req: any) {
+    return this.readerUseCase.getLibrary(req.user.sub)
+  }
+
   /** 북마크 토글 (추가/제거) */
   @Post('bookmarks/:episodeId')
   async toggleBookmark(@Req() req: any, @Param('episodeId') episodeId: string) {
