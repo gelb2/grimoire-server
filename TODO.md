@@ -6,9 +6,8 @@
 
 ## 인프라/배포
 
-- [ ] inhouse 환경 배포 (Azure Container Apps)
-- [ ] production 환경 배포
 - [ ] Cloudflare DNS CNAME 레코드 설정 (`INFRASTRUCTURE.md` §10 참조)
+- [ ] Container Apps max-replicas 증가 (현재 1 — 수평 확장 불가)
 
 ## 외부 연동
 
@@ -18,14 +17,16 @@
 ## 기능 구현
 
 - [ ] 크레딧-원화-AI토큰 비용 정밀 계산식 구현 (`PLANNING_GRIMOIRE.md` §0 참조)
-- [ ] API 응답 페이지네이션
 - [ ] 조회수 통계 집계 로직
 - [ ] HTML 파서 (최후순위)
+- [ ] Redis 캐시 (인기 소설 테마 DB 호출 캐싱)
 
 ## 보안
 
 - [ ] admin guard 구현 (현재 JWT만 확인, 관리자 역할 미검증)
 - [ ] PAYAPP 웹훅 HMAC-SHA256 서명 검증 실제 연동
+- [ ] 계정 잠금 정책 (5회 실패 → 30분 잠금)
+- [ ] 관리자 행위 감사 로그 (audit log)
 
 ## 참조
 

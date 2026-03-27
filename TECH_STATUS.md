@@ -5,9 +5,9 @@
 
 ---
 
-## 1. 현재 Phase
+## 1. 현재 버전
 
-**Phase 5 완료 — 전 기능 구현 완료** (인프라 연결 + 실서비스 배포 남음)
+**v0.8.0** — 전 기능 구현 완료 + HWP 파서 + 파일 업로드 + CI/CD
 
 ---
 
@@ -16,22 +16,34 @@
 ### API 엔드포인트
 
 전체 엔드포인트 명세: `docs/api-contract.md` 참조.
+엔드포인트 수: 40개 (api-contract.md 기준)
 
 | 카테고리 | 상태 |
 |----------|------|
 | Health | 구현 완료 |
 | Auth (이메일 + Google OAuth) | 구현 완료 |
 | Theme (생성/조회/퍼블리시/CSS) | 구현 완료 |
-| Manuscript (파싱) | 구현 완료 |
+| Manuscript (파싱 + 파일 업로드) | 구현 완료 |
 | Work Management (작품/에피소드 CRUD) | 구현 완료 |
 | Author (공개 조회) | 구현 완료 |
 | Content (공개 조회) | 구현 완료 |
 | Social (좋아요/구독/댓글) | 구현 완료 |
 | Reader (북마크/읽기 진행도) | 구현 완료 |
-| Discovery (검색/인기/최신) | 구현 완료 |
+| Discovery (검색/인기/최신 + 페이지네이션) | 구현 완료 |
 | Payment (상품/웹훅/크레딧) | 구현 완료 |
 | Admin (통계/크레딧 부여) | 구현 완료 |
 | Analysis (RAG 인덱싱/일관성 체크) | 구현 완료 |
+
+### 원고 파서 지원 포맷
+
+| 포맷 | 파서 | 상태 |
+|------|------|------|
+| Markdown (.md) | md-parser.ts | 구현 완료 |
+| 텍스트 (.txt) | txt-parser.ts | 구현 완료 |
+| Word (.docx) | docx-parser.ts (mammoth) | 구현 완료 |
+| 한글 (.hwp) | hwp-parser.ts | 구현 완료 |
+| 한글 (.hwpx) | hwp-parser.ts | 구현 완료 |
+| HTML (.html) | 미구현 (최후순위) | - |
 
 ### 아키텍처 레이어
 
@@ -48,12 +60,14 @@
 ### Prisma 스키마
 
 - 정본: `prisma/schema.prisma`
+- 모델 수: 13개
 - 설명: `SCHEMA.md`
-- 마이그레이션: 실행 완료 (dev DB 테이블 생성)
+- 마이그레이션: 실행 완료 (dev/inhouse/prod DB 테이블 생성)
 
 ### 테스트
 
-- `npm test` 실행으로 현재 테스트 수 확인
+- 219 tests, 20 suites (2026-03-27 기준)
+- `npm test` 실행으로 최신 테스트 수 확인
 - 테스트 전략: `TESTING.md` 참조
 
 ### 인프라
@@ -61,11 +75,12 @@
 | 항목 | 상태 | 비고 |
 |------|------|------|
 | Docker | Dockerfile 작성 완료 | 멀티스테이지 빌드 + docker-entrypoint.sh |
-| CI/CD | GitHub Actions 설정 완료 | `.github/workflows/` |
-| Azure Container Apps | 설정 완료 | 서버 호스팅 |
-| Azure Database for PostgreSQL | 설정 완료 | DB |
+| CI/CD | GitHub Actions 설정 완료 (8개 워크플로우) | `.github/workflows/` |
+| Azure Container Apps | 3환경 배포 완료 | 서버 호스팅 |
+| Azure Database for PostgreSQL | 3환경 설정 완료 | DB |
 | Azure Container Registry | 설정 완료 | Docker 이미지 |
 | Rate Limiting | 적용 완료 | NestJS Throttler 전면 적용 |
+| 파일 업로드 | 적용 완료 | Multer (md/txt/docx/hwp/hwpx) |
 
 상세: `INFRASTRUCTURE.md` 참조.
 
@@ -75,18 +90,22 @@
 
 | 환경 | 상태 | URL |
 |------|------|-----|
-| development | 로컬 (DB 연결 완료) | localhost:3000 |
-| inhouse | 미배포 | - |
-| production | 미배포 | - |
+| development | 배포 완료 | localhost:3000 / Azure Container Apps |
+| inhouse | 배포 완료 | inhouse-api.grimoire.app |
+| production | 배포 완료 | api.grimoire.app |
+
+> DNS 설정 미완 — Cloudflare CNAME 레코드 설정 필요 (`INFRASTRUCTURE.md` §10 참조)
 
 ---
 
 ## 4. 다음 단계
 
-- inhouse 환경 배포 (Azure Container Apps)
+- Cloudflare DNS CNAME 레코드 설정
 - Google OAuth 실제 연동 (Client ID 필요)
 - PAYAPP 실제 연동 (API 키 필요)
+- Redis 캐시 (테마 DB 호출 캐싱)
 - 크레딧-원화-AI토큰 비용 정밀 계산식 구현
+- 계정 잠금 정책 + 감사 로그
 - HTML 파서 (최후순위)
 
 ---

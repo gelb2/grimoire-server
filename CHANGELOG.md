@@ -1,5 +1,41 @@
 # Changelog — grimoire-server
 
+## [0.8.0] - 2026-03-27
+
+### 최종 안정화 + 파일 업로드 + HWP 파서
+
+#### Added
+- 파일 업로드 엔드포인트 (Multer — md/txt/docx/hwp/hwpx)
+- HWP/HWPX 파서 구현 (한글 워드프로세서 포맷 지원)
+- CI/CD GitHub Actions 자동 배포 구축 (8개 워크플로우)
+- 시드 데이터 원고 보강 (대제/중제/소제 + 실제 고전문학 텍스트)
+- discovery API 페이지네이션 지원
+- 전수검사 체크리스트에 보안 검증 항목 추가
+
+#### Fixed
+- Throttle/Debounce 전수점검 — 구독 Throttle 추가, 좋아요/구독 토글 원자화, 원고 파싱 Throttle 추가
+- 인기 정렬에 createdAt 2차 정렬 추가 (에피소드 많은 작품 우선)
+- 시드 스크립트 정리 (seed-all.ts 통합)
+
+---
+
+## [0.7.0] - 2026-03-26
+
+### DeerDevil 테마 시스템 + 보안 강화
+
+#### Added
+- DeerDevil 테마 시스템 + 원본 파서 연결
+- 테마 tagline + dividerIcon 필드 추가
+
+#### Fixed
+- CRITICAL 보안 8건 + HIGH 4건 수정
+- 에피소드 type 필드 + DeerDevil slug 재구조화
+- 스크립트 보안 + SOLID 정리
+- MD 파서 원본 DeerDevil과 완전 일치시킴
+- 문서 피라미드 리팩토링 + frontmatter/slug 버그 수정
+
+---
+
 ## [0.6.0] - 2026-03-26
 
 ### CRITICAL 보안 수정 + 인프라
