@@ -161,7 +161,8 @@ describe('보안 테스트', () => {
         findEpisodeById: jest.fn(),
         deleteEpisode: jest.fn(),
       }
-      useCase = new WorkManagementUseCase(mockWorkRepo)
+      const mockBlobStorage = { isEnabled: false, uploadImage: jest.fn(), deleteImage: jest.fn() } as any
+      useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage)
     })
 
     it('다른 사용자의 작품 수정 시 ForbiddenException을 던진다', async () => {

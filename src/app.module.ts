@@ -5,6 +5,7 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler'
 
 // 인프라
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
+import { BlobStorageService } from '@infrastructure/storage/blob-storage.service'
 
 // 유스케이스
 import { GenerateThemeUseCase } from '@application/theme/generate-theme.usecase'
@@ -49,6 +50,8 @@ import { PrismaReaderRepository } from '@adapter/outbound/persistence/prisma-rea
 import { PrismaSocialRepository } from '@adapter/outbound/persistence/prisma-social.repository'
 import { PrismaStatsRepository } from '@adapter/outbound/persistence/prisma-stats.repository'
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
+import { OpenAIEmbeddingAdapter } from '@adapter/outbound/embedding/openai-embedding.adapter'
+import { PgVectorAdapter } from '@adapter/outbound/vector/pgvector.adapter'
 import { PayappAdapter } from '@adapter/outbound/payment/payapp.adapter'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
@@ -84,6 +87,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
   providers: [
     // 인프라
     PrismaService,
+    BlobStorageService,
 
     // 유스케이스
     GenerateThemeUseCase,
@@ -117,6 +121,8 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'ClaudeApiPort', useClass: ClaudeThemeAdapter },
     { provide: 'SocialRepositoryPort', useClass: PrismaSocialRepository },
     { provide: 'StatsRepositoryPort', useClass: PrismaStatsRepository },
+    { provide: 'EmbeddingPort', useClass: OpenAIEmbeddingAdapter },
+    { provide: 'VectorStorePort', useClass: PgVectorAdapter },
     { provide: 'PaymentGatewayPort', useClass: PayappAdapter },
   ],
 })

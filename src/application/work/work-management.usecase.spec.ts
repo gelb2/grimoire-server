@@ -12,6 +12,7 @@ describe('WorkManagementUseCase', () => {
     title: '테스트 작품',
     subtitle: null,
     description: null,
+    coverImage: null,
     viewCount: 0,
     createdAt: new Date(),
   }
@@ -45,7 +46,8 @@ describe('WorkManagementUseCase', () => {
       countByAuthorId: jest.fn(),
       countEpisodesByWorkId: jest.fn(),
     }
-    useCase = new WorkManagementUseCase(mockWorkRepo)
+    const mockBlobStorage = { isEnabled: false, uploadImage: jest.fn(), deleteImage: jest.fn() } as any
+    useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage)
   })
 
   describe('createWork', () => {

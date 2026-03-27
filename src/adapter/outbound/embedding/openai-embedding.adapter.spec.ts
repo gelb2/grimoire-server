@@ -1,13 +1,17 @@
-import { getEmbedding, getEmbeddingsBatch, EMBEDDING_DIM } from './embeddings'
+import { OpenAIEmbeddingAdapter } from './openai-embedding.adapter'
 
-// OpenAI API 모킹
+const EMBEDDING_DIM = 1536
+
 const mockFetch = jest.fn()
 global.fetch = mockFetch as any
 
-describe('embeddings', () => {
+describe('OpenAIEmbeddingAdapter', () => {
+  let adapter: OpenAIEmbeddingAdapter
+
   beforeEach(() => {
     process.env.OPENAI_API_KEY = 'test-key'
     mockFetch.mockReset()
+    adapter = new OpenAIEmbeddingAdapter()
   })
 
   afterEach(() => {
@@ -24,7 +28,7 @@ describe('embeddings', () => {
       }),
     })
 
-    const result = await getEmbedding('테스트 텍스트')
+    const result = await adapter.getEmbedding('테스트 텍스트')
     expect(result).toHaveLength(EMBEDDING_DIM)
     expect(mockFetch).toHaveBeenCalledTimes(1)
   })
@@ -42,7 +46,7 @@ describe('embeddings', () => {
       }),
     })
 
-    const result = await getEmbeddingsBatch(['텍스트1', '텍스트2'], 2)
+    const result = await adapter.getEmbeddingsBatch(['텍스트1', '텍스트2'], 2)
     expect(result.embeddings).toHaveLength(2)
     expect(result.tokensUsed).toBe(20)
   })
@@ -50,7 +54,7 @@ describe('embeddings', () => {
   it('API 키 없으면 에러를 던진다', async () => {
     delete process.env.OPENAI_API_KEY
     delete process.env.OPENAI_KEY
-    await expect(getEmbedding('test')).rejects.toThrow('OPENAI_API_KEY')
+    await expect(adapter.getEmbedding('test')).rejects.toThrow('OPENAI_API_KEY')
   })
 
   it('429 에러 시 재시도한다', async () => {
@@ -65,7 +69,7 @@ describe('embeddings', () => {
         }),
       })
 
-    const result = await getEmbedding('test')
+    const result = await adapter.getEmbedding('test')
     expect(result).toHaveLength(EMBEDDING_DIM)
     expect(mockFetch).toHaveBeenCalledTimes(2)
   }, 15000)

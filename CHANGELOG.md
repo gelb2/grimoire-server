@@ -1,5 +1,26 @@
 # Changelog — grimoire-server
 
+## [0.9.0] - 2026-03-27
+
+### 커버 이미지 + RAG 헥사고날 리팩토링
+
+#### Added
+- Azure Blob Storage 커버 이미지 업로드 (`PUT /api/works/:id/cover`)
+- BlobStorageService 인프라 서비스 (환경변수 미설정 시 graceful 비활성화)
+- Work.coverImage DB 필드 추가
+- EmbeddingPort 인터페이스 + OpenAIEmbeddingAdapter (헥사고날)
+- VectorStorePort 인터페이스 + PgVectorAdapter (헥사고날)
+- ClaudeApiPort.ask() 범용 메서드 (테마 외 분석/요약 등)
+- ACCOUNTS.md 서드파티 계정 현황 문서 (루트)
+
+#### Refactored
+- RAG 모듈 전면 리팩토링 — lib 직접 호출 → Port/Adapter 패턴
+- NovelAnalysisUseCase: PrismaService 직접 의존 제거 → 포트 주입
+- novel-analyzer.ts: askClaude 직접 호출 제거 → AskFn 파라미터 주입 (순수 함수)
+- embeddings.ts/vector-db.ts 로직 → 어댑터 계층으로 이관
+
+---
+
 ## [0.8.0] - 2026-03-27
 
 ### 최종 안정화 + 파일 업로드 + HWP 파서

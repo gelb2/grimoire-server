@@ -1,5 +1,6 @@
 import { Injectable, Inject, NotFoundException, ForbiddenException } from '@nestjs/common'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
+import { BlobStorageService } from '@infrastructure/storage/blob-storage.service'
 import { Work, Episode } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 
@@ -7,11 +8,27 @@ import { Block } from '@domain/model/block'
 export class WorkManagementUseCase {
   constructor(
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
+    private readonly blobStorage: BlobStorageService,
   ) {}
 
   /** 작품 생성 */
   async createWork(authorId: string, input: { slug: string; title: string; subtitle?: string; description?: string }): Promise<Work> {
     return this.workRepo.createWork({ authorId, ...input })
+  }
+
+  /** 커버 이미지 업로드 (소유권 검증) */
+  async uploadCoverImage(authorId: string, workId: string, buffer: Buffer, filename: string, mimeType: string): Promise<Work> {
+    const work = await this.workRepo.findById(workId)
+    if (!work) throw new NotFoundException('작품을 찾을 수 없습니다')
+    if (work.authorId !== authorId) throw new ForbiddenException('작품 수정 권한이 없습니다')
+
+    // 이전 커버 이미지 삭제
+    if (work.coverImage) {
+      await this.blobStorage.deleteImage(work.coverImage)
+    }
+
+    const coverImage = await this.blobStorage.uploadImage(buffer, filename, mimeType)
+    return this.workRepo.updateWork(workId, { coverImage })
   }
 
   /** 작품 수정 (소유권 검증) */
