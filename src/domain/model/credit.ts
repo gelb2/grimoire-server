@@ -13,5 +13,9 @@ export const CreditReason = {
   THEME_GENERATE: 'theme_generate',
   THEME_REGENERATE: 'theme_regenerate',
   PURCHASE_CREDIT_5: 'purchase_credit_5',
+  GIFT_SENT: 'gift_sent',
+  GIFT_RECEIVED: 'gift_received',
   adminSet: (adminId: string) => `admin_set_by_${adminId}`,
+  giftSent: (receiverSlug: string) => `gift_sent_to_${receiverSlug}`,
+  giftReceived: (senderSlug: string) => `gift_received_from_${senderSlug}`,
 } as const

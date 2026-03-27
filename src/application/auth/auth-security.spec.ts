@@ -207,7 +207,9 @@ describe('보안 테스트', () => {
           createdAt: new Date(),
         }),
       }
-      useCase = new SocialUseCase(mockSocialRepo)
+      const mockCreditRepo = { adjustCredits: jest.fn(), findLogsByAuthorId: jest.fn(), giftTransfer: jest.fn(), getGiftRanking: jest.fn() }
+      const mockAuthorRepo = { findById: jest.fn(), findBySlug: jest.fn(), findByEmail: jest.fn(), create: jest.fn(), updateCredits: jest.fn() }
+      useCase = new SocialUseCase(mockSocialRepo as any, mockCreditRepo as any, mockAuthorRepo as any)
     })
 
     it('HTML 태그가 이스케이프된다', async () => {
