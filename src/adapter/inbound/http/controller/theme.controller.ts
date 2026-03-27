@@ -2,8 +2,11 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
+  Put,
   Body,
   Param,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -27,27 +30,41 @@ export class ThemeController {
     private readonly bakeTheme: BakeThemeUseCase,
   ) {}
 
-  @Throttle({ default: { ttl: 60000, limit: 5 } })  // AI API 호출 — 분당 5회
+  /** 테마 AI 생성 (슬롯 체크 포함) */
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @Post('generate')
   @UseGuards(JwtAuthGuard)
   async generate(@Req() req: any, @Body() dto: GenerateThemeDto) {
-    // 인증된 사용자만 자신의 테마를 생성할 수 있음
-    const theme = await this.generateTheme.execute(dto.authorId, dto.description)
+    const theme = await this.generateTheme.execute(dto.authorId, dto.description, dto.name)
     return { themeId: theme.id, preview: theme.overrides }
   }
 
-  /** 테마를 CSS로 베이킹하고 bakedCssUrl을 갱신한다 (소유권 검증) */
+  /** 내 테마 목록 조회 */
+  @Get('mine')
+  @UseGuards(JwtAuthGuard)
+  async listMine(@Req() req: any) {
+    return this.getTheme.listByAuthor(req.user.id)
+  }
+
+  /** 테마 삭제 (슬롯 반환) */
+  @Delete(':themeId')
+  @UseGuards(JwtAuthGuard)
+  async deleteTheme(@Req() req: any, @Param('themeId') themeId: string) {
+    await this.getTheme.deleteTheme(req.user.id, themeId)
+    return { deleted: true }
+  }
+
+  /** 테마를 CSS로 베이킹 */
   @Post('publish/:authorSlug')
   @UseGuards(JwtAuthGuard)
   async publish(@Req() req: any, @Param('authorSlug') authorSlug: string) {
-    // 소유권 검증: 요청자의 slug와 authorSlug 일치 확인
     if (req.user.slug !== authorSlug) {
       throw new ForbiddenException('본인의 테마만 퍼블리시할 수 있습니다')
     }
     return this.bakeTheme.execute(authorSlug)
   }
 
-  /** 작가 테마를 CSS로 즉시 생성하여 반환한다 */
+  /** 테마 CSS 반환 */
   @Get('css/:authorSlug')
   async getThemeCSS(
     @Param('authorSlug') authorSlug: string,
@@ -61,6 +78,17 @@ export class ThemeController {
     res.type('text/css').send(css)
   }
 
+  /** 작품별 테마 resolve (public) */
+  @Get('resolve/:authorSlug')
+  async resolveTheme(
+    @Param('authorSlug') authorSlug: string,
+    @Query('work') workSlug?: string,
+  ) {
+    const theme = await this.getTheme.resolve(authorSlug, workSlug)
+    return theme ?? {}
+  }
+
+  /** 작가 기본 테마 조회 (하위 호환) */
   @Get(':authorSlug')
   async findByAuthorSlug(@Param('authorSlug') authorSlug: string) {
     return this.getTheme.execute(authorSlug)

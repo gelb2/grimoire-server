@@ -63,7 +63,7 @@ async function main() {
   // 1. DeerDevil 작가 찾기
   const author = await prisma.author.findUnique({
     where: { slug: 'deerdevil' },
-    include: { theme: true },
+    include: { themes: true },
   })
 
   if (!author) {
@@ -72,24 +72,25 @@ async function main() {
     process.exit(1)
   }
 
+  const existingTheme = author.themes[0]
   console.log(`  작가: ${author.name} (${author.slug})`)
-  console.log(`  기존 테마: ${author.theme ? '있음' : '없음'}`)
+  console.log(`  기존 테마: ${existingTheme ? '있음' : '없음'}`)
 
-  // 2. 테마 upsert
-  const result = await prisma.theme.upsert({
-    where: { authorId: author.id },
-    create: {
-      authorId: author.id,
-      preset: 'midnight',
-      overrides: DEERDEVIL_COMPLETE_THEME as object,
-      rawDescription: 'A24 감성 K-다크 판타지. 어둡고 묵직한 밤의 분위기. 사슴뿔 아이콘과 타이핑 애니메이션.',
-    },
-    update: {
-      preset: 'midnight',
-      overrides: DEERDEVIL_COMPLETE_THEME as object,
-      rawDescription: 'A24 감성 K-다크 판타지. 어둡고 묵직한 밤의 분위기. 사슴뿔 아이콘과 타이핑 애니메이션.',
-    },
-  })
+  // 2. 테마 update/create (1:N이므로 upsert({ where: { authorId } }) 불가)
+  const themeData = {
+    preset: 'midnight',
+    overrides: DEERDEVIL_COMPLETE_THEME as object,
+    rawDescription: 'A24 감성 K-다크 판타지. 어둡고 묵직한 밤의 분위기. 사슴뿔 아이콘과 타이핑 애니메이션.',
+  }
+
+  const result = existingTheme
+    ? await prisma.theme.update({
+        where: { id: existingTheme.id },
+        data: themeData,
+      })
+    : await prisma.theme.create({
+        data: { authorId: author.id, ...themeData },
+      })
 
   console.log(`\n  [OK] 테마 업데이트 완료 (id: ${result.id})`)
   console.log(`  preset: ${result.preset}`)

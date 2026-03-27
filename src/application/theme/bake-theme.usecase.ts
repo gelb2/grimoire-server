@@ -26,7 +26,7 @@ export class BakeThemeUseCase {
     const cssUrl = `/api/themes/css/${authorSlug}`
 
     // DB에 bakedCssUrl 기록
-    await this.themeRepo.updateBakedCssUrl(theme.authorId, cssUrl)
+    await this.themeRepo.updateBakedCssUrl(theme.id, cssUrl)
 
     return { cssUrl, css }
   }
