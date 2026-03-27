@@ -98,6 +98,13 @@
 - [ ] CORS 설정 확인 (`*` 아닌지)
 - [ ] Swagger: production에서 비활성화
 - [ ] DB 방화벽 규칙 확인
+- [ ] auth guard 적용 확인 (모든 mutation 엔드포인트에 @UseGuards(JwtAuthGuard))
+- [ ] role 기반 접근 제어 (admin 엔드포인트에 AdminGuard)
+- [ ] 소유권 검증 (자신의 리소스만 수정/삭제 가능)
+- [ ] 입력값 검증 (DTO에 class-validator 적용)
+- [ ] 토큰 저장 방식 (HttpOnly Cookie, localStorage 사용 금지)
+- [ ] 환경변수에 placeholder/기본값 없는지 확인
+- [ ] Rate limiting (@Throttle) 모든 mutation에 적용
 
 ### 공통
 
