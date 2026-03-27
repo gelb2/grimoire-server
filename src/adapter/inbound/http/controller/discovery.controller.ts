@@ -11,15 +11,39 @@ export class DiscoveryController {
     return this.discoveryUseCase.searchAuthors(query || '', limit ? parseInt(limit, 10) : 10)
   }
 
-  /** 인기 작품 조회 */
+  /** 인기 작품 조회 (페이지네이션 지원) */
   @Get('works/popular')
-  async getPopularWorks(@Query('limit') limit?: string) {
+  async getPopularWorks(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('limit') limit?: string,
+  ) {
+    // 페이지네이션 파라미터가 있으면 페이지네이션 응답
+    if (page) {
+      return this.discoveryUseCase.getPopularWorksPaginated(
+        parseInt(page, 10) || 1,
+        parseInt(pageSize || '12', 10),
+      )
+    }
+    // 기존 호환: limit만 전달 시 배열 응답
     return this.discoveryUseCase.getPopularWorks(limit ? parseInt(limit, 10) : 10)
   }
 
-  /** 최신 작품 조회 */
+  /** 최신 작품 조회 (페이지네이션 지원) */
   @Get('works/recent')
-  async getRecentWorks(@Query('limit') limit?: string) {
+  async getRecentWorks(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('limit') limit?: string,
+  ) {
+    // 페이지네이션 파라미터가 있으면 페이지네이션 응답
+    if (page) {
+      return this.discoveryUseCase.getRecentWorksPaginated(
+        parseInt(page, 10) || 1,
+        parseInt(pageSize || '12', 10),
+      )
+    }
+    // 기존 호환: limit만 전달 시 배열 응답
     return this.discoveryUseCase.getRecentWorks(limit ? parseInt(limit, 10) : 10)
   }
 }
