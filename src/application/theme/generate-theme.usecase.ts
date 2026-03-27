@@ -6,6 +6,20 @@ import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.po
 import { CreditReason } from '@domain/model/credit'
 import { Theme } from '@domain/model/theme'
 
+// 구독 플랜별 테마 슬롯 제한 (추후 DB 기반으로 전환)
+const THEME_SLOT_LIMITS: Record<string, number> = {
+  free: 1,
+  pro: 5,
+  premium: Infinity,
+}
+
+// 일일 무료 생성 횟수 (추후 DB 기반으로 전환)
+const DAILY_FREE_LIMITS: Record<string, number> = {
+  free: 3,
+  pro: 7,
+  premium: 12,
+}
+
 @Injectable()
 export class GenerateThemeUseCase {
   constructor(
@@ -15,23 +29,31 @@ export class GenerateThemeUseCase {
     @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
   ) {}
 
-  async execute(authorId: string, description: string): Promise<Theme> {
+  async execute(authorId: string, description: string, themeName?: string): Promise<Theme> {
     // 작가 존재 확인
     const author = await this.authorRepo.findById(authorId)
     if (!author) {
       throw new NotFoundException('작가를 찾을 수 없습니다')
     }
 
-    // 크레딧 확인
+    // 테마 슬롯 확인
+    const plan = 'free' // 추후 author.plan으로 전환
+    const slotLimit = THEME_SLOT_LIMITS[plan] ?? 1
+    const currentCount = await this.themeRepo.countByAuthorId(authorId)
+    if (currentCount >= slotLimit) {
+      throw new BadRequestException(
+        `테마 슬롯이 가득 찼습니다 (${currentCount}/${slotLimit}). 기존 테마를 삭제하세요.`,
+      )
+    }
+
+    // 일일 무료 생성 횟수 확인 (추후 Redis 등으로 전환)
+    // 현재는 항상 크레딧 차감 (일일 무료 횟수 추적은 Phase 2)
+    const reason = CreditReason.THEME_GENERATE
+
+    // 크레딧 확인 + 즉시 차감 (Tajook 패턴)
     if (author.credits < 1) {
       throw new BadRequestException('크레딧이 부족합니다')
     }
-
-    // 기존 테마 여부 확인 (재생성 vs 최초 생성)
-    const existing = await this.themeRepo.findByAuthorId(authorId)
-    const reason = existing ? CreditReason.THEME_REGENERATE : CreditReason.THEME_GENERATE
-
-    // 크레딧 즉시 차감 (Tajook 패턴)
     await this.creditRepo.adjustCredits(authorId, -1, reason)
 
     // Claude API로 테마 생성 — 실패 시 크레딧 환불
@@ -39,7 +61,6 @@ export class GenerateThemeUseCase {
     try {
       themeData = await this.claudeApi.generateTheme(description)
     } catch (error) {
-      // AI 호출 실패 → 크레딧 환불
       await this.creditRepo.adjustCredits(authorId, 1, 'theme_generate_refund')
       throw error
     }
@@ -50,7 +71,8 @@ export class GenerateThemeUseCase {
       : themeData.tone === 'light' ? 'morning'
       : 'custom'
 
-    // DB에 저장 (upsert)
-    return this.themeRepo.upsert(authorId, preset, themeData, description)
+    // DB에 저장 (create — 슬롯 제한 이미 체크됨)
+    const name = themeName ?? `테마 ${currentCount + 1}`
+    return this.themeRepo.create(authorId, name, preset, themeData, description)
   }
 }

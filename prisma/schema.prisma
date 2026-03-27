@@ -9,18 +9,19 @@ datasource db {
 }
 
 model Author {
-  id             String          @id @default(uuid())
-  slug           String          @unique
-  name           String
-  email          String          @unique
-  passwordHash   String?         @map("password_hash")
-  bio            String?
-  role           String          @default("user")
-  credits        Int             @default(3)
-  theme          Theme?
-  works          Work[]
-  socialAccounts SocialAccount[]
-  createdAt      DateTime        @default(now()) @map("created_at")
+  id              String          @id @default(uuid())
+  slug            String          @unique
+  name            String
+  email           String          @unique
+  passwordHash    String?         @map("password_hash")
+  bio             String?
+  role            String          @default("user")
+  credits         Int             @default(3)
+  defaultThemeId  String?         @map("default_theme_id")
+  themes          Theme[]
+  works           Work[]
+  socialAccounts  SocialAccount[]
+  createdAt       DateTime        @default(now()) @map("created_at")
 
   @@map("authors")
 }
@@ -28,13 +29,16 @@ model Author {
 model Theme {
   id             String   @id @default(uuid())
   author         Author   @relation(fields: [authorId], references: [id])
-  authorId       String   @unique @map("author_id")
+  authorId       String   @map("author_id")
+  name           String   @default("기본 테마")
   preset         String   @default("midnight")
   overrides      Json?
   rawDescription String?  @map("raw_description")
   bakedCssUrl    String?  @map("baked_css_url")
   updatedAt      DateTime @updatedAt @map("updated_at")
+  works          Work[]
 
+  @@index([authorId])
   @@map("themes")
 }
 
@@ -47,6 +51,8 @@ model Work {
   subtitle    String?
   description String?
   coverImage  String?   @map("cover_image")
+  themeId     String?   @map("theme_id")
+  theme       Theme?    @relation(fields: [themeId], references: [id])
   viewCount   Int       @default(0) @map("view_count")
   episodes    Episode[]
   createdAt   DateTime  @default(now()) @map("created_at")

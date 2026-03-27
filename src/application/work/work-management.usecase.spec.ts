@@ -13,6 +13,7 @@ describe('WorkManagementUseCase', () => {
     subtitle: null,
     description: null,
     coverImage: null,
+    themeId: null,
     viewCount: 0,
     createdAt: new Date(),
   }

@@ -8,6 +8,7 @@ export interface Work {
   subtitle: string | null
   description: string | null
   coverImage: string | null
+  themeId: string | null
   viewCount: number
   createdAt: Date
 }

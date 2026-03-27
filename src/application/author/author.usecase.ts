@@ -20,7 +20,8 @@ export class AuthorUseCase {
       throw new NotFoundException('작가를 찾을 수 없습니다')
     }
 
-    const theme = await this.themeRepo.findByAuthorId(author.id)
+    const themes = await this.themeRepo.findAllByAuthorId(author.id)
+    const theme = themes[0] ?? null
     const works = await this.workRepo.findByAuthorSlug(slug)
 
     const workSummaries: WorkSummary[] = await Promise.all(
