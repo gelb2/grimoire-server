@@ -29,6 +29,12 @@ export class DiscoveryController {
     return this.discoveryUseCase.getPopularWorks(limit ? parseInt(limit, 10) : 10)
   }
 
+  /** 응원받는 작가 — 크레딧 선물 총액 랭킹 */
+  @Get('authors/most-gifted')
+  async getMostGiftedAuthors(@Query('limit') limit?: string) {
+    return this.discoveryUseCase.getMostGiftedAuthors(limit ? parseInt(limit, 10) : 8)
+  }
+
   /** 최신 작품 조회 (페이지네이션 지원) */
   @Get('works/recent')
   async getRecentWorks(
