@@ -2,7 +2,7 @@ import { Injectable, Inject } from '@nestjs/common'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { SafeAuthor, toSafeAuthor } from '@domain/model/author'
-import { WorkWithMeta } from '@domain/model/work'
+import { WorkWithMeta, PaginatedWorks } from '@domain/model/work'
 
 @Injectable()
 export class DiscoveryUseCase {
@@ -25,5 +25,29 @@ export class DiscoveryUseCase {
   /** 최신 작품 조회 (createdAt 내림차순) */
   async getRecentWorks(limit = 10): Promise<WorkWithMeta[]> {
     return this.workRepo.findRecent(limit)
+  }
+
+  /** 인기 작품 페이지네이션 조회 */
+  async getPopularWorksPaginated(page = 1, pageSize = 12): Promise<PaginatedWorks> {
+    const { works, totalCount } = await this.workRepo.findPopularPaginated(page, pageSize)
+    return {
+      works,
+      totalCount,
+      page,
+      pageSize,
+      hasMore: page * pageSize < totalCount,
+    }
+  }
+
+  /** 최신 작품 페이지네이션 조회 */
+  async getRecentWorksPaginated(page = 1, pageSize = 12): Promise<PaginatedWorks> {
+    const { works, totalCount } = await this.workRepo.findRecentPaginated(page, pageSize)
+    return {
+      works,
+      totalCount,
+      page,
+      pageSize,
+      hasMore: page * pageSize < totalCount,
+    }
   }
 }

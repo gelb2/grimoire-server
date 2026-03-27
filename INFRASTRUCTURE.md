@@ -158,14 +158,15 @@ az containerapp update \
 ### 수동 빌드 + 푸시 (web)
 
 ```bash
+# BFF 패턴: API_URL은 빌드 인자가 아닌 Container Apps 런타임 환경변수로 설정
 docker build \
-  --build-arg NEXT_PUBLIC_API_URL=https://grimoire-server-dev.{FQDN} \
   -t grimoireacr.azurecr.io/grimoire-web:dev-manual .
 docker push grimoireacr.azurecr.io/grimoire-web:dev-manual
 az containerapp update \
   --name grimoire-web-dev \
   --resource-group grimoire-rg \
-  --image grimoireacr.azurecr.io/grimoire-web:dev-manual
+  --image grimoireacr.azurecr.io/grimoire-web:dev-manual \
+  --set-env-vars API_URL=https://grimoire-server-dev.{FQDN}/api
 ```
 
 ---
