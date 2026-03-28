@@ -46,6 +46,14 @@ export class ThemeController {
     return this.getTheme.listByAuthor(req.user.id)
   }
 
+  /** 테마 커스텀 수정 (overrides 업데이트) */
+  @Put(':themeId')
+  @UseGuards(JwtAuthGuard)
+  async updateTheme(@Req() req: any, @Param('themeId') themeId: string, @Body() body: { overrides: any }) {
+    const theme = await this.getTheme.updateOverrides(req.user.sub, themeId, body.overrides)
+    return { themeId: theme.id, overrides: theme.overrides }
+  }
+
   /** 테마 삭제 (슬롯 반환) */
   @Delete(':themeId')
   @UseGuards(JwtAuthGuard)
