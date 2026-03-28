@@ -40,6 +40,7 @@ import { AdminController } from '@adapter/inbound/http/controller/admin.controll
 import { AnalysisController } from '@adapter/inbound/http/controller/analysis.controller'
 import { SocialController } from '@adapter/inbound/http/controller/social.controller'
 import { StatsController } from '@adapter/inbound/http/controller/stats.controller'
+import { CreditController } from '@adapter/inbound/http/controller/credit.controller'
 
 // 아웃바운드 어댑터
 import { PrismaAuthorRepository } from '@adapter/outbound/persistence/prisma-author.repository'
@@ -83,6 +84,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     AnalysisController,
     SocialController,
     StatsController,
+    CreditController,
   ],
   providers: [
     // 인프라
