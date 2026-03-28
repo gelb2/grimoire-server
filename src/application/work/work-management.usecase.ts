@@ -66,8 +66,8 @@ export class WorkManagementUseCase {
     const episodeCount = await this.workRepo.countEpisodesByWorkId(work.id)
     const orderNum = episodeCount + 1
 
-    // 간단한 블록 파싱 (rawContent → Block[])
-    const blocks = this.parseContentToBlocks(input.rawContent)
+    // 포맷에 따라 블록 파싱 (rawContent → Block[])
+    const blocks = this.parseContentToBlocks(input.rawContent, input.sourceFormat)
 
     return this.workRepo.createEpisode({
       workId: work.id,
@@ -91,8 +91,25 @@ export class WorkManagementUseCase {
     await this.workRepo.deleteEpisode(episodeId)
   }
 
-  /** rawContent를 Block[]으로 변환 — DeerDevil 원본 파서(md-parser.ts) 사용 */
-  private parseContentToBlocks(rawContent: string): Block[] {
+  /** rawContent를 Block[]으로 변환 — 포맷에 따라 적절한 파서 선택 */
+  private parseContentToBlocks(rawContent: string, sourceFormat?: string): Block[] {
+    const format = sourceFormat || this.detectFormat(rawContent)
+
+    if (format === 'html') {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { parseHtml } = require('../../lib/html-parser')
+      const { blocks } = parseHtml(rawContent)
+      return blocks
+    }
+
+    if (format === 'txt') {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { parseTxt } = require('../../lib/txt-parser')
+      const { blocks } = parseTxt(rawContent)
+      return blocks
+    }
+
+    // markdown (기본)
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mdParser = require('../../lib/md-parser')
 
@@ -102,14 +119,18 @@ export class WorkManagementUseCase {
       const parsed = mdParser.parseFrontmatter(rawContent)
       body = parsed.body
     } catch {
-      // frontmatter 없으면 rawContent 그대로 사용
-      // 단, 수동으로 --- 블록 제거
       const match = rawContent.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)$/)
       if (match) body = match[1]
     }
 
-    // DeerDevil 원본 파서로 블록 파싱 (chapter, refrain, italic, epilogue 등 전부 지원)
     const { blocks } = mdParser.parseEpisodeBlocks(body)
     return blocks
+  }
+
+  /** 콘텐츠 포맷 자동 감지 */
+  private detectFormat(content: string): string {
+    if (/<\/?[a-z][\s\S]*>/i.test(content) && !content.startsWith('---')) return 'html'
+    if (content.startsWith('---') || /^#{1,6}\s/m.test(content)) return 'markdown'
+    return 'txt'
   }
 }
