@@ -91,4 +91,15 @@ describe('GenerateThemeUseCase', () => {
 
     expect(mockThemeRepo.create).toHaveBeenCalledWith('author-1', '나의 다크 테마', 'midnight', mockThemeData, '어둡고 묵직한')
   })
+
+  it('Claude API 실패 시 크레딧을 환불한다', async () => {
+    mockClaudeApi.generateTheme.mockRejectedValue(new Error('API 호출 실패'))
+
+    await expect(useCase.execute('author-1', '테스트 설명')).rejects.toThrow('API 호출 실패')
+
+    // 크레딧 차감 후 환불까지 총 2번 호출
+    expect(mockCreditRepo.adjustCredits).toHaveBeenCalledTimes(2)
+    expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -1, 'theme_generate')
+    expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 1, 'theme_generate_refund')
+  })
 })
