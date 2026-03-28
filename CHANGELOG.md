@@ -1,5 +1,21 @@
 # Changelog — grimoire-server
 
+## [0.10.0] - 2026-03-28
+
+### 크레딧 선물 + 테마 수정 API + HTML 파서
+
+#### Added
+- 크레딧 선물 기능 (CreditUseCase.gift + CreditController)
+- 응원받는 작가 랭킹 API (GET /credits/ranking)
+- 테마 커스텀 수정 API (PUT /themes/:themeId)
+- HTML 파서 + 포맷별 파서 자동 분기 (md/html/txt)
+- AdminGuard 유닛테스트 4건
+
+#### Changed
+- layout 값: "universe" → "series" (스크립트 + 문서 + DB)
+- docs/theme-spec.md 동기화 (web 정본 → server 복사)
+- TODO.md 정리 (완료 항목 제거, 장기 과제 분리)
+
 ## [0.9.0] - 2026-03-27
 
 ### 커버 이미지 + RAG 헥사고날 리팩토링
