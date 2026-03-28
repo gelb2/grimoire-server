@@ -38,8 +38,8 @@ const DEERDEVIL_COMPLETE_THEME = {
   animation: 'typing',
   tone: 'dark',
 
-  // 레이아웃 — universe = DeerDevil 스타일
-  layout: 'universe',
+  // 레이아웃 — series = 시리즈 소설 (탭 네비게이션)
+  layout: 'series',
 
   // 장식 요소 — DeerDevil 원본 UI에서 추출
   decorations: {

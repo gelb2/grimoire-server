@@ -47,7 +47,7 @@ interface AuthorTheme {
   fontHeading: 'serif' | 'sans-serif' | 'monospace'
   animation: 'typing' | 'fade' | 'slide' | 'none'
   tone: 'dark' | 'light' | 'sepia'
-  layout: 'universe' | 'grid' | 'classic'
+  layout: 'series' | 'grid' | 'classic'
   decorations: ThemeDecorations
   // 추가 시각 요소 (optional)
   typingSpeed?: number
@@ -88,7 +88,7 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'typing',
       tone: 'dark',
-      layout: 'universe',
+      layout: 'series',
       decorations: {
         dividerIcon: 'antler',
         dividerColor: '#9a8060',

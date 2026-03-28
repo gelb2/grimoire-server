@@ -102,7 +102,7 @@ const AUTHORS_WITH_THEMES: AuthorSeedData[] = [
       bgPrimary: '#07070a', bgSecondary: '#0d0d12',
       textPrimary: '#cdc8bc', textMuted: '#7a7570', textDim: '#4a4740', textBright: '#e8e3d8',
       accent: '#9a8060', accent2: '#c4a46a', border: '#1e1e26',
-      fontBody: 'serif', fontHeading: 'serif', animation: 'typing', tone: 'dark', layout: 'universe',
+      fontBody: 'serif', fontHeading: 'serif', animation: 'typing', tone: 'dark', layout: 'series',
       decorations: { dividerIcon: 'antler', dividerColor: '#9a8060', headerIcon: 'antler', headerSubtitle: 'Short Fiction Anthology', cardAccentPosition: 'left', footerText: 'Inspired by the sensibility of A24' },
       typingSpeed: 15, cardRadius: '8px', navOpacity: 0.95,
     },
@@ -604,7 +604,7 @@ const DEERDEVIL_COMPLETE_THEME = {
   textPrimary: '#cdc8bc', textMuted: '#7a7570', textDim: '#4a4740', textBright: '#e8e3d8',
   accent: '#9a8060', accent2: '#c4a46a', border: '#1e1e26',
   fontBody: 'serif', fontHeading: 'serif',
-  animation: 'typing', tone: 'dark', layout: 'universe',
+  animation: 'typing', tone: 'dark', layout: 'series',
   decorations: {
     dividerIcon: 'antler', dividerColor: '#9a8060',
     headerIcon: 'antler', headerSubtitle: 'Short Fiction Anthology',
