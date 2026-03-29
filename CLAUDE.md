@@ -43,6 +43,7 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 - Prisma 스키마 변경 → `docs/data-model.md` + `SCHEMA.md` 업데이트
 - 환경변수/배포 변경 → `docs/environments.md` + `INFRASTRUCTURE.md` 업데이트
 - 용어 추가 → `docs/glossary.md` 업데이트
+- 아키텍처 결정 변경 (트랜잭션, 동시성, 캐싱 등) → `ADR.md` 업데이트
 
 ---
 
