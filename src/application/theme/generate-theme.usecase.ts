@@ -5,20 +5,7 @@ import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.po
 import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
 import { CreditReason } from '@domain/model/credit'
 import { Theme } from '@domain/model/theme'
-
-// 구독 플랜별 테마 슬롯 제한 (추후 DB 기반으로 전환)
-const THEME_SLOT_LIMITS: Record<string, number> = {
-  free: 1,
-  pro: 5,
-  premium: Infinity,
-}
-
-// 일일 무료 생성 횟수 (추후 DB 기반으로 전환)
-const DAILY_FREE_LIMITS: Record<string, number> = {
-  free: 3,
-  pro: 7,
-  premium: 12,
-}
+import { THEME_SLOT_LIMITS } from '@domain/model/config'
 
 @Injectable()
 export class GenerateThemeUseCase {
