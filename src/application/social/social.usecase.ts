@@ -1,11 +1,18 @@
-import { Injectable, Inject, BadRequestException } from '@nestjs/common'
+import { Injectable, Inject, BadRequestException, NotFoundException } from '@nestjs/common'
 import { SocialRepositoryPort } from '@domain/port/outbound/social-repository.port'
+import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
+import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { Subscription, Comment } from '@domain/model/social'
+import { CreditReason } from '@domain/model/credit'
+
+const VALID_GIFT_AMOUNTS = [1, 3, 5]
 
 @Injectable()
 export class SocialUseCase {
   constructor(
     @Inject('SocialRepositoryPort') private readonly socialRepo: SocialRepositoryPort,
+    @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
+    @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
   ) {}
 
   // ── 좋아요 ──
@@ -39,8 +46,8 @@ export class SocialUseCase {
 
   // ── 댓글 ──
 
-  /** 댓글 작성 (내용 1~500자 검증 + HTML 이스케이프) */
-  async createComment(authorId: string, episodeId: string, content: string): Promise<Comment> {
+  /** 댓글 작성 (내용 1~500자 검증 + HTML 이스케이프, parentId로 대댓글 지원) */
+  async createComment(authorId: string, episodeId: string, content: string, parentId?: string): Promise<Comment> {
     if (!content || content.trim().length === 0) {
       throw new BadRequestException('댓글 내용을 입력해주세요')
     }
@@ -48,7 +55,7 @@ export class SocialUseCase {
       throw new BadRequestException('댓글은 500자 이내로 작성해주세요')
     }
     const sanitized = this.escapeHtml(content.trim())
-    return this.socialRepo.createComment(authorId, episodeId, sanitized)
+    return this.socialRepo.createComment(authorId, episodeId, sanitized, parentId)
   }
 
   /** HTML 특수문자 이스케이프 — XSS 방지 */
@@ -69,5 +76,39 @@ export class SocialUseCase {
   /** 댓글 삭제 (작성자 본인만 가능) */
   async deleteComment(commentId: string, authorId: string): Promise<void> {
     return this.socialRepo.deleteComment(commentId, authorId)
+  }
+
+  // ── 크레딧 선물 ──
+
+  /** 독자가 작가에게 크레딧을 선물한다 */
+  async giftCredits(
+    senderId: string,
+    receiverSlug: string,
+    amount: number,
+  ): Promise<{ senderCredits: number; receiverCredits: number }> {
+    // 유효한 선물 금액 확인
+    if (!VALID_GIFT_AMOUNTS.includes(amount)) {
+      throw new BadRequestException(`선물 금액은 ${VALID_GIFT_AMOUNTS.join(', ')} 중 하나여야 합니다`)
+    }
+
+    // 받는 작가 조회
+    const receiver = await this.authorRepo.findBySlug(receiverSlug)
+    if (!receiver) {
+      throw new NotFoundException('작가를 찾을 수 없습니다')
+    }
+
+    // 자기 자신에게 선물 불가
+    if (senderId === receiver.id) {
+      throw new BadRequestException('자기 자신에게 선물할 수 없습니다')
+    }
+
+    // 원자적 트랜잭션: 차감 + 적립 + 로그 2건
+    return this.creditRepo.giftTransfer(
+      senderId,
+      receiver.id,
+      amount,
+      CreditReason.giftSent(receiverSlug),
+      CreditReason.giftReceived(senderId),
+    )
   }
 }

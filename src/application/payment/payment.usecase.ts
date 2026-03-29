@@ -11,13 +11,10 @@ import { PaymentGatewayPort, WebhookPayload } from '@domain/port/outbound/paymen
  * 테마 생성 1회 ≈ 2000 tokens ≈ 약 12원
  * 1 크레딧 = 100원 (최소 마진 8배)
  */
-export const CREDIT_PRODUCTS = [
-  { id: 'credit-10', name: '10 크레딧', credits: 10, price: 1000 },    // 크레딧당 100원
-  { id: 'credit-30', name: '30 크레딧', credits: 30, price: 2500 },    // 크레딧당 83원 (17% 할인)
-  { id: 'credit-100', name: '100 크레딧', credits: 100, price: 7000 }, // 크레딧당 70원 (30% 할인)
-] as const
+import { CREDIT_PRODUCTS, Product } from '@domain/model/config'
 
-export type Product = (typeof CREDIT_PRODUCTS)[number]
+// re-export for backward compatibility
+export { CREDIT_PRODUCTS, type Product }
 
 @Injectable()
 export class PaymentUseCase {

@@ -1,5 +1,6 @@
 import { Injectable, Inject, NotFoundException, ForbiddenException } from '@nestjs/common'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
+import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
 import { Work, Episode } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 
@@ -7,11 +8,27 @@ import { Block } from '@domain/model/block'
 export class WorkManagementUseCase {
   constructor(
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
+    @Inject('BlobStoragePort') private readonly blobStorage: BlobStoragePort,
   ) {}
 
   /** 작품 생성 */
   async createWork(authorId: string, input: { slug: string; title: string; subtitle?: string; description?: string }): Promise<Work> {
     return this.workRepo.createWork({ authorId, ...input })
+  }
+
+  /** 커버 이미지 업로드 (소유권 검증) */
+  async uploadCoverImage(authorId: string, workId: string, buffer: Buffer, filename: string, mimeType: string): Promise<Work> {
+    const work = await this.workRepo.findById(workId)
+    if (!work) throw new NotFoundException('작품을 찾을 수 없습니다')
+    if (work.authorId !== authorId) throw new ForbiddenException('작품 수정 권한이 없습니다')
+
+    // 이전 커버 이미지 삭제
+    if (work.coverImage) {
+      await this.blobStorage.deleteImage(work.coverImage)
+    }
+
+    const coverImage = await this.blobStorage.uploadImage(buffer, filename, mimeType)
+    return this.workRepo.updateWork(workId, { coverImage })
   }
 
   /** 작품 수정 (소유권 검증) */
@@ -49,8 +66,8 @@ export class WorkManagementUseCase {
     const episodeCount = await this.workRepo.countEpisodesByWorkId(work.id)
     const orderNum = episodeCount + 1
 
-    // 간단한 블록 파싱 (rawContent → Block[])
-    const blocks = this.parseContentToBlocks(input.rawContent)
+    // 포맷에 따라 블록 파싱 (rawContent → Block[])
+    const blocks = this.parseContentToBlocks(input.rawContent, input.sourceFormat)
 
     return this.workRepo.createEpisode({
       workId: work.id,
@@ -74,8 +91,25 @@ export class WorkManagementUseCase {
     await this.workRepo.deleteEpisode(episodeId)
   }
 
-  /** rawContent를 Block[]으로 변환 — DeerDevil 원본 파서(md-parser.ts) 사용 */
-  private parseContentToBlocks(rawContent: string): Block[] {
+  /** rawContent를 Block[]으로 변환 — 포맷에 따라 적절한 파서 선택 */
+  private parseContentToBlocks(rawContent: string, sourceFormat?: string): Block[] {
+    const format = sourceFormat || this.detectFormat(rawContent)
+
+    if (format === 'html') {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { parseHtml } = require('../../lib/html-parser')
+      const { blocks } = parseHtml(rawContent)
+      return blocks
+    }
+
+    if (format === 'txt') {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { parseTxt } = require('../../lib/txt-parser')
+      const { blocks } = parseTxt(rawContent)
+      return blocks
+    }
+
+    // markdown (기본)
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mdParser = require('../../lib/md-parser')
 
@@ -85,14 +119,18 @@ export class WorkManagementUseCase {
       const parsed = mdParser.parseFrontmatter(rawContent)
       body = parsed.body
     } catch {
-      // frontmatter 없으면 rawContent 그대로 사용
-      // 단, 수동으로 --- 블록 제거
       const match = rawContent.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)$/)
       if (match) body = match[1]
     }
 
-    // DeerDevil 원본 파서로 블록 파싱 (chapter, refrain, italic, epilogue 등 전부 지원)
     const { blocks } = mdParser.parseEpisodeBlocks(body)
     return blocks
+  }
+
+  /** 콘텐츠 포맷 자동 감지 */
+  private detectFormat(content: string): string {
+    if (/<\/?[a-z][\s\S]*>/i.test(content) && !content.startsWith('---')) return 'html'
+    if (content.startsWith('---') || /^#{1,6}\s/m.test(content)) return 'markdown'
+    return 'txt'
   }
 }

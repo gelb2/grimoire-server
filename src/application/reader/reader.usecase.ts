@@ -1,6 +1,6 @@
 import { Injectable, Inject } from '@nestjs/common'
 import { ReaderRepositoryPort } from '@domain/port/outbound/reader-repository.port'
-import { Bookmark, ReadingProgress } from '@domain/model/reader'
+import { Bookmark, ReadingProgress, LibraryItem, SubscribedWork } from '@domain/model/reader'
 
 @Injectable()
 export class ReaderUseCase {
@@ -32,5 +32,14 @@ export class ReaderUseCase {
   /** 읽기 진행도 조회 */
   async getProgress(authorId: string, episodeId: string): Promise<ReadingProgress | null> {
     return this.readerRepo.getProgress(authorId, episodeId)
+  }
+
+  /** 서재 조회 — 북마크된 작품 + 읽기 진행도 + 구독 상태 */
+  async getLibrary(userId: string): Promise<{ bookmarked: LibraryItem[]; subscribed: SubscribedWork[] }> {
+    const [bookmarked, subscribed] = await Promise.all([
+      this.readerRepo.getLibrary(userId),
+      this.readerRepo.getSubscribedWorks(userId),
+    ])
+    return { bookmarked, subscribed }
   }
 }

@@ -4,7 +4,7 @@ import { NotFoundException, BadRequestException } from '@nestjs/common'
 describe('GenerateThemeUseCase', () => {
   let useCase: GenerateThemeUseCase
   let mockClaudeApi: { generateTheme: jest.Mock }
-  let mockThemeRepo: { findByAuthorId: jest.Mock; upsert: jest.Mock; findByAuthorSlug: jest.Mock }
+  let mockThemeRepo: { countByAuthorId: jest.Mock; create: jest.Mock; findByAuthorSlug: jest.Mock; findById: jest.Mock; findAllByAuthorId: jest.Mock; delete: jest.Mock; update: jest.Mock; updateBakedCssUrl: jest.Mock }
   let mockAuthorRepo: { findById: jest.Mock; findBySlug: jest.Mock; findByEmail: jest.Mock; create: jest.Mock; updateCredits: jest.Mock }
   let mockCreditRepo: { adjustCredits: jest.Mock; findLogsByAuthorId: jest.Mock }
 
@@ -15,11 +15,20 @@ describe('GenerateThemeUseCase', () => {
     fontBody: 'serif' as const, fontHeading: 'serif' as const, fontSize: 'normal' as const,
     animation: 'typing' as const, cardStyle: 'sharp' as const, tone: 'dark' as const,
   }
-  const mockTheme = { id: 'theme-1', authorId: 'author-1', preset: 'midnight', overrides: mockThemeData, rawDescription: '어둡고 묵직한', bakedCssUrl: null, updatedAt: new Date() }
+  const mockTheme = { id: 'theme-1', authorId: 'author-1', name: '테마 1', preset: 'midnight', overrides: mockThemeData, rawDescription: '어둡고 묵직한', bakedCssUrl: null, updatedAt: new Date() }
 
   beforeEach(() => {
     mockClaudeApi = { generateTheme: jest.fn().mockResolvedValue(mockThemeData) }
-    mockThemeRepo = { findByAuthorId: jest.fn().mockResolvedValue(null), upsert: jest.fn().mockResolvedValue(mockTheme), findByAuthorSlug: jest.fn() }
+    mockThemeRepo = {
+      countByAuthorId: jest.fn().mockResolvedValue(0),
+      create: jest.fn().mockResolvedValue(mockTheme),
+      findByAuthorSlug: jest.fn(),
+      findById: jest.fn(),
+      findAllByAuthorId: jest.fn(),
+      delete: jest.fn(),
+      update: jest.fn(),
+      updateBakedCssUrl: jest.fn(),
+    }
     mockAuthorRepo = { findById: jest.fn().mockResolvedValue(mockAuthor), findBySlug: jest.fn(), findByEmail: jest.fn(), create: jest.fn(), updateCredits: jest.fn() }
     mockCreditRepo = { adjustCredits: jest.fn().mockResolvedValue({ credits: 2, log: {} }), findLogsByAuthorId: jest.fn() }
 
@@ -36,16 +45,15 @@ describe('GenerateThemeUseCase', () => {
 
     expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -1, 'theme_generate')
     expect(mockClaudeApi.generateTheme).toHaveBeenCalledWith('어둡고 묵직한 A24 감성')
-    expect(mockThemeRepo.upsert).toHaveBeenCalledWith('author-1', 'midnight', mockThemeData, '어둡고 묵직한 A24 감성')
+    expect(mockThemeRepo.create).toHaveBeenCalledWith('author-1', '테마 1', 'midnight', mockThemeData, '어둡고 묵직한 A24 감성')
     expect(result).toEqual(mockTheme)
   })
 
-  it('기존 테마가 있으면 theme_regenerate 사유로 차감한다', async () => {
-    mockThemeRepo.findByAuthorId.mockResolvedValue(mockTheme)
+  it('슬롯이 가득 차면 BadRequestException을 던진다', async () => {
+    mockThemeRepo.countByAuthorId.mockResolvedValue(1) // free 슬롯 1개 초과
 
-    await useCase.execute('author-1', '새로운 분위기')
-
-    expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -1, 'theme_regenerate')
+    await expect(useCase.execute('author-1', '새 테마')).rejects.toThrow(BadRequestException)
+    expect(mockThemeRepo.countByAuthorId).toHaveBeenCalledWith('author-1')
   })
 
   it('작가가 없으면 NotFoundException을 던진다', async () => {
@@ -66,7 +74,7 @@ describe('GenerateThemeUseCase', () => {
 
     await useCase.execute('author-1', '밝은 분위기')
 
-    expect(mockThemeRepo.upsert).toHaveBeenCalledWith('author-1', 'morning', lightTheme, '밝은 분위기')
+    expect(mockThemeRepo.create).toHaveBeenCalledWith('author-1', '테마 1', 'morning', lightTheme, '밝은 분위기')
   })
 
   it('tone이 sepia이면 preset을 parchment로 설정한다', async () => {
@@ -75,6 +83,23 @@ describe('GenerateThemeUseCase', () => {
 
     await useCase.execute('author-1', '세피아 톤')
 
-    expect(mockThemeRepo.upsert).toHaveBeenCalledWith('author-1', 'parchment', sepiaTheme, '세피아 톤')
+    expect(mockThemeRepo.create).toHaveBeenCalledWith('author-1', '테마 1', 'parchment', sepiaTheme, '세피아 톤')
+  })
+
+  it('테마 이름을 지정할 수 있다', async () => {
+    await useCase.execute('author-1', '어둡고 묵직한', '나의 다크 테마')
+
+    expect(mockThemeRepo.create).toHaveBeenCalledWith('author-1', '나의 다크 테마', 'midnight', mockThemeData, '어둡고 묵직한')
+  })
+
+  it('Claude API 실패 시 크레딧을 환불한다', async () => {
+    mockClaudeApi.generateTheme.mockRejectedValue(new Error('API 호출 실패'))
+
+    await expect(useCase.execute('author-1', '테스트 설명')).rejects.toThrow('API 호출 실패')
+
+    // 크레딧 차감 후 환불까지 총 2번 호출
+    expect(mockCreditRepo.adjustCredits).toHaveBeenCalledTimes(2)
+    expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -1, 'theme_generate')
+    expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 1, 'theme_generate_refund')
   })
 })

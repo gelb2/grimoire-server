@@ -9,7 +9,7 @@ export interface WorkRepositoryPort {
   findEpisode(authorSlug: string, workSlug: string, episodeSlug: string): Promise<Episode | null>
   findEpisodeById(id: string): Promise<Episode | null>
   createWork(input: { authorId: string; slug: string; title: string; subtitle?: string; description?: string }): Promise<Work>
-  updateWork(id: string, input: { title?: string; subtitle?: string; description?: string }): Promise<Work>
+  updateWork(id: string, input: { title?: string; subtitle?: string; description?: string; coverImage?: string | null }): Promise<Work>
   deleteWork(id: string): Promise<void>
   createEpisode(input: {
     workId: string
@@ -35,4 +35,8 @@ export interface WorkRepositoryPort {
   findPopularPaginated(page: number, pageSize: number): Promise<{ works: WorkWithMeta[]; totalCount: number }>
   /** 최신 작품 페이지네이션 조회 */
   findRecentPaginated(page: number, pageSize: number): Promise<{ works: WorkWithMeta[]; totalCount: number }>
+  /** 전체 작품 수 */
+  countAll(): Promise<number>
+  /** 전체 에피소드 수 */
+  countAllEpisodes(): Promise<number>
 }

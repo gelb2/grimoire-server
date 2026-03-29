@@ -49,6 +49,14 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
     })
   }
 
+  async updateBio(id: string, bio: string): Promise<Author> {
+    const row = await this.prisma.author.update({
+      where: { id },
+      data: { bio },
+    })
+    return toDomain(row)
+  }
+
   async search(query: string, limit: number): Promise<Author[]> {
     const rows = await this.prisma.author.findMany({
       where: {
@@ -62,15 +70,20 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
     })
     return rows.map(toDomain)
   }
+
+  async count(): Promise<number> {
+    return this.prisma.author.count()
+  }
 }
 
-function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; role: string; credits: number; createdAt: Date }): Author {
+function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; bio?: string | null; role: string; credits: number; createdAt: Date }): Author {
   return {
     id: row.id,
     slug: row.slug,
     name: row.name,
     email: row.email,
     passwordHash: row.passwordHash ?? undefined,
+    bio: row.bio ?? undefined,
     role: row.role,
     credits: row.credits,
     createdAt: row.createdAt,

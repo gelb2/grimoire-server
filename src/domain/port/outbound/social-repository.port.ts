@@ -17,12 +17,15 @@ export interface SocialRepositoryPort {
   /** 구독 여부 확인 */
   isSubscribed(subscriberId: string, targetAuthorId: string): Promise<boolean>
 
-  /** 댓글 작성 */
-  createComment(authorId: string, episodeId: string, content: string): Promise<Comment>
+  /** 댓글 작성 (parentId로 대댓글 지원) */
+  createComment(authorId: string, episodeId: string, content: string, parentId?: string): Promise<Comment>
   /** 에피소드 댓글 목록 조회 */
   getComments(episodeId: string): Promise<Comment[]>
   /** 댓글 삭제 (작성자 확인) */
   deleteComment(id: string, authorId: string): Promise<void>
   /** 에피소드 댓글 수 조회 */
   getCommentCount(episodeId: string): Promise<number>
+
+  /** 작가의 모든 에피소드에 대한 총 좋아요 수 조회 */
+  getTotalLikesForAuthor(authorId: string): Promise<number>
 }

@@ -1,3 +1,4 @@
+import { AuthenticatedRequest } from '@adapter/inbound/http/dto/authenticated-request'
 import { Controller, Post, Get, Delete, Body, Param, UseGuards, Req } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import { SocialUseCase } from '@application/social/social.usecase'
@@ -13,7 +14,7 @@ export class SocialController {
   @Throttle({ default: { ttl: 60000, limit: 30 } })  // 분당 30회
   @Post('likes/:episodeId')
   @UseGuards(JwtAuthGuard)
-  async toggleLike(@Req() req: any, @Param('episodeId') episodeId: string) {
+  async toggleLike(@Req() req: AuthenticatedRequest, @Param('episodeId') episodeId: string) {
     return this.socialUseCase.toggleLike(req.user.sub, episodeId)
   }
 
@@ -30,14 +31,14 @@ export class SocialController {
   @Throttle({ default: { ttl: 60000, limit: 30 } })  // 분당 30회
   @Post('subscriptions/:authorId')
   @UseGuards(JwtAuthGuard)
-  async toggleSubscription(@Req() req: any, @Param('authorId') authorId: string) {
+  async toggleSubscription(@Req() req: AuthenticatedRequest, @Param('authorId') authorId: string) {
     return this.socialUseCase.toggleSubscription(req.user.sub, authorId)
   }
 
   /** 내 구독 목록 조회 (인증 필요) */
   @Get('subscriptions')
   @UseGuards(JwtAuthGuard)
-  async getSubscriptions(@Req() req: any) {
+  async getSubscriptions(@Req() req: AuthenticatedRequest) {
     return this.socialUseCase.getSubscriptions(req.user.sub)
   }
 
@@ -50,12 +51,12 @@ export class SocialController {
 
   // ── 댓글 ──
 
-  /** 댓글 작성 (인증 필요) */
+  /** 댓글 작성 (인증 필요, parentId로 대댓글 지원) */
   @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Post('comments/:episodeId')
   @UseGuards(JwtAuthGuard)
-  async createComment(@Req() req: any, @Param('episodeId') episodeId: string, @Body() body: { content: string }) {
-    return this.socialUseCase.createComment(req.user.sub, episodeId, body.content)
+  async createComment(@Req() req: AuthenticatedRequest, @Param('episodeId') episodeId: string, @Body() body: { content: string; parentId?: string }) {
+    return this.socialUseCase.createComment(req.user.sub, episodeId, body.content, body.parentId)
   }
 
   /** 에피소드 댓글 목록 조회 (공개) */
@@ -67,8 +68,18 @@ export class SocialController {
   /** 댓글 삭제 (인증 필요, 본인만 가능) */
   @Delete('comments/:commentId')
   @UseGuards(JwtAuthGuard)
-  async deleteComment(@Req() req: any, @Param('commentId') commentId: string) {
+  async deleteComment(@Req() req: AuthenticatedRequest, @Param('commentId') commentId: string) {
     await this.socialUseCase.deleteComment(commentId, req.user.sub)
     return { deleted: true }
+  }
+
+  // ── 크레딧 선물 ──
+
+  /** 작가에게 크레딧 선물 (인증 필요) */
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Post('gift/:authorSlug')
+  @UseGuards(JwtAuthGuard)
+  async giftCredits(@Req() req: AuthenticatedRequest, @Param('authorSlug') authorSlug: string, @Body() body: { amount: number }) {
+    return this.socialUseCase.giftCredits(req.user.sub, authorSlug, body.amount)
   }
 }

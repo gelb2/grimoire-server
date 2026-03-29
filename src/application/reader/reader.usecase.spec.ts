@@ -9,10 +9,34 @@ describe('ReaderUseCase', () => {
     isBookmarked: jest.Mock
     getProgress: jest.Mock
     saveProgress: jest.Mock
+    getLibrary: jest.Mock
+    getSubscribedWorks: jest.Mock
   }
 
   const mockBookmark = { id: 'bm-1', authorId: 'author-1', episodeId: 'ep-1', createdAt: new Date() }
   const mockProgress = { id: 'prog-1', authorId: 'author-1', episodeId: 'ep-1', blockIndex: 5, updatedAt: new Date() }
+  const mockLibraryItem = {
+    workId: 'work-1',
+    workTitle: '테스트 작품',
+    workSlug: 'test-work',
+    authorName: '작가1',
+    authorSlug: 'author-1',
+    episodeCount: 10,
+    readEpisodeCount: 3,
+    lastReadEpisodeTitle: '3화',
+    lastReadEpisodeSlug: 'episode-3',
+    subscribed: true,
+  }
+  const mockSubscribedWork = {
+    workId: 'work-2',
+    workTitle: '구독 작품',
+    workSlug: 'subscribed-work',
+    authorName: '작가2',
+    authorSlug: 'author-2',
+    episodeCount: 5,
+    latestEpisodeTitle: '5화',
+    createdAt: new Date(),
+  }
 
   beforeEach(() => {
     mockReaderRepo = {
@@ -22,6 +46,8 @@ describe('ReaderUseCase', () => {
       isBookmarked: jest.fn().mockResolvedValue(false),
       getProgress: jest.fn().mockResolvedValue(mockProgress),
       saveProgress: jest.fn().mockResolvedValue(mockProgress),
+      getLibrary: jest.fn().mockResolvedValue([mockLibraryItem]),
+      getSubscribedWorks: jest.fn().mockResolvedValue([mockSubscribedWork]),
     }
 
     useCase = new ReaderUseCase(mockReaderRepo as any)
@@ -97,6 +123,29 @@ describe('ReaderUseCase', () => {
       const result = await useCase.getProgress('author-1', 'ep-999')
 
       expect(result).toBeNull()
+    })
+  })
+
+  describe('getLibrary', () => {
+    it('북마크된 작품과 구독 작품을 함께 반환한다', async () => {
+      const result = await useCase.getLibrary('author-1')
+
+      expect(mockReaderRepo.getLibrary).toHaveBeenCalledWith('author-1')
+      expect(mockReaderRepo.getSubscribedWorks).toHaveBeenCalledWith('author-1')
+      expect(result.bookmarked).toHaveLength(1)
+      expect(result.bookmarked[0].workTitle).toBe('테스트 작품')
+      expect(result.subscribed).toHaveLength(1)
+      expect(result.subscribed[0].workTitle).toBe('구독 작품')
+    })
+
+    it('북마크/구독이 없으면 빈 배열을 반환한다', async () => {
+      mockReaderRepo.getLibrary.mockResolvedValue([])
+      mockReaderRepo.getSubscribedWorks.mockResolvedValue([])
+
+      const result = await useCase.getLibrary('author-1')
+
+      expect(result.bookmarked).toHaveLength(0)
+      expect(result.subscribed).toHaveLength(0)
     })
   })
 })

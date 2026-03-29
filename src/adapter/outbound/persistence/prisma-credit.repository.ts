@@ -34,12 +34,66 @@ export class PrismaCreditRepository implements CreditRepositoryPort {
     return result
   }
 
+  async giftTransfer(
+    senderId: string,
+    receiverId: string,
+    amount: number,
+    senderReason: string,
+    receiverReason: string,
+  ): Promise<{ senderCredits: number; receiverCredits: number }> {
+    return this.prisma.$transaction(async (tx) => {
+      // 보내는 유저 차감
+      const sender = await tx.author.update({
+        where: { id: senderId },
+        data: { credits: { decrement: amount } },
+      })
+      if (sender.credits < 0) {
+        throw new Error('크레딧이 부족합니다')
+      }
+
+      // 받는 유저 적립
+      const receiver = await tx.author.update({
+        where: { id: receiverId },
+        data: { credits: { increment: amount } },
+      })
+
+      // 로그 2건 기록
+      await tx.creditLog.createMany({
+        data: [
+          { authorId: senderId, amount: -amount, reason: senderReason },
+          { authorId: receiverId, amount, reason: receiverReason },
+        ],
+      })
+
+      return { senderCredits: sender.credits, receiverCredits: receiver.credits }
+    })
+  }
+
+  async getGiftRanking(limit: number): Promise<{ authorId: string; totalGifted: number }[]> {
+    const rows = await this.prisma.creditLog.groupBy({
+      by: ['authorId'],
+      where: { reason: { startsWith: 'gift_received' } },
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: 'desc' } },
+      take: limit,
+    })
+    return rows.map(r => ({ authorId: r.authorId, totalGifted: r._sum.amount ?? 0 }))
+  }
+
   async findLogsByAuthorId(authorId: string): Promise<CreditLog[]> {
     const rows = await this.prisma.creditLog.findMany({
       where: { authorId },
       orderBy: { createdAt: 'desc' },
     })
     return rows.map(toDomain)
+  }
+
+  async sumNegativeAmounts(): Promise<number> {
+    const result = await this.prisma.creditLog.aggregate({
+      _sum: { amount: true },
+      where: { amount: { lt: 0 } },
+    })
+    return result._sum.amount ?? 0
   }
 }
 

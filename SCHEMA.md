@@ -71,6 +71,7 @@
 | slug | slug | String | @@unique([workId, slug]) | URL 경로 |
 | title | title | String | - | 제목 |
 | subtitle | subtitle | String? | - | 부제 |
+| type | type | String | default("episode") | 에피소드 유형 (episode/preface/afterword/bonus) |
 | orderNum | order_num | Int | - | 순서 |
 | blocks | blocks | Json | - | 파싱된 Block[] (`docs/glossary.md` Block 타입 참조) |
 | rawMd | raw_md | String | - | 원본 마크다운 |

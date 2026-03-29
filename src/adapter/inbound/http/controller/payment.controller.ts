@@ -1,3 +1,4 @@
+import { AuthenticatedRequest } from '@adapter/inbound/http/dto/authenticated-request'
 import { Controller, Get, Post, Body, UseGuards, Req } from '@nestjs/common'
 import { SkipThrottle, Throttle } from '@nestjs/throttler'
 import { PaymentUseCase } from '@application/payment/payment.usecase'
@@ -22,7 +23,7 @@ export class PaymentController {
   @Throttle({ default: { ttl: 60000, limit: 3 } })  // 분당 3회
   @UseGuards(JwtAuthGuard)
   @Post('initiate')
-  async initiatePayment(@Req() req: any, @Body() body: { productId: string; returnUrl: string }) {
+  async initiatePayment(@Req() req: AuthenticatedRequest, @Body() body: { productId: string; returnUrl: string }) {
     return this.paymentUseCase.initiatePayment(req.user.sub, body.productId, body.returnUrl)
   }
 
@@ -36,14 +37,14 @@ export class PaymentController {
   /** 결제 내역 조회 (인증 필요) */
   @UseGuards(JwtAuthGuard)
   @Get('history')
-  async getHistory(@Req() req: any) {
+  async getHistory(@Req() req: AuthenticatedRequest) {
     return this.paymentUseCase.getPaymentHistory(req.user.sub)
   }
 
   /** 크레딧 잔액 조회 (인증 필요) */
   @UseGuards(JwtAuthGuard)
   @Get('credits')
-  async getCredits(@Req() req: any) {
+  async getCredits(@Req() req: AuthenticatedRequest) {
     return { credits: await this.creditUseCase.getBalance(req.user.sub) }
   }
 }

@@ -47,4 +47,8 @@ export class ClaudeThemeAdapter implements ClaudeApiPort {
     })
     return parseClaudeJSON<AuthorTheme>(response)
   }
+
+  async ask(systemPrompt: string, userMessage: string, options?: { maxTokens?: number }): Promise<string> {
+    return askClaude(systemPrompt, userMessage, options)
+  }
 }

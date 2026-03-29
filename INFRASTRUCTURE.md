@@ -25,15 +25,15 @@
 | 환경 | Web URL | API URL | DB 서버 |
 |------|---------|---------|---------|
 | development | localhost:3001 | localhost:3000 | Docker/로컬 PostgreSQL |
-| inhouse | inhouse.grimoire.app | inhouse-api.grimoire.app | grimoire-db-inhouse |
-| production | grimoire.app | api.grimoire.app | grimoire-db-prod |
+| inhouse | inhouse.grimoire-book.com | inhouse-api.grimoire-book.com | grimoire-db-inhouse |
+| production | grimoire-book.com | api.grimoire-book.com | grimoire-db-prod |
 
 ### 환경별 설정
 
 | 항목 | development | inhouse | production |
 |------|-------------|---------|------------|
 | Swagger | 활성화 | 활성화 | **비활성화** |
-| CORS | localhost:* | inhouse.grimoire.app | grimoire.app |
+| CORS | localhost:* | inhouse.grimoire-book.com | grimoire-book.com |
 | 로깅 | verbose | info | warn |
 | 마이그레이션 | 자동 | 자동 | RUN_MIGRATION=true 필요 |
 
@@ -239,10 +239,10 @@ az postgres flexible-server firewall-rule delete \
 
 | 레코드 | 이름 | 대상 |
 |--------|------|------|
-| CNAME | grimoire.app | grimoire-web-prod.{FQDN} |
-| CNAME | inhouse.grimoire.app | grimoire-web-inhouse.{FQDN} |
-| CNAME | api.grimoire.app | grimoire-server-prod.{FQDN} |
-| CNAME | inhouse-api.grimoire.app | grimoire-server-inhouse.{FQDN} |
+| CNAME | grimoire-book.com | grimoire-web-prod.{FQDN} |
+| CNAME | inhouse.grimoire-book.com | grimoire-web-inhouse.{FQDN} |
+| CNAME | api.grimoire-book.com | grimoire-server-prod.{FQDN} |
+| CNAME | inhouse-api.grimoire-book.com | grimoire-server-inhouse.{FQDN} |
 
 > FQDN은 Azure Container Apps 생성 후 확인 가능:
 > ```bash

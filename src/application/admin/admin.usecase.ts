@@ -1,12 +1,16 @@
-import { Injectable } from '@nestjs/common'
-import { PrismaService } from '@infrastructure/prisma/prisma.service'
+import { Injectable, Inject } from '@nestjs/common'
+import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
+import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
+import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
 import { CreditUseCase } from '@application/credit/credit.usecase'
 import { CreditLog } from '@domain/model/credit'
 
 @Injectable()
 export class AdminUseCase {
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
+    @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
+    @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
     private readonly creditUseCase: CreditUseCase,
   ) {}
 
@@ -17,18 +21,18 @@ export class AdminUseCase {
     totalEpisodes: number
     totalCreditsConsumed: number
   }> {
-    const [totalAuthors, totalWorks, totalEpisodes, creditLogs] = await Promise.all([
-      this.prisma.author.count(),
-      this.prisma.work.count(),
-      this.prisma.episode.count(),
-      this.prisma.creditLog.aggregate({ _sum: { amount: true }, where: { amount: { lt: 0 } } }),
+    const [totalAuthors, totalWorks, totalEpisodes, totalCreditsConsumed] = await Promise.all([
+      this.authorRepo.count(),
+      this.workRepo.countAll(),
+      this.workRepo.countAllEpisodes(),
+      this.creditRepo.sumNegativeAmounts(),
     ])
 
     return {
       totalAuthors,
       totalWorks,
       totalEpisodes,
-      totalCreditsConsumed: Math.abs(creditLogs._sum.amount || 0),
+      totalCreditsConsumed: Math.abs(totalCreditsConsumed),
     }
   }
 
