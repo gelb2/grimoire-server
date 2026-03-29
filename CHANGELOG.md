@@ -1,5 +1,20 @@
 # Changelog — grimoire-server
 
+## [0.11.0] - 2026-03-30
+
+### AI 프롬프트 확장 + 프리셋 시드 + 배포 완료
+
+#### Added
+- AI 테마 프롬프트 Phase 1/2 파라미터 해석 지침 추가 (타이포그래피 + 레이아웃 프리셋)
+- seed-theme-presets.ts — 사슴악마 8개 프리셋 시드 스크립트
+- db-sync.ts — prod → inhouse → dev DB 동기화 스크립트
+
+#### Deployment
+- inhouse → main 머지 완료
+- grimoire-server-prod, grimoire-server-inhouse Docker 이미지 재빌드/배포
+
+---
+
 ## [0.10.0] - 2026-03-28
 
 ### 크레딧 선물 + 테마 수정 API + HTML 파서
