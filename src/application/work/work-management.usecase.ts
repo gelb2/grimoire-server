@@ -1,6 +1,6 @@
 import { Injectable, Inject, NotFoundException, ForbiddenException } from '@nestjs/common'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
-import { BlobStorageService } from '@infrastructure/storage/blob-storage.service'
+import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
 import { Work, Episode } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 
@@ -8,7 +8,7 @@ import { Block } from '@domain/model/block'
 export class WorkManagementUseCase {
   constructor(
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
-    private readonly blobStorage: BlobStorageService,
+    @Inject('BlobStoragePort') private readonly blobStorage: BlobStoragePort,
   ) {}
 
   /** 작품 생성 */

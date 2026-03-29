@@ -35,4 +35,8 @@ export interface WorkRepositoryPort {
   findPopularPaginated(page: number, pageSize: number): Promise<{ works: WorkWithMeta[]; totalCount: number }>
   /** 최신 작품 페이지네이션 조회 */
   findRecentPaginated(page: number, pageSize: number): Promise<{ works: WorkWithMeta[]; totalCount: number }>
+  /** 전체 작품 수 */
+  countAll(): Promise<number>
+  /** 전체 에피소드 수 */
+  countAllEpisodes(): Promise<number>
 }

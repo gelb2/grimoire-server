@@ -2,28 +2,23 @@ import { AdminUseCase } from './admin.usecase'
 
 describe('AdminUseCase', () => {
   let useCase: AdminUseCase
-  let mockPrisma: {
-    author: { count: jest.Mock }
-    work: { count: jest.Mock }
-    episode: { count: jest.Mock }
-    creditLog: { aggregate: jest.Mock }
-  }
+  let mockAuthorRepo: { count: jest.Mock }
+  let mockWorkRepo: { countAll: jest.Mock; countAllEpisodes: jest.Mock }
+  let mockCreditRepo: { sumNegativeAmounts: jest.Mock }
   let mockCreditUseCase: { grant: jest.Mock }
 
   beforeEach(() => {
-    mockPrisma = {
-      author: { count: jest.fn().mockResolvedValue(10) },
-      work: { count: jest.fn().mockResolvedValue(25) },
-      episode: { count: jest.fn().mockResolvedValue(120) },
-      creditLog: {
-        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: -50 } }),
-      },
+    mockAuthorRepo = { count: jest.fn().mockResolvedValue(10) }
+    mockWorkRepo = {
+      countAll: jest.fn().mockResolvedValue(25),
+      countAllEpisodes: jest.fn().mockResolvedValue(120),
     }
+    mockCreditRepo = { sumNegativeAmounts: jest.fn().mockResolvedValue(-50) }
     mockCreditUseCase = {
       grant: jest.fn().mockResolvedValue({ credits: 13, log: { id: 'log-1', authorId: 'author-1', amount: 10, reason: 'admin_grant', createdAt: new Date() } }),
     }
 
-    useCase = new AdminUseCase(mockPrisma as any, mockCreditUseCase as any)
+    useCase = new AdminUseCase(mockAuthorRepo as any, mockWorkRepo as any, mockCreditRepo as any, mockCreditUseCase as any)
   })
 
   describe('getStats', () => {
@@ -37,7 +32,7 @@ describe('AdminUseCase', () => {
     })
 
     it('크레딧 소비가 없으면 0을 반환한다', async () => {
-      mockPrisma.creditLog.aggregate.mockResolvedValue({ _sum: { amount: null } })
+      mockCreditRepo.sumNegativeAmounts.mockResolvedValue(0)
 
       const result = await useCase.getStats()
 
@@ -47,13 +42,10 @@ describe('AdminUseCase', () => {
     it('Promise.all로 4개 쿼리를 동시에 호출한다', async () => {
       await useCase.getStats()
 
-      expect(mockPrisma.author.count).toHaveBeenCalledTimes(1)
-      expect(mockPrisma.work.count).toHaveBeenCalledTimes(1)
-      expect(mockPrisma.episode.count).toHaveBeenCalledTimes(1)
-      expect(mockPrisma.creditLog.aggregate).toHaveBeenCalledWith({
-        _sum: { amount: true },
-        where: { amount: { lt: 0 } },
-      })
+      expect(mockAuthorRepo.count).toHaveBeenCalledTimes(1)
+      expect(mockWorkRepo.countAll).toHaveBeenCalledTimes(1)
+      expect(mockWorkRepo.countAllEpisodes).toHaveBeenCalledTimes(1)
+      expect(mockCreditRepo.sumNegativeAmounts).toHaveBeenCalledTimes(1)
     })
   })
 

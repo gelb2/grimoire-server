@@ -126,6 +126,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'EmbeddingPort', useClass: OpenAIEmbeddingAdapter },
     { provide: 'VectorStorePort', useClass: PgVectorAdapter },
     { provide: 'PaymentGatewayPort', useClass: PayappAdapter },
+    { provide: 'BlobStoragePort', useClass: BlobStorageService },
   ],
 })
 export class AppModule {}

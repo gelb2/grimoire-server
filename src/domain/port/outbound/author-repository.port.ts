@@ -12,4 +12,6 @@ export interface AuthorRepositoryPort {
   search(query: string, limit: number): Promise<Author[]>
   /** 작가 bio 업데이트 */
   updateBio(id: string, bio: string): Promise<Author>
+  /** 전체 작가 수 */
+  count(): Promise<number>
 }

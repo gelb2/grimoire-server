@@ -87,6 +87,14 @@ export class PrismaCreditRepository implements CreditRepositoryPort {
     })
     return rows.map(toDomain)
   }
+
+  async sumNegativeAmounts(): Promise<number> {
+    const result = await this.prisma.creditLog.aggregate({
+      _sum: { amount: true },
+      where: { amount: { lt: 0 } },
+    })
+    return result._sum.amount ?? 0
+  }
 }
 
 function toDomain(row: {

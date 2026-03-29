@@ -9,4 +9,6 @@ export interface CreditRepositoryPort {
   giftTransfer(senderId: string, receiverId: string, amount: number, senderReason: string, receiverReason: string): Promise<{ senderCredits: number; receiverCredits: number }>
   /** 받은 선물 총액 기준 작가 랭킹 */
   getGiftRanking(limit: number): Promise<{ authorId: string; totalGifted: number }[]>
+  /** 음수 크레딧 합계 (소비량) */
+  sumNegativeAmounts(): Promise<number>
 }

@@ -210,6 +210,14 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
       totalCount,
     }
   }
+
+  async countAll(): Promise<number> {
+    return this.prisma.work.count()
+  }
+
+  async countAllEpisodes(): Promise<number> {
+    return this.prisma.episode.count()
+  }
 }
 
 function toWorkDomain(row: {

@@ -70,6 +70,10 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
     })
     return rows.map(toDomain)
   }
+
+  async count(): Promise<number> {
+    return this.prisma.author.count()
+  }
 }
 
 function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; bio?: string | null; role: string; credits: number; createdAt: Date }): Author {

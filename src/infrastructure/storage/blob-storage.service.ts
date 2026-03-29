@@ -1,9 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { BlobServiceClient, StorageSharedKeyCredential } from '@azure/storage-blob'
+import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
 
-/** Azure Blob Storage 업로드 서비스 */
+/** Azure Blob Storage 업로드 서비스 — BlobStoragePort 구현 */
 @Injectable()
-export class BlobStorageService {
+export class BlobStorageService implements BlobStoragePort {
   private readonly logger = new Logger(BlobStorageService.name)
   private blobServiceClient: BlobServiceClient | null = null
   private readonly containerName = 'covers'
@@ -23,7 +24,7 @@ export class BlobStorageService {
     }
   }
 
-  get isEnabled(): boolean {
+  isEnabled(): boolean {
     return this.blobServiceClient !== null
   }
 
