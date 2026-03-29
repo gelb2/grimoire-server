@@ -91,8 +91,8 @@
 | 환경 | 상태 | URL |
 |------|------|-----|
 | development | 배포 완료 | localhost:3000 / Azure Container Apps |
-| inhouse | 배포 완료 | inhouse-api.grimoire.app |
-| production | 배포 완료 | api.grimoire.app |
+| inhouse | 배포 완료 | inhouse-api.grimoire-book.com |
+| production | 배포 완료 | api.grimoire-book.com |
 
 > DNS 설정 미완 — Cloudflare CNAME 레코드 설정 필요 (`INFRASTRUCTURE.md` §10 참조)
 

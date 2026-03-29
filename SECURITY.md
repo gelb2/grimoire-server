@@ -24,8 +24,8 @@
 
 ### CORS
 - development: `http://localhost:3001`
-- inhouse: `https://inhouse.grimoire.app`
-- production: `https://grimoire.app`
+- inhouse: `https://inhouse.grimoire-book.com`
+- production: `https://grimoire-book.com`
 - `*` 사용 절대 금지
 
 ### 입력 검증
