@@ -43,13 +43,19 @@ await this.prisma.$transaction(async (tx) => {
 })
 ```
 
-### 검토한 대안
-- **2PC (Two-Phase Commit)**: 분산 DB에서 필요하지만, 단일 PostgreSQL이므로 과도함
-- **Saga 패턴**: 마이크로서비스 간 트랜잭션에 적합하지만, 모놀리스에서는 복잡성만 증가
-- **Event Sourcing**: 추적성은 좋지만 현재 규모에서는 오버엔지니어링
+### 왜 이 방식인가 (Trade-off)
 
-### 한계
-현재는 단일 DB이므로 `$transaction`으로 충분하지만, DB가 분산되면 Saga 패턴 도입 필요.
+| 대안 | 장점 | 왜 안 썼는가 |
+|------|------|------------|
+| 2PC (Two-Phase Commit) | 분산 DB 간 원자성 보장 | 단일 PostgreSQL이라 분산 트랜잭션 불필요. 도입하면 성능 저하 + 복잡성만 증가 |
+| Saga 패턴 (보상 트랜잭션) | 마이크로서비스 간 느슨한 결합 | 모놀리스 NestJS에서 Saga는 오버엔지니어링. 보상 로직(결제 취소 API)을 별도로 구현해야 하는 부담 |
+| Event Sourcing | 전체 이벤트 이력 추적 가능 | 이벤트 스토어 인프라 필요. CreditLog 테이블로 충분한 감사 추적이 이미 가능 |
+
+### 감수하는 리스크
+
+- **단일 DB 의존**: PostgreSQL 하나가 뻗으면 결제 처리 불가. 현재 규모에서는 Azure managed DB의 SLA(99.99%)로 충분
+- **긴 트랜잭션**: 3개 쿼리를 묶으므로 락 유지 시간이 길어짐. 동시 결제 수가 초당 수십 건을 넘으면 병목. 현재는 초당 1건 미만이라 문제없음
+- **스케일아웃 한계**: DB가 분산되면 이 구조를 버리고 Saga로 재설계해야 함
 
 ---
 
@@ -80,13 +86,18 @@ await tx.author.update({
 if (author.credits < 0) throw new Error('크레딧 부족')
 ```
 
-### 검토한 대안
-- **SELECT ... FOR UPDATE**: 명시적 비관적 락. 현재 규모에서는 불필요
-- **Optimistic Locking (version 필드)**: 충돌 빈도가 높으면 재시도 오버헤드
-- **Redis 분산 락**: 다중 인스턴스 환경에서 필요하지만, 현재 단일 인스턴스
+### 왜 이 방식인가 (Trade-off)
 
-### 한계
-Container Apps max-replicas가 1이라 현재는 안전. 수평 확장 시 Redis 락 검토 필요.
+| 대안 | 장점 | 왜 안 썼는가 |
+|------|------|------------|
+| SELECT ... FOR UPDATE (비관적 락) | 동시 접근 완벽 차단 | 모든 읽기에 락이 걸려 성능 저하. 좋아요는 읽기 빈도가 쓰기보다 압도적으로 높으므로 비관적 락은 과도 |
+| Optimistic Locking (version) | 충돌 시에만 재시도 | 좋아요 토글이 초당 수백 건이 아닌 이상 unique constraint로 충분. version 관리 복잡성 대비 이점 없음 |
+| Redis 분산 락 | 다중 인스턴스에서 안전 | max-replicas=1이라 단일 인스턴스. Redis 인프라 + 비용 추가가 불필요 |
+
+### 감수하는 리스크
+
+- **수평 확장 시 깨짐**: replicas를 2개 이상으로 늘리면 두 인스턴스가 동시에 같은 크레딧을 차감할 수 있음 → Redis 락 도입 필요
+- **unique constraint 에러 처리**: 동시 좋아요 시 DB 에러(409)가 클라이언트에 노출될 수 있음 → catch로 무시 처리 중
 
 ---
 
@@ -110,13 +121,18 @@ const works = await this.prisma.work.findMany({
 })
 ```
 
-### 검토한 대안
-- **Raw SQL JOIN**: Prisma가 생성하는 쿼리 품질이 충분하고, 타입 안전성 유지
-- **DataLoader 패턴**: GraphQL에서는 필수지만, REST API + Prisma에서는 include가 더 단순
-- **Materialized View**: 읽기 성능은 좋지만 쓰기 복잡성 증가
+### 왜 이 방식인가 (Trade-off)
 
-### 검증
-Prisma의 `include`는 내부적으로 JOIN 또는 별도 쿼리를 생성하지만, `_count`는 서브쿼리로 최적화됨. 현재 규모(100개 미만 작품)에서 성능 문제 없음.
+| 대안 | 장점 | 왜 안 썼는가 |
+|------|------|------------|
+| Raw SQL JOIN | 쿼리 완전 제어 | 타입 안전성 상실 + SQL 관리 부담. Prisma의 include가 내부적으로 최적화된 쿼리를 생성하므로 직접 쓸 이유 없음 |
+| DataLoader 패턴 | 배치 로딩으로 N+1 완벽 해결 | GraphQL용 도구. REST API에서는 Prisma include로 충분. DataLoader 도입 시 코드 복잡성 증가 |
+| Materialized View | 읽기 성능 최고 | 데이터 변경 시 View 갱신 필요. 작품 수가 100개 미만인 현재 규모에서 유지보수 부담만 증가 |
+
+### 감수하는 리스크
+
+- **Prisma 쿼리 품질 의존**: Prisma가 비효율적인 쿼리를 생성할 수 있음. `EXPLAIN ANALYZE`로 모니터링 필요
+- **작품 수 증가 시**: 수천 개 이상이면 `include`보다 pagination + cursor 기반 조회로 전환 필요
 
 ---
 
@@ -155,15 +171,23 @@ const works = await this.prisma.work.findMany({
 })
 ```
 
-### 검토한 대안
-- **Cursor-based 페이지네이션**: 대규모 데이터에서는 offset보다 효율적이지만, 현재 규모에서는 offset으로 충분
-- **전문 검색 (Full-Text Search)**: 작가 검색에 PostgreSQL `ILIKE`를 사용 중. 데이터 증가 시 `pg_trgm` 또는 Elasticsearch 검토
+### 왜 이 방식인가 (Trade-off)
+
+| 대안 | 장점 | 왜 안 썼는가 |
+|------|------|------------|
+| Cursor-based 페이지네이션 | 대규모 데이터에서 일정한 성능 | offset 페이지네이션이 구현 단순하고, 작품 수가 수백 개 미만이라 성능 차이 없음 |
+| Elasticsearch | 전문 검색 최고 성능 | 별도 인프라 + 비용. `ILIKE` + pg_trgm으로 현재 규모 충분 |
+| Redis 캐시 | 인기 작품 조회 캐싱 | 인프라 추가 비용. DB 쿼리가 인덱스로 충분히 빠름 (ms 단위) |
+
+### 감수하는 리스크
+
+- **offset 페이지네이션 한계**: 10만 건 이상에서 `OFFSET 90000`은 느림 → cursor 기반으로 전환 필요
+- **ILIKE 검색 한계**: 한글 형태소 분석 없음 → "나무꾼"으로 "선녀와 나무꾼" 검색 가능하지만, "나무"로는 불가
 
 ### 모니터링 방법
 ```sql
 EXPLAIN ANALYZE SELECT * FROM works ORDER BY view_count DESC LIMIT 12;
 ```
-PostgreSQL의 실행 계획으로 인덱스 사용 여부 확인.
 
 ---
 
@@ -192,13 +216,20 @@ inhouse → 같은 이미지 → Container Apps update (inhouse)
 main → 같은 이미지 → Container Apps update (prod)
 ```
 
-### 검토한 대안
-- **환경별 별도 이미지**: 환경마다 다른 빌드 → 이미지 불일치 위험
-- **Kubernetes**: 오케스트레이션 필요하지만, 현재 규모에서는 Container Apps로 충분
-- **Serverless (Azure Functions)**: NestJS와 호환성 낮음, Cold Start 문제
+### 왜 이 방식인가 (Trade-off)
 
-### 무중단 배포
-Azure Container Apps가 Rolling Update를 기본 지원. 새 리비전이 헬스체크 통과 후 기존 리비전을 교체.
+| 대안 | 장점 | 왜 안 썼는가 |
+|------|------|------------|
+| 환경별 별도 이미지 | 빌드 시 환경 최적화 | "dev에서 됐는데 prod에서 안 됨" 발생. 단일 이미지 + 환경변수 주입이 불일치 위험 제거 |
+| Kubernetes | 완전한 오케스트레이션 | 학습 곡선 + 운영 복잡성. Container Apps가 K8s 기반이면서 관리형이라 운영 부담 없음 |
+| Serverless (Azure Functions) | 완전 무료 tier 가능 | NestJS의 미들웨어/가드/DI가 Functions와 호환 안 됨. Cold Start 3~5초로 UX 저하 |
+| Vercel/Netlify | 프론트엔드 배포 최적화 | 백엔드(NestJS)는 배포 불가. 프론트+백엔드 동일 인프라에서 관리하는 게 운영 단순 |
+
+### 감수하는 리스크
+
+- **min-replicas=0**: 사용자가 없으면 컨테이너가 꺼짐 → 첫 요청 시 Cold Start 10~15초. min-replicas=1로 올리면 월 비용 증가
+- **단일 리전**: Korea Central에만 배포. 해외 사용자는 지연 발생. CDN(Cloudflare)으로 정적 자산은 캐싱됨
+- **Container Apps 제한**: 무료 tier에서 Environment 1개만 가능 → ProjectZenith와 공유 중
 
 ---
 
