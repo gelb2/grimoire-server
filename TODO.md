@@ -4,19 +4,16 @@
 
 ---
 
-## 기능 구현
+## 단기 (Phase 1 마무리)
 
-- [ ] HTML 파서 (최후순위)
-
-## 외부 연동 (자격증명 필요)
-
-- [ ] Google OAuth 실제 연동 (Google Cloud Console에서 Client ID 발급 필요)
+### 외부 연동
 - [ ] PAYAPP 실제 연동 (API 키 발급 필요)
 - [ ] PAYAPP 웹훅 HMAC-SHA256 서명 검증 (PAYAPP 키 발급 후)
 
-## 인프라/배포
+## 중기 (Phase 2)
 
-- [ ] Cloudflare DNS CNAME 레코드 설정 (`INFRASTRUCTURE.md` §10 참조)
+- [ ] 시멘틱 캐싱 구현 (pgvector 준비 완료, 기획 문서 있음)
+- [ ] A24식 Artifacts 데이터 모델 (DB 스키마 설계)
 
 ## 장기 (운영 규모에 따라 판단)
 
@@ -26,9 +23,11 @@
 - [ ] 관리자 행위 감사 로그 (audit log)
 - [ ] WAF (Web Application Firewall) 검토
 - [ ] 크레딧-원화-AI토큰 비용 정밀 계산식 구현 (`PLANNING_GRIMOIRE.md` §0 참조)
+- [ ] HTML 파서 (최후순위)
 
 ## 참조
 
 - 전체 API 명세: `docs/api-contract.md`
 - 구현 현황: `TECH_STATUS.md`
 - 기획서: 루트 `PLANNING_GRIMOIRE.md`
+- 디지털 쇼룸 제안: 루트 `PROPOSAL_DIGITAL_SHOWROOM.md`
