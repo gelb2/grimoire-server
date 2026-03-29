@@ -1,3 +1,4 @@
+import { AuthenticatedRequest } from '@adapter/inbound/http/dto/authenticated-request'
 import * as path from 'path'
 import {
   Controller, Post, Patch, Delete, Put, Body, Param,
@@ -22,23 +23,23 @@ export class WorkManagementController {
   ) {}
 
   @Post()
-  async createWork(@Req() req: any, @Body() dto: CreateWorkDto) {
+  async createWork(@Req() req: AuthenticatedRequest, @Body() dto: CreateWorkDto) {
     return this.workManagementUseCase.createWork(req.user.sub, dto)
   }
 
   @Patch(':id')
-  async updateWork(@Req() req: any, @Param('id') id: string, @Body() dto: UpdateWorkDto) {
+  async updateWork(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: UpdateWorkDto) {
     return this.workManagementUseCase.updateWork(req.user.sub, id, dto)
   }
 
   @Delete(':id')
-  async deleteWork(@Req() req: any, @Param('id') id: string) {
+  async deleteWork(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     await this.workManagementUseCase.deleteWork(req.user.sub, id)
     return { deleted: true }
   }
 
   @Post(':workId/episodes')
-  async createEpisode(@Req() req: any, @Param('workId') workId: string, @Body() dto: CreateEpisodeDto) {
+  async createEpisode(@Req() req: AuthenticatedRequest, @Param('workId') workId: string, @Body() dto: CreateEpisodeDto) {
     return this.workManagementUseCase.createEpisode(req.user.sub, workId, dto)
   }
 
@@ -57,7 +58,7 @@ export class WorkManagementController {
       },
     }),
   )
-  async uploadCover(@Req() req: any, @Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
+  async uploadCover(@Req() req: AuthenticatedRequest, @Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('이미지 파일이 첨부되지 않았습니다')
     if (!this.blobStorage.isEnabled) throw new BadRequestException('커버 이미지 기능이 아직 활성화되지 않았습니다')
 
@@ -71,7 +72,7 @@ export class EpisodeManagementController {
   constructor(private readonly workManagementUseCase: WorkManagementUseCase) {}
 
   @Delete(':id')
-  async deleteEpisode(@Req() req: any, @Param('id') id: string) {
+  async deleteEpisode(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     await this.workManagementUseCase.deleteEpisode(req.user.sub, id)
     return { deleted: true }
   }

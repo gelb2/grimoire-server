@@ -1,3 +1,4 @@
+import { AuthenticatedRequest } from '@adapter/inbound/http/dto/authenticated-request'
 import { Controller, Post, Body, Get, Req, Res, UseGuards } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import { Response } from 'express'
@@ -89,7 +90,7 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('profile')
-  async profile(@Req() req: any) {
+  async profile(@Req() req: AuthenticatedRequest) {
     const author = await this.authUseCase.getProfile(req.user.sub)
     return {
       id: author.id,

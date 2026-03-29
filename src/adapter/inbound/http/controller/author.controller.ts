@@ -1,3 +1,4 @@
+import { AuthenticatedRequest } from '@adapter/inbound/http/dto/authenticated-request'
 import { Controller, Get, Patch, Param, Body, UseGuards, Req } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import { AuthorUseCase } from '@application/author/author.usecase'
@@ -22,7 +23,7 @@ export class AuthorController {
   @Throttle({ default: { ttl: 60000, limit: 10 } })
   @Patch(':slug/profile')
   @UseGuards(JwtAuthGuard)
-  async updateProfile(@Req() req: any, @Param('slug') slug: string, @Body() body: { bio: string }) {
+  async updateProfile(@Req() req: AuthenticatedRequest, @Param('slug') slug: string, @Body() body: { bio: string }) {
     return this.authorUseCase.updateBio(slug, req.user.sub, body.bio)
   }
 }

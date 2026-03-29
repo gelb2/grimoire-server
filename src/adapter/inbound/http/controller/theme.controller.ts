@@ -1,3 +1,4 @@
+import { AuthenticatedRequest } from '@adapter/inbound/http/dto/authenticated-request'
 import {
   Controller,
   Get,
@@ -34,7 +35,7 @@ export class ThemeController {
   @Throttle({ default: { ttl: 60000, limit: 5 } })
   @Post('generate')
   @UseGuards(JwtAuthGuard)
-  async generate(@Req() req: any, @Body() dto: GenerateThemeDto) {
+  async generate(@Req() req: AuthenticatedRequest, @Body() dto: GenerateThemeDto) {
     const theme = await this.generateTheme.execute(dto.authorId, dto.description, dto.name)
     return { themeId: theme.id, preview: theme.overrides }
   }
@@ -42,14 +43,14 @@ export class ThemeController {
   /** 내 테마 목록 조회 */
   @Get('mine')
   @UseGuards(JwtAuthGuard)
-  async listMine(@Req() req: any) {
-    return this.getTheme.listByAuthor(req.user.id)
+  async listMine(@Req() req: AuthenticatedRequest) {
+    return this.getTheme.listByAuthor(req.user.sub)
   }
 
   /** 테마 커스텀 수정 (overrides 업데이트) */
   @Put(':themeId')
   @UseGuards(JwtAuthGuard)
-  async updateTheme(@Req() req: any, @Param('themeId') themeId: string, @Body() body: { overrides: any }) {
+  async updateTheme(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string, @Body() body: { overrides: any }) {
     const theme = await this.getTheme.updateOverrides(req.user.sub, themeId, body.overrides)
     return { themeId: theme.id, overrides: theme.overrides }
   }
@@ -57,15 +58,15 @@ export class ThemeController {
   /** 테마 삭제 (슬롯 반환) */
   @Delete(':themeId')
   @UseGuards(JwtAuthGuard)
-  async deleteTheme(@Req() req: any, @Param('themeId') themeId: string) {
-    await this.getTheme.deleteTheme(req.user.id, themeId)
+  async deleteTheme(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string) {
+    await this.getTheme.deleteTheme(req.user.sub, themeId)
     return { deleted: true }
   }
 
   /** 테마를 CSS로 베이킹 */
   @Post('publish/:authorSlug')
   @UseGuards(JwtAuthGuard)
-  async publish(@Req() req: any, @Param('authorSlug') authorSlug: string) {
+  async publish(@Req() req: AuthenticatedRequest, @Param('authorSlug') authorSlug: string) {
     if (req.user.slug !== authorSlug) {
       throw new ForbiddenException('본인의 테마만 퍼블리시할 수 있습니다')
     }
