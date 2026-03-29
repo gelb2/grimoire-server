@@ -20,13 +20,21 @@ const THEME_SYSTEM_PROMPT = `당신은 웹 테마 디자인 전문가입니다.
   "accent2": "#hex",         // 보조 강조색 (accent의 밝은/연한 변형)
   "border": "#hex",          // 경계선
 
-  "fontBody": "serif" | "sans-serif" | "monospace" | "handwriting",
-  "fontHeading": "serif" | "sans-serif" | "monospace" | "handwriting",
-  "fontSize": "compact" | "normal" | "large",
+  "fontBody": "serif" | "sans-serif" | "monospace",
+  "fontHeading": "serif" | "sans-serif" | "monospace",
 
   "animation": "typing" | "fade" | "slide" | "none",
-  "cardStyle": "sharp" | "rounded" | "minimal",
-  "tone": "dark" | "light" | "sepia" | "custom"
+  "tone": "dark" | "light" | "sepia",
+
+  "titleSize": "sm" | "md" | "lg" | "xl",
+  "titleWeight": "light" | "normal" | "bold" | "black",
+  "letterSpacing": "tight" | "normal" | "wide",
+  "bodyLineHeight": "compact" | "normal" | "relaxed",
+  "contentWidth": "narrow" | "normal" | "wide",
+
+  "layout": "series" | "grid" | "classic" | "magazine" | "gallery" | "minimal",
+  "heroStyle": "fullname" | "cover" | "minimal" | "none",
+  "navStyle": "sidebar" | "top" | "hidden"
 }
 
 색상 규칙:
@@ -37,7 +45,19 @@ const THEME_SYSTEM_PROMPT = `당신은 웹 테마 디자인 전문가입니다.
 분위기 해석:
 - 작가의 감성을 존중하되, 실제 웹 가독성을 최우선으로
 - 소설 읽기에 적합한 편안한 색상과 폰트 선택
-- 애니메이션은 분위기에 맞게 선택 (고요한 분위기 → fade/none, 역동적 → typing/slide)`
+- 애니메이션은 분위기에 맞게 선택 (고요한 분위기 → fade/none, 역동적 → typing/slide)
+
+타이포그래피 해석:
+- 무겁고 강렬한 분위기 → titleSize: "xl", titleWeight: "black"
+- 가볍고 우아한 분위기 → titleSize: "lg", titleWeight: "light", letterSpacing: "wide"
+- 밀도 높은 텍스트 → bodyLineHeight: "compact", contentWidth: "wide"
+- 여유로운 독서 → bodyLineHeight: "relaxed", contentWidth: "narrow"
+
+레이아웃 해석:
+- 시리즈 소설 → layout: "series", heroStyle: "minimal"
+- 에디토리얼/잡지 → layout: "magazine", heroStyle: "fullname", navStyle: "sidebar"
+- 포트폴리오/갤러리 → layout: "gallery", heroStyle: "fullname", navStyle: "hidden"
+- 미니멀 → layout: "minimal", heroStyle: "cover", navStyle: "hidden"`
 
 @Injectable()
 export class ClaudeThemeAdapter implements ClaudeApiPort {
