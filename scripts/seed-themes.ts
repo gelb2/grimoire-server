@@ -47,7 +47,7 @@ interface AuthorTheme {
   fontHeading: 'serif' | 'sans-serif' | 'monospace'
   animation: 'typing' | 'fade' | 'slide' | 'none'
   tone: 'dark' | 'light' | 'sepia'
-  layout: 'universe' | 'grid' | 'classic'
+  layout: 'series' | 'grid' | 'classic'
   decorations: ThemeDecorations
   // 추가 시각 요소 (optional)
   typingSpeed?: number
@@ -88,7 +88,7 @@ const AUTHORS: AuthorSeed[] = [
       fontHeading: 'serif',
       animation: 'typing',
       tone: 'dark',
-      layout: 'universe',
+      layout: 'series',
       decorations: {
         dividerIcon: 'antler',
         dividerColor: '#9a8060',
@@ -395,21 +395,30 @@ async function main() {
         },
       })
 
-      // 2. 테마 upsert (authorId 기준)
-      await prisma.theme.upsert({
+      // 2. 테마 upsert (authorId 기준 — 1:N이므로 findFirst 후 update/create)
+      const existingTheme = await prisma.theme.findFirst({
         where: { authorId: upsertedAuthor.id },
-        create: {
-          authorId: upsertedAuthor.id,
-          preset: author.preset,
-          overrides: author.theme as object,
-          rawDescription: author.description,
-        },
-        update: {
-          preset: author.preset,
-          overrides: author.theme as object,
-          rawDescription: author.description,
-        },
       })
+
+      if (existingTheme) {
+        await prisma.theme.update({
+          where: { id: existingTheme.id },
+          data: {
+            preset: author.preset,
+            overrides: author.theme as object,
+            rawDescription: author.description,
+          },
+        })
+      } else {
+        await prisma.theme.create({
+          data: {
+            authorId: upsertedAuthor.id,
+            preset: author.preset,
+            overrides: author.theme as object,
+            rawDescription: author.description,
+          },
+        })
+      }
 
       success++
       console.log(`  [OK] ${author.name} (${author.slug}) — ${author.email}`)

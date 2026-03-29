@@ -29,6 +29,7 @@ export interface AuthorTheme {
 export interface Theme {
   id: string
   authorId: string
+  name: string
   preset: string
   overrides: AuthorTheme | null
   rawDescription: string | null

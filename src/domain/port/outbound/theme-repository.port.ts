@@ -1,8 +1,12 @@
 import { AuthorTheme, Theme } from '@domain/model/theme'
 
 export interface ThemeRepositoryPort {
-  findByAuthorId(authorId: string): Promise<Theme | null>
+  findById(id: string): Promise<Theme | null>
+  findAllByAuthorId(authorId: string): Promise<Theme[]>
   findByAuthorSlug(slug: string): Promise<Theme | null>
-  upsert(authorId: string, preset: string, overrides: AuthorTheme, rawDescription: string): Promise<Theme>
-  updateBakedCssUrl(authorId: string, url: string): Promise<void>
+  countByAuthorId(authorId: string): Promise<number>
+  create(authorId: string, name: string, preset: string, overrides: AuthorTheme, rawDescription: string): Promise<Theme>
+  update(themeId: string, preset: string, overrides: AuthorTheme, rawDescription: string): Promise<Theme>
+  delete(themeId: string): Promise<void>
+  updateBakedCssUrl(themeId: string, url: string): Promise<void>
 }

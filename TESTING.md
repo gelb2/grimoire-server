@@ -29,6 +29,7 @@ npm run test:cov      # 커버리지 리포트
 
 - 유닛 테스트: `src/lib/*.spec.ts`, `src/lib/rag/*.spec.ts` (파서, 유틸리티)
 - UseCase 테스트: `src/application/*/*.spec.ts` (비즈니스 로직)
+- 컨트롤러 테스트: `src/adapter/inbound/http/controller/*.spec.ts` (HTTP 레이어)
 - 전체 테스트 파일 목록: `find src -name "*.spec.ts"` 실행으로 확인
 - 현재 테스트 수: `npm test` 실행으로 확인
 

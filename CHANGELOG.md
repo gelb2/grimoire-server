@@ -1,5 +1,78 @@
 # Changelog — grimoire-server
 
+## [0.10.0] - 2026-03-28
+
+### 크레딧 선물 + 테마 수정 API + HTML 파서
+
+#### Added
+- 크레딧 선물 기능 (CreditUseCase.gift + CreditController)
+- 응원받는 작가 랭킹 API (GET /credits/ranking)
+- 테마 커스텀 수정 API (PUT /themes/:themeId)
+- HTML 파서 + 포맷별 파서 자동 분기 (md/html/txt)
+- AdminGuard 유닛테스트 4건
+
+#### Changed
+- layout 값: "universe" → "series" (스크립트 + 문서 + DB)
+- docs/theme-spec.md 동기화 (web 정본 → server 복사)
+- TODO.md 정리 (완료 항목 제거, 장기 과제 분리)
+
+## [0.9.0] - 2026-03-27
+
+### 커버 이미지 + RAG 헥사고날 리팩토링
+
+#### Added
+- Azure Blob Storage 커버 이미지 업로드 (`PUT /api/works/:id/cover`)
+- BlobStorageService 인프라 서비스 (환경변수 미설정 시 graceful 비활성화)
+- Work.coverImage DB 필드 추가
+- EmbeddingPort 인터페이스 + OpenAIEmbeddingAdapter (헥사고날)
+- VectorStorePort 인터페이스 + PgVectorAdapter (헥사고날)
+- ClaudeApiPort.ask() 범용 메서드 (테마 외 분석/요약 등)
+- ACCOUNTS.md 서드파티 계정 현황 문서 (루트)
+
+#### Refactored
+- RAG 모듈 전면 리팩토링 — lib 직접 호출 → Port/Adapter 패턴
+- NovelAnalysisUseCase: PrismaService 직접 의존 제거 → 포트 주입
+- novel-analyzer.ts: askClaude 직접 호출 제거 → AskFn 파라미터 주입 (순수 함수)
+- embeddings.ts/vector-db.ts 로직 → 어댑터 계층으로 이관
+
+---
+
+## [0.8.0] - 2026-03-27
+
+### 최종 안정화 + 파일 업로드 + HWP 파서
+
+#### Added
+- 파일 업로드 엔드포인트 (Multer — md/txt/docx/hwp/hwpx)
+- HWP/HWPX 파서 구현 (한글 워드프로세서 포맷 지원)
+- CI/CD GitHub Actions 자동 배포 구축 (8개 워크플로우)
+- 시드 데이터 원고 보강 (대제/중제/소제 + 실제 고전문학 텍스트)
+- discovery API 페이지네이션 지원
+- 전수검사 체크리스트에 보안 검증 항목 추가
+
+#### Fixed
+- Throttle/Debounce 전수점검 — 구독 Throttle 추가, 좋아요/구독 토글 원자화, 원고 파싱 Throttle 추가
+- 인기 정렬에 createdAt 2차 정렬 추가 (에피소드 많은 작품 우선)
+- 시드 스크립트 정리 (seed-all.ts 통합)
+
+---
+
+## [0.7.0] - 2026-03-26
+
+### DeerDevil 테마 시스템 + 보안 강화
+
+#### Added
+- DeerDevil 테마 시스템 + 원본 파서 연결
+- 테마 tagline + dividerIcon 필드 추가
+
+#### Fixed
+- CRITICAL 보안 8건 + HIGH 4건 수정
+- 에피소드 type 필드 + DeerDevil slug 재구조화
+- 스크립트 보안 + SOLID 정리
+- MD 파서 원본 DeerDevil과 완전 일치시킴
+- 문서 피라미드 리팩토링 + frontmatter/slug 버그 수정
+
+---
+
 ## [0.6.0] - 2026-03-26
 
 ### CRITICAL 보안 수정 + 인프라

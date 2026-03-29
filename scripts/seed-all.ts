@@ -102,7 +102,7 @@ const AUTHORS_WITH_THEMES: AuthorSeedData[] = [
       bgPrimary: '#07070a', bgSecondary: '#0d0d12',
       textPrimary: '#cdc8bc', textMuted: '#7a7570', textDim: '#4a4740', textBright: '#e8e3d8',
       accent: '#9a8060', accent2: '#c4a46a', border: '#1e1e26',
-      fontBody: 'serif', fontHeading: 'serif', animation: 'typing', tone: 'dark', layout: 'universe',
+      fontBody: 'serif', fontHeading: 'serif', animation: 'typing', tone: 'dark', layout: 'series',
       decorations: { dividerIcon: 'antler', dividerColor: '#9a8060', headerIcon: 'antler', headerSubtitle: 'Short Fiction Anthology', cardAccentPosition: 'left', footerText: 'Inspired by the sensibility of A24' },
       typingSpeed: 15, cardRadius: '8px', navOpacity: 0.95,
     },
@@ -174,11 +174,21 @@ async function step1CreateAuthorsAndThemes(): Promise<void> {
       update: { email: a.email, passwordHash, credits: 10 },
     })
 
-    await prisma.theme.upsert({
+    // 테마 upsert (1:N이므로 findFirst 후 update/create)
+    const existingTheme = await prisma.theme.findFirst({
       where: { authorId: upserted.id },
-      create: { authorId: upserted.id, preset: a.preset, overrides: a.theme as object, rawDescription: a.description },
-      update: { preset: a.preset, overrides: a.theme as object, rawDescription: a.description },
     })
+
+    if (existingTheme) {
+      await prisma.theme.update({
+        where: { id: existingTheme.id },
+        data: { preset: a.preset, overrides: a.theme as object, rawDescription: a.description },
+      })
+    } else {
+      await prisma.theme.create({
+        data: { authorId: upserted.id, preset: a.preset, overrides: a.theme as object, rawDescription: a.description },
+      })
+    }
 
     success++
     console.log(`  [OK] ${a.name} (${a.slug})`)
@@ -552,15 +562,16 @@ async function step6ApplyTaglines(): Promise<void> {
   for (const data of TAGLINE_DATA) {
     const author = await prisma.author.findUnique({
       where: { slug: data.slug },
-      include: { theme: true },
+      include: { themes: true },
     })
 
-    if (!author?.theme) {
+    const theme = author?.themes[0]
+    if (!theme) {
       console.log(`  [SKIP] ${data.slug} — 작가/테마 없음`)
       continue
     }
 
-    const existingOverrides = (author.theme.overrides as Record<string, unknown>) ?? {}
+    const existingOverrides = (theme.overrides as Record<string, unknown>) ?? {}
     const existingDecorations = (existingOverrides.decorations as Record<string, unknown>) ?? {}
 
     const updatedOverrides = {
@@ -573,7 +584,7 @@ async function step6ApplyTaglines(): Promise<void> {
     }
 
     await prisma.theme.update({
-      where: { id: author.theme.id },
+      where: { id: theme.id },
       data: { overrides: updatedOverrides },
     })
 
@@ -593,7 +604,7 @@ const DEERDEVIL_COMPLETE_THEME = {
   textPrimary: '#cdc8bc', textMuted: '#7a7570', textDim: '#4a4740', textBright: '#e8e3d8',
   accent: '#9a8060', accent2: '#c4a46a', border: '#1e1e26',
   fontBody: 'serif', fontHeading: 'serif',
-  animation: 'typing', tone: 'dark', layout: 'universe',
+  animation: 'typing', tone: 'dark', layout: 'series',
   decorations: {
     dividerIcon: 'antler', dividerColor: '#9a8060',
     headerIcon: 'antler', headerSubtitle: 'Short Fiction Anthology',
@@ -609,7 +620,7 @@ async function step7UpdateDeerdevilTheme(): Promise<void> {
 
   const author = await prisma.author.findUnique({
     where: { slug: 'deerdevil' },
-    include: { theme: true },
+    include: { themes: true },
   })
 
   if (!author) {
@@ -617,20 +628,23 @@ async function step7UpdateDeerdevilTheme(): Promise<void> {
     return
   }
 
-  await prisma.theme.upsert({
-    where: { authorId: author.id },
-    create: {
-      authorId: author.id,
-      preset: 'midnight',
-      overrides: DEERDEVIL_COMPLETE_THEME as object,
-      rawDescription: 'A24 감성 K-다크 판타지. 어둡고 묵직한 밤의 분위기. 사슴뿔 아이콘과 타이핑 애니메이션.',
-    },
-    update: {
-      preset: 'midnight',
-      overrides: DEERDEVIL_COMPLETE_THEME as object,
-      rawDescription: 'A24 감성 K-다크 판타지. 어둡고 묵직한 밤의 분위기. 사슴뿔 아이콘과 타이핑 애니메이션.',
-    },
-  })
+  const themeData = {
+    preset: 'midnight',
+    overrides: DEERDEVIL_COMPLETE_THEME as object,
+    rawDescription: 'A24 감성 K-다크 판타지. 어둡고 묵직한 밤의 분위기. 사슴뿔 아이콘과 타이핑 애니메이션.',
+  }
+
+  const existingTheme = author.themes[0]
+  if (existingTheme) {
+    await prisma.theme.update({
+      where: { id: existingTheme.id },
+      data: themeData,
+    })
+  } else {
+    await prisma.theme.create({
+      data: { authorId: author.id, ...themeData },
+    })
+  }
 
   console.log(`  [OK] DeerDevil 테마 업데이트 완료`)
 }

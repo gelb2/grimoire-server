@@ -161,7 +161,8 @@ describe('보안 테스트', () => {
         findEpisodeById: jest.fn(),
         deleteEpisode: jest.fn(),
       }
-      useCase = new WorkManagementUseCase(mockWorkRepo)
+      const mockBlobStorage = { isEnabled: false, uploadImage: jest.fn(), deleteImage: jest.fn() } as any
+      useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage)
     })
 
     it('다른 사용자의 작품 수정 시 ForbiddenException을 던진다', async () => {
@@ -206,7 +207,9 @@ describe('보안 테스트', () => {
           createdAt: new Date(),
         }),
       }
-      useCase = new SocialUseCase(mockSocialRepo)
+      const mockCreditRepo = { adjustCredits: jest.fn(), findLogsByAuthorId: jest.fn(), giftTransfer: jest.fn(), getGiftRanking: jest.fn() }
+      const mockAuthorRepo = { findById: jest.fn(), findBySlug: jest.fn(), findByEmail: jest.fn(), create: jest.fn(), updateCredits: jest.fn() }
+      useCase = new SocialUseCase(mockSocialRepo as any, mockCreditRepo as any, mockAuthorRepo as any)
     })
 
     it('HTML 태그가 이스케이프된다', async () => {
@@ -216,6 +219,7 @@ describe('보안 테스트', () => {
         'user-1',
         'ep-1',
         '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;',
+        undefined,
       )
     })
 
@@ -226,6 +230,7 @@ describe('보안 테스트', () => {
         'user-1',
         'ep-1',
         '좋은 소설이네요!',
+        undefined,
       )
     })
 
@@ -236,6 +241,7 @@ describe('보안 테스트', () => {
         'user-1',
         'ep-1',
         'Tom &amp; Jerry&#x27;s &quot;adventure&quot;',
+        undefined,
       )
     })
   })

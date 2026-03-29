@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, MinLength } from 'class-validator'
+import { IsString, IsNotEmpty, IsOptional, MinLength } from 'class-validator'
 
 export class GenerateThemeDto {
   @IsString()
@@ -9,4 +9,8 @@ export class GenerateThemeDto {
   @IsNotEmpty()
   @MinLength(5)
   description!: string
+
+  @IsString()
+  @IsOptional()
+  name?: string
 }

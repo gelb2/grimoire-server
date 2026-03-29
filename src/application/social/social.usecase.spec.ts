@@ -15,6 +15,7 @@ describe('SocialUseCase', () => {
     getComments: jest.Mock
     deleteComment: jest.Mock
     getCommentCount: jest.Mock
+    getTotalLikesForAuthor: jest.Mock
   }
 
   const mockComment = {
@@ -45,9 +46,12 @@ describe('SocialUseCase', () => {
       getComments: jest.fn().mockResolvedValue([mockComment]),
       deleteComment: jest.fn().mockResolvedValue(undefined),
       getCommentCount: jest.fn().mockResolvedValue(3),
+      getTotalLikesForAuthor: jest.fn().mockResolvedValue(15),
     }
 
-    useCase = new SocialUseCase(mockSocialRepo as any)
+    const mockCreditRepo = { adjustCredits: jest.fn(), findLogsByAuthorId: jest.fn(), giftTransfer: jest.fn(), getGiftRanking: jest.fn() }
+    const mockAuthorRepo = { findById: jest.fn(), findBySlug: jest.fn(), findByEmail: jest.fn(), create: jest.fn(), updateCredits: jest.fn() }
+    useCase = new SocialUseCase(mockSocialRepo as any, mockCreditRepo as any, mockAuthorRepo as any)
   })
 
   // ── 좋아요 ──
@@ -124,7 +128,7 @@ describe('SocialUseCase', () => {
     it('댓글을 생성하고 반환한다', async () => {
       const result = await useCase.createComment('author-1', 'ep-1', '좋은 소설이네요')
 
-      expect(mockSocialRepo.createComment).toHaveBeenCalledWith('author-1', 'ep-1', '좋은 소설이네요')
+      expect(mockSocialRepo.createComment).toHaveBeenCalledWith('author-1', 'ep-1', '좋은 소설이네요', undefined)
       expect(result.content).toBe('좋은 소설이네요')
     })
 
@@ -145,13 +149,23 @@ describe('SocialUseCase', () => {
       const content = 'a'.repeat(500)
       await useCase.createComment('author-1', 'ep-1', content)
 
-      expect(mockSocialRepo.createComment).toHaveBeenCalledWith('author-1', 'ep-1', content)
+      expect(mockSocialRepo.createComment).toHaveBeenCalledWith('author-1', 'ep-1', content, undefined)
     })
 
     it('내용의 앞뒤 공백을 제거한다', async () => {
       await useCase.createComment('author-1', 'ep-1', '  좋은 소설  ')
 
-      expect(mockSocialRepo.createComment).toHaveBeenCalledWith('author-1', 'ep-1', '좋은 소설')
+      expect(mockSocialRepo.createComment).toHaveBeenCalledWith('author-1', 'ep-1', '좋은 소설', undefined)
+    })
+
+    it('parentId를 전달하여 대댓글을 생성한다', async () => {
+      const replyComment = { ...mockComment, id: 'comment-2', parentId: 'comment-1' }
+      mockSocialRepo.createComment.mockResolvedValue(replyComment)
+
+      const result = await useCase.createComment('author-1', 'ep-1', '답글입니다', 'comment-1')
+
+      expect(mockSocialRepo.createComment).toHaveBeenCalledWith('author-1', 'ep-1', '답글입니다', 'comment-1')
+      expect(result.parentId).toBe('comment-1')
     })
   })
 

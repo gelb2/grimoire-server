@@ -70,7 +70,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     return toWorkDomain(row)
   }
 
-  async updateWork(id: string, input: { title?: string; subtitle?: string; description?: string }): Promise<Work> {
+  async updateWork(id: string, input: { title?: string; subtitle?: string; description?: string; coverImage?: string | null }): Promise<Work> {
     const row = await this.prisma.work.update({ where: { id }, data: input })
     return toWorkDomain(row)
   }
@@ -210,13 +210,21 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
       totalCount,
     }
   }
+
+  async countAll(): Promise<number> {
+    return this.prisma.work.count()
+  }
+
+  async countAllEpisodes(): Promise<number> {
+    return this.prisma.episode.count()
+  }
 }
 
 function toWorkDomain(row: {
   id: string; authorId: string; slug: string; title: string;
-  subtitle: string | null; description: string | null; viewCount?: number; createdAt: Date
+  subtitle: string | null; description: string | null; coverImage?: string | null; themeId?: string | null; viewCount?: number; createdAt: Date
 }): Work {
-  return { id: row.id, authorId: row.authorId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, viewCount: row.viewCount ?? 0, createdAt: row.createdAt }
+  return { id: row.id, authorId: row.authorId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, coverImage: row.coverImage ?? null, themeId: row.themeId ?? null, viewCount: row.viewCount ?? 0, createdAt: row.createdAt }
 }
 
 function toEpisodeDomain(row: {

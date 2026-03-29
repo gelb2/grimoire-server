@@ -1,9 +1,10 @@
 /**
- * 소설 분석 모듈 — RAG 기반
- * 설정 붕괴, 톤 일관성, 캐릭터 어감 체크
+ * 소설 분석 모듈 — 순수 함수
+ * AI 호출 함수를 외부에서 주입받아 테스트 가능하게 유지
  */
 
-import { askClaude } from '@lib/claude'
+/** AI 호출 함수 시그니처 — ClaudeApiPort.ask 또는 mock 주입 */
+export type AskFn = (systemPrompt: string, userMessage: string, options?: { maxTokens?: number }) => Promise<string>
 
 export interface AnalysisResult {
   type: 'consistency' | 'tone' | 'character'
@@ -60,30 +61,29 @@ const CHARACTER_PROMPT = `당신은 소설 편집자입니다. 아래에 기존 
 }`
 
 /** 설정 붕괴 체크 */
-export async function checkConsistency(context: string, newEpisode: string): Promise<AnalysisResult> {
+export async function checkConsistency(ask: AskFn, context: string, newEpisode: string): Promise<AnalysisResult> {
   const userMessage = `[기존 에피소드 컨텍스트]\n${context}\n\n[새 에피소드]\n${newEpisode}`
-  const raw = await askClaude(CONSISTENCY_PROMPT, userMessage, { maxTokens: 2048 })
+  const raw = await ask(CONSISTENCY_PROMPT, userMessage, { maxTokens: 2048 })
   return { type: 'consistency', ...parseAnalysisJSON(raw) }
 }
 
 /** 톤 일관성 체크 */
-export async function checkTone(context: string, newEpisode: string): Promise<AnalysisResult> {
+export async function checkTone(ask: AskFn, context: string, newEpisode: string): Promise<AnalysisResult> {
   const userMessage = `[기존 에피소드 컨텍스트]\n${context}\n\n[새 에피소드]\n${newEpisode}`
-  const raw = await askClaude(TONE_PROMPT, userMessage, { maxTokens: 2048 })
+  const raw = await ask(TONE_PROMPT, userMessage, { maxTokens: 2048 })
   return { type: 'tone', ...parseAnalysisJSON(raw) }
 }
 
 /** 캐릭터 어감 체크 */
-export async function checkCharacter(context: string, newEpisode: string): Promise<AnalysisResult> {
+export async function checkCharacter(ask: AskFn, context: string, newEpisode: string): Promise<AnalysisResult> {
   const userMessage = `[기존 에피소드 컨텍스트]\n${context}\n\n[새 에피소드]\n${newEpisode}`
-  const raw = await askClaude(CHARACTER_PROMPT, userMessage, { maxTokens: 2048 })
+  const raw = await ask(CHARACTER_PROMPT, userMessage, { maxTokens: 2048 })
   return { type: 'character', ...parseAnalysisJSON(raw) }
 }
 
 /** Claude 응답 JSON 파싱 (에러 복구 포함) */
 function parseAnalysisJSON(raw: string): { score: number; summary: string; issues: string[]; suggestions: string[] } {
   try {
-    // JSON 블록 추출
     const jsonMatch = raw.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
@@ -95,7 +95,6 @@ function parseAnalysisJSON(raw: string): { score: number; summary: string; issue
       }
     }
   } catch {
-    // trailing comma 제거 후 재시도
     try {
       const cleaned = raw.replace(/,\s*([\]}])/g, '$1')
       const jsonMatch = cleaned.match(/\{[\s\S]*\}/)

@@ -27,7 +27,8 @@ describe('DiscoveryUseCase', () => {
       findRecentPaginated: jest.fn().mockResolvedValue({ works: [mockWorkWithMeta], totalCount: 15 }),
     }
 
-    useCase = new DiscoveryUseCase(mockAuthorRepo as any, mockWorkRepo as any)
+    const mockCreditRepo = { adjustCredits: jest.fn(), findLogsByAuthorId: jest.fn(), giftTransfer: jest.fn(), getGiftRanking: jest.fn().mockResolvedValue([]) }
+    useCase = new DiscoveryUseCase(mockAuthorRepo as any, mockWorkRepo as any, mockCreditRepo as any)
   })
 
   describe('searchAuthors', () => {

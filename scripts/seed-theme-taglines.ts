@@ -54,7 +54,7 @@ async function main() {
     // 작가 조회
     const author = await prisma.author.findUnique({
       where: { slug: data.slug },
-      include: { theme: true },
+      include: { themes: true },
     })
 
     if (!author) {
@@ -62,13 +62,14 @@ async function main() {
       continue
     }
 
-    if (!author.theme) {
+    const theme = author.themes[0]
+    if (!theme) {
       console.log(`  [SKIP] ${data.slug} — 테마가 없음`)
       continue
     }
 
     // 기존 overrides 병합
-    const existingOverrides = (author.theme.overrides as Record<string, unknown>) ?? {}
+    const existingOverrides = (theme.overrides as Record<string, unknown>) ?? {}
     const existingDecorations = (existingOverrides.decorations as Record<string, unknown>) ?? {}
 
     const updatedOverrides = {
@@ -81,7 +82,7 @@ async function main() {
     }
 
     await prisma.theme.update({
-      where: { id: author.theme.id },
+      where: { id: theme.id },
       data: { overrides: updatedOverrides },
     })
 

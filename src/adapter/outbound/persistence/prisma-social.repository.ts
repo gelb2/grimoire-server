@@ -82,17 +82,29 @@ export class PrismaSocialRepository implements SocialRepositoryPort {
 
   // ── 댓글 ──
 
-  async createComment(authorId: string, episodeId: string, content: string): Promise<Comment> {
-    const row = await this.prisma.comment.create({
-      data: { authorId, episodeId, content },
-    })
+  async createComment(authorId: string, episodeId: string, content: string, parentId?: string): Promise<Comment> {
+    const data: { authorId: string; episodeId: string; content: string; parentId?: string } = { authorId, episodeId, content }
+    if (parentId) {
+      // 대댓글 깊이 제한 (2depth까지) — 부모가 이미 대댓글이면 거부
+      const parent = await this.prisma.comment.findUnique({ where: { id: parentId } })
+      if (!parent) {
+        throw new NotFoundException('부모 댓글을 찾을 수 없습니다')
+      }
+      if (parent.parentId) {
+        // 부모가 이미 대댓글 → 부모의 부모에 달기 (2depth 제한)
+        data.parentId = parent.parentId
+      } else {
+        data.parentId = parentId
+      }
+    }
+    const row = await this.prisma.comment.create({ data })
     return toCommentDomain(row)
   }
 
   async getComments(episodeId: string): Promise<Comment[]> {
     const rows = await this.prisma.comment.findMany({
       where: { episodeId },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: 'asc' },
     })
     return rows.map(toCommentDomain)
   }
@@ -111,12 +123,24 @@ export class PrismaSocialRepository implements SocialRepositoryPort {
   async getCommentCount(episodeId: string): Promise<number> {
     return this.prisma.comment.count({ where: { episodeId } })
   }
+
+  /** 작가의 모든 에피소드에 대한 총 좋아요 수 — 작가의 작품 → 에피소드 → 좋아요 집계 */
+  async getTotalLikesForAuthor(authorId: string): Promise<number> {
+    const episodes = await this.prisma.episode.findMany({
+      where: { work: { authorId } },
+      select: { id: true },
+    })
+    if (episodes.length === 0) return 0
+    return this.prisma.like.count({
+      where: { episodeId: { in: episodes.map(e => e.id) } },
+    })
+  }
 }
 
 function toSubscriptionDomain(row: { id: string; subscriberId: string; targetAuthorId: string; createdAt: Date }): Subscription {
   return { id: row.id, subscriberId: row.subscriberId, targetAuthorId: row.targetAuthorId, createdAt: row.createdAt }
 }
 
-function toCommentDomain(row: { id: string; authorId: string; episodeId: string; content: string; createdAt: Date }): Comment {
-  return { id: row.id, authorId: row.authorId, episodeId: row.episodeId, content: row.content, createdAt: row.createdAt }
+function toCommentDomain(row: { id: string; authorId: string; episodeId: string; content: string; parentId?: string | null; createdAt: Date }): Comment {
+  return { id: row.id, authorId: row.authorId, episodeId: row.episodeId, content: row.content, parentId: row.parentId ?? undefined, createdAt: row.createdAt }
 }
