@@ -51,10 +51,24 @@ const DEERDEVIL_COMPLETE_THEME = {
     footerText: 'Inspired by the sensibility of A24',  // 랜딩 페이지 하단
   },
 
+  // Phase 1 타이포그래피/레이아웃
+  titleSize: 'lg',
+  titleWeight: 'bold',
+  letterSpacing: 'normal',
+  bodyLineHeight: 'relaxed',
+  contentWidth: 'normal',
+
+  // Phase 2 히어로/네비게이션
+  heroStyle: 'minimal',
+  navStyle: 'top',
+
   // 추가 시각 요소
   typingSpeed: 15,     // EpisodeViewer TypeWriter speed
   cardRadius: '8px',   // --radius-u-card
   navOpacity: 0.95,    // bg-u-bg/95
+
+  // 태그라인
+  tagline: 'Inspired by the sensibility of A24',
 }
 
 async function main() {
