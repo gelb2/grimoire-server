@@ -195,19 +195,93 @@ npx prisma migrate resolve --applied {마이그레이션_이름}
 
 ---
 
-## 8. 롤백
+## 8. 마이그레이션 변경 이력 문서화
 
-Prisma는 자동 롤백을 지원하지 않는다. 롤백이 필요하면:
+> 마이그레이션 파일(`prisma/migrations/`)은 git이 관리하지만, **왜 변경했는지**는 코드에 남지 않는다.
+> 아래 규칙으로 의도를 함께 기록한다.
 
-1. 역방향 마이그레이션을 새로 생성한다 (예: 컬럼 추가 → 컬럼 삭제)
-2. `prisma migrate dev --name rollback_{원래_마이그레이션명}`
-3. 일반 마이그레이션과 동일하게 배포
+### 규칙
 
-> production 롤백은 반드시 사용자 확인 후 진행한다.
+마이그레이션 생성 시 `CHANGELOG.md`에 다음 형식으로 항목을 추가한다:
+
+```markdown
+### DB 마이그레이션: {마이그레이션_이름}
+- **목적**: 변경 이유 (예: 에피소드 HWP 포맷 지원 추가)
+- **변경 내용**: 컬럼/테이블 추가·수정·삭제 요약
+- **롤백 방법**: 역방향 마이그레이션명 또는 "해당 없음"
+- **적용 환경**: localhost ✓ / development ✓ / inhouse ✓ / production ✓
+```
+
+### 예시
+
+```markdown
+### DB 마이그레이션: add_hwp_source_format
+- **목적**: HWP 원고 업로드 지원을 위해 source_format에 'hwp' 값 허용
+- **변경 내용**: episodes.source_format 컬럼 — check constraint 수정
+- **롤백 방법**: rollback_add_hwp_source_format (constraint 원복)
+- **적용 환경**: localhost ✓ / development ✓ / inhouse ✓ / production ✓
+```
 
 ---
 
-## 9. 관련 파일
+## 9. 롤백 가이드
+
+Prisma는 자동 롤백을 지원하지 않는다. 상황별 절차는 다음과 같다.
+
+### 케이스 1 — 마이그레이션이 아직 원격에 배포되지 않은 경우
+
+```bash
+# 로컬 DB에만 적용된 경우 → shadow DB 재생성으로 되돌리기
+npx prisma migrate reset   # 로컬 DB 초기화 후 처음부터 재적용
+# 주의: 로컬 데이터 전체 삭제됨
+```
+
+### 케이스 2 — 원격 DB에 이미 배포된 경우
+
+```bash
+# 1. 역방향 마이그레이션 생성
+#    예: 컬럼 추가 → 컬럼 삭제하는 SQL 작성
+npx prisma migrate dev --name rollback_{원래_마이그레이션명}
+
+# 2. 생성된 마이그레이션 파일 내용 확인 + 필요 시 수동 편집
+cat prisma/migrations/{timestamp}_rollback_{원래_마이그레이션명}/migration.sql
+
+# 3. 일반 배포와 동일하게 진행
+git add prisma/migrations/ && git commit -m "fix: {원래_마이그레이션명} 롤백"
+```
+
+### 케이스 3 — 프로덕션 긴급 롤백
+
+> **반드시 사용자 확인 후 진행.**
+
+```bash
+# 1. Azure DB 스냅샷 복원 (데이터 포함 완전 복원)
+#    Azure Portal → PostgreSQL Flexible Server → 복원
+#    또는:
+az postgres flexible-server restore \
+  --resource-group grimoire-rg \
+  --name grimoire-db-prod-restored \
+  --source-server grimoire-db-prod \
+  --restore-time "2026-01-01T12:00:00Z"
+
+# 2. 애플리케이션 코드도 해당 시점으로 revert
+git revert {마이그레이션_커밋_SHA}
+
+# 3. 배포 (main → 컨테이너 업데이트)
+```
+
+### 롤백 판단 기준
+
+| 상황 | 권장 방법 |
+|------|----------|
+| 로컬에서만 테스트 중 | `migrate reset` |
+| development/inhouse 환경 | 역방향 마이그레이션 생성 + 배포 |
+| production — 데이터 무결성 이상 없음 | 역방향 마이그레이션 생성 + 배포 |
+| production — 데이터 손상 발생 | Azure 스냅샷 복원 (사용자 확인 필수) |
+
+---
+
+## 10. 관련 파일
 
 | 파일 | 역할 |
 |------|------|
