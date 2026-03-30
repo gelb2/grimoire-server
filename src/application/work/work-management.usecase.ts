@@ -66,13 +66,16 @@ export class WorkManagementUseCase {
     const episodeCount = await this.workRepo.countEpisodesByWorkId(work.id)
     const orderNum = episodeCount + 1
 
-    // 포맷에 따라 블록 파싱 (rawContent → Block[])
-    const blocks = this.parseContentToBlocks(input.rawContent, input.sourceFormat)
+    // 포맷에 따라 블록 파싱 + frontmatter 메타 추출
+    const { blocks, meta } = this.parseContentWithMeta(input.rawContent, input.sourceFormat)
 
     return this.workRepo.createEpisode({
       workId: work.id,
-      slug: slug || `episode-${orderNum}`,
+      slug: meta?.slug || slug || `episode-${orderNum}`,
       title: input.title,
+      subtitle: meta?.subtitle,
+      description: meta?.description,
+      type: meta?.type,
       orderNum,
       blocks,
       rawMd: input.rawContent,
@@ -91,40 +94,42 @@ export class WorkManagementUseCase {
     await this.workRepo.deleteEpisode(episodeId)
   }
 
-  /** rawContent를 Block[]으로 변환 — 포맷에 따라 적절한 파서 선택 */
-  private parseContentToBlocks(rawContent: string, sourceFormat?: string): Block[] {
+  /** rawContent를 Block[]으로 변환 + frontmatter 메타 추출 */
+  private parseContentWithMeta(rawContent: string, sourceFormat?: string): { blocks: Block[]; meta?: { slug?: string; subtitle?: string; description?: string; type?: string } } {
     const format = sourceFormat || this.detectFormat(rawContent)
 
     if (format === 'html') {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { parseHtml } = require('../../lib/html-parser')
       const { blocks } = parseHtml(rawContent)
-      return blocks
+      return { blocks }
     }
 
     if (format === 'txt') {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { parseTxt } = require('../../lib/txt-parser')
       const { blocks } = parseTxt(rawContent)
-      return blocks
+      return { blocks }
     }
 
     // markdown (기본)
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mdParser = require('../../lib/md-parser')
 
-    // frontmatter 제거 후 본문 추출
+    // frontmatter 파싱 → 메타 + 본문 분리
     let body = rawContent
+    let meta: { slug?: string; subtitle?: string; description?: string; type?: string } | undefined
     try {
       const parsed = mdParser.parseFrontmatter(rawContent)
       body = parsed.body
+      meta = { slug: parsed.meta.slug, subtitle: parsed.meta.subtitle, description: parsed.meta.description, type: parsed.meta.type }
     } catch {
       const match = rawContent.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)$/)
       if (match) body = match[1]
     }
 
     const { blocks } = mdParser.parseEpisodeBlocks(body)
-    return blocks
+    return { blocks, meta }
   }
 
   /** 콘텐츠 포맷 자동 감지 */
