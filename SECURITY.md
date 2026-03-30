@@ -23,7 +23,8 @@
 ## 2. API 보안
 
 ### CORS
-- development: `http://localhost:3001`
+- localhost: `http://localhost:3001`
+- development: `https://dev.grimoire-book.com`
 - inhouse: `https://inhouse.grimoire-book.com`
 - production: `https://grimoire-book.com`
 - `*` 사용 절대 금지
