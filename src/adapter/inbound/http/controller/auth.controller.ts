@@ -46,6 +46,7 @@ export class AuthController {
         name: author.name,
         email: author.email,
         credits: author.credits,
+        role: author.role,
       },
     }
   }
@@ -62,6 +63,7 @@ export class AuthController {
         name: author.name,
         email: author.email,
         credits: author.credits,
+        role: author.role,
       },
     }
   }
@@ -77,6 +79,7 @@ export class AuthController {
         name: author.name,
         email: author.email,
         credits: author.credits,
+        role: author.role,
       },
     }
   }
@@ -98,6 +101,7 @@ export class AuthController {
       name: author.name,
       email: author.email,
       credits: author.credits,
+      role: author.role,
     }
   }
 }
