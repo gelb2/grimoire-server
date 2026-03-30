@@ -1,7 +1,7 @@
 -- 사슴악마 에피소드 description 백필
 -- 배포 후 1회 실행: psql 또는 Azure Query Editor에서 실행
 
-UPDATE episodes SET description = '전래동화 속 신수(神獸)의 눈으로 다시 읽는 선녀와 나무꾼. 날개옷은 가벼웠다 — 세상을 바꿔온 것들은 대부분 가볍다.' WHERE slug = 'ep1' AND work_id IN (SELECT id FROM works WHERE slug IN (SELECT slug FROM works w JOIN authors a ON w.author_id = a.id WHERE a.slug = 'deerdevil'));
+UPDATE episodes SET description = '전래동화 속 신수(神獸)의 눈으로 다시 읽는 선녀와 나무꾼. 날개옷은 가벼웠다 — 세상을 바꿔온 것들은 대부분 가볍다.' WHERE slug = 'ep1' AND work_id IN (SELECT w.id FROM works w JOIN authors a ON w.author_id = a.id WHERE a.slug = 'deerdevil');
 
 UPDATE episodes SET description = '야생의 여우 요괴에게 부잣집 막내딸 환생을 제안한 사슴악마. 결핍은 질문을 삼키고, 온돌의 따뜻함은 모든 것을 덮는다.' WHERE slug = 'ep2' AND work_id IN (SELECT id FROM works w JOIN authors a ON w.author_id = a.id WHERE a.slug = 'deerdevil');
 

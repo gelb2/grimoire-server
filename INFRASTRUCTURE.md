@@ -24,18 +24,22 @@
 
 | 환경 | Web URL | API URL | DB 서버 |
 |------|---------|---------|---------|
-| development | localhost:3001 | localhost:3000 | Docker/로컬 PostgreSQL |
+| localhost | localhost:3001 | localhost:3000 | Docker 로컬 PostgreSQL (localhost:5432) |
+| development | dev.grimoire-book.com | dev-api.grimoire-book.com | grimoire-db-dev |
 | inhouse | inhouse.grimoire-book.com | inhouse-api.grimoire-book.com | grimoire-db-inhouse |
 | production | grimoire-book.com | api.grimoire-book.com | grimoire-db-prod |
 
+> localhost는 Azure 리소스를 사용하지 않는다. `docker-compose up db`로 로컬 DB를 띄운다.
+
 ### 환경별 설정
 
-| 항목 | development | inhouse | production |
-|------|-------------|---------|------------|
-| Swagger | 활성화 | 활성화 | **비활성화** |
-| CORS | localhost:* | inhouse.grimoire-book.com | grimoire-book.com |
-| 로깅 | verbose | info | warn |
-| 마이그레이션 | 자동 | 자동 | RUN_MIGRATION=true 필요 |
+| 항목 | localhost | development | inhouse | production |
+|------|-----------|-------------|---------|------------|
+| Swagger | 활성화 | 활성화 | 활성화 | **비활성화** |
+| CORS | localhost:3001 | dev.grimoire-book.com | inhouse.grimoire-book.com | grimoire-book.com |
+| 로깅 | verbose | verbose | info | warn |
+| 마이그레이션 | 자동 | 자동 | 자동 | RUN_MIGRATION=true 필요 |
+| 데이터 관리 | 시드 1회 + 마이그레이션/API | 마이그레이션/API만 | 마이그레이션/API만 | 마이그레이션/API만 |
 
 상세 환경변수는 `docs/environments.md` 참조.
 
@@ -240,8 +244,10 @@ az postgres flexible-server firewall-rule delete \
 | 레코드 | 이름 | 대상 |
 |--------|------|------|
 | CNAME | grimoire-book.com | grimoire-web-prod.{FQDN} |
+| CNAME | dev.grimoire-book.com | grimoire-web-dev.{FQDN} |
 | CNAME | inhouse.grimoire-book.com | grimoire-web-inhouse.{FQDN} |
 | CNAME | api.grimoire-book.com | grimoire-server-prod.{FQDN} |
+| CNAME | dev-api.grimoire-book.com | grimoire-server-dev.{FQDN} |
 | CNAME | inhouse-api.grimoire-book.com | grimoire-server-inhouse.{FQDN} |
 
 > FQDN은 Azure Container Apps 생성 후 확인 가능:
