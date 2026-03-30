@@ -20,6 +20,9 @@ const MD_DIR = join(__dirname, '../../grimoire-web/DeerDevil_MDfiles')
 
 // ── 헬퍼 ──────────────────────────────────────────────
 
+// 쿠키 저장소 — 서버가 Set-Cookie로 토큰을 전달하므로 캡처하여 재사용
+let savedCookie = ''
+
 async function request<T>(
   path: string,
   options?: RequestInit & { token?: string },
@@ -27,13 +30,21 @@ async function request<T>(
   const { token, ...rest } = options ?? {}
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(token ? { Cookie: `grimoire_token=${token}` } : {}),
+    ...(savedCookie && !token ? { Cookie: savedCookie } : {}),
   }
 
   const url = `${API_BASE}${path}`
   console.log(`  → ${rest.method ?? 'GET'} ${url}`)
 
   const res = await fetch(url, { ...rest, headers })
+
+  // Set-Cookie 헤더에서 토큰 캡처
+  const setCookie = res.headers.get('set-cookie')
+  if (setCookie) {
+    const match = setCookie.match(/grimoire_token=([^;]+)/)
+    if (match) savedCookie = `grimoire_token=${match[1]}`
+  }
 
   if (!res.ok) {
     const body = await res.text()
@@ -106,11 +117,10 @@ async function main() {
   console.log(`API: ${API_BASE}`)
   console.log(`MD 폴더: ${MD_DIR}\n`)
 
-  // 1. 작가 등록
+  // 1. 작가 등록 (쿠키는 savedCookie에 자동 저장됨)
   console.log('[1/4] 작가 등록...')
-  let token: string
   try {
-    const registerRes = await request<{ user: any; token: string }>('/auth/register', {
+    const registerRes = await request<{ user: any }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({
         email: 'deerdevil@grimoire.app',
@@ -119,20 +129,18 @@ async function main() {
         slug: 'deerdevil',
       }),
     })
-    token = registerRes.token
     console.log(`  ✓ 작가 등록 완료 (id: ${registerRes.user?.id ?? 'unknown'})\n`)
   } catch (err: any) {
     // 이미 등록된 경우 로그인 시도
     console.log(`  ⚠ 등록 실패 (이미 존재할 수 있음): ${err.message}`)
     console.log('  → 로그인으로 전환...')
-    const loginRes = await request<{ user: any; token: string }>('/auth/login', {
+    await request<{ user: any }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({
         email: 'deerdevil@grimoire.app',
         password: 'REMOVED_CREDENTIAL_013',
       }),
     })
-    token = loginRes.token
     console.log(`  ✓ 로그인 완료\n`)
   }
 
@@ -142,7 +150,7 @@ async function main() {
   try {
     const workRes = await request<{ id: string }>('/works', {
       method: 'POST',
-      token,
+
       body: JSON.stringify({
         title: '사슴악마',
         slug: 'deerdevil',
@@ -193,7 +201,7 @@ async function main() {
     try {
       const res = await request<{ id: string }>(`/works/${workId}/episodes`, {
         method: 'POST',
-        token,
+  
         body: JSON.stringify({
           title: ep.title,
           rawContent: ep.fullContent,

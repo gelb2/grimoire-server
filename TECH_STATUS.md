@@ -90,7 +90,8 @@
 
 | 환경 | 상태 | URL |
 |------|------|-----|
-| development | 배포 완료 | localhost:3000 / Azure Container Apps |
+| localhost | 로컬 개발 | localhost:3000 (Docker DB) |
+| development | 배포 완료 | dev-api.grimoire-book.com |
 | inhouse | 배포 완료 | inhouse-api.grimoire-book.com |
 | production | 배포 완료 | api.grimoire-book.com |
 
