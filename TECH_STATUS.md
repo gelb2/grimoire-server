@@ -113,6 +113,7 @@
 
 ## 5. 참조 문서
 
+- 루트 `SYNC_STATUS.md` — 서버-웹 연결 현황 + 갭 (정본)
 - `docs/environments.md` — 빌드 환경 (정본)
 - `docs/api-contract.md` — API 엔드포인트 명세 (정본)
 - `TODO.md` — 남은 작업
