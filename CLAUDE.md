@@ -40,7 +40,7 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 ### 문서 동기화 체크리스트 (커밋 전 확인)
 
 - Controller에 엔드포인트 추가/삭제 → `docs/api-contract.md` 업데이트
-- Prisma 스키마 변경 → `docs/data-model.md` + `SCHEMA.md` 업데이트
+- Prisma 스키마 변경 → `docs/data-model.md` + `SCHEMA.md` 업데이트 (절차: `MIGRATION.md` 참조)
 - 환경변수/배포 변경 → `docs/environments.md` + `INFRASTRUCTURE.md` 업데이트
 - 용어 추가 → `docs/glossary.md` 업데이트
 - 아키텍처 결정 변경 (트랜잭션, 동시성, 캐싱 등) → `ADR.md` 업데이트
