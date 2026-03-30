@@ -16,6 +16,7 @@ export interface WorkRepositoryPort {
     slug: string
     title: string
     subtitle?: string
+    description?: string
     type?: string
     orderNum: number
     blocks: Block[]
