@@ -7,7 +7,13 @@ import { validateEnv } from '@infrastructure/config/env.validation'
 async function bootstrap() {
   validateEnv()
 
-  const app = await NestFactory.create(AppModule)
+  const app = await NestFactory.create(AppModule, {
+    bodyParser: true,
+  })
+
+  // JSON body 크기 제한 확대 (장편소설 원고 업로드 대응)
+  app.use(require('express').json({ limit: '2mb' }))
+  app.use(require('express').urlencoded({ extended: true, limit: '2mb' }))
 
   app.use(cookieParser())
   app.setGlobalPrefix('api')
