@@ -26,8 +26,9 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 | 6 | `SCHEMA.md` | Prisma 스키마 구현 상세 |
 | 7 | `INFRASTRUCTURE.md` | Azure 인프라 구성 |
 | 8 | `SECURITY.md` | 보안 정책 + 배포 전 체크리스트 |
-| 9 | `TECH_STATUS.md` | 현재 구현 상태 + 배포 현황 |
-| 10 | `TESTING.md` | 테스트 전략 |
+| 9 | `MIGRATION.md` | 마이그레이션 규칙 + 롤백 가이드 |
+| 10 | `TECH_STATUS.md` | 현재 구현 상태 + 배포 현황 |
+| 11 | `TESTING.md` | 테스트 전략 |
 
 ---
 
