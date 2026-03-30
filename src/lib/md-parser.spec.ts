@@ -79,11 +79,16 @@ type: 'episode'
       expect(blocks).toEqual([{ type: 'chapter', title: '막간: 어둠의 숲' }])
     })
 
-    it('### 9. 에필로그를 chapter 블록으로 변환한다 (번호 우선)', () => {
+    it('### 9. 에필로그를 epilogue 블록으로 변환한다 (번호+에필로그 조합)', () => {
       const { blocks } = parseEpisodeBlocks('### 9. 에필로그')
-      // 번호가 있으므로 chapter 패턴 매칭 (에필로그 키워드보다 번호 패턴이 우선)
-      // 실제로 "에필로그" 키워드 체크가 먼저이므로 epilogue로 처리됨
       expect(blocks[0].type).toBe('epilogue')
+    })
+
+    it('### 12. 에필로그: 새벽의 서류를 epilogue + 부제로 변환한다', () => {
+      const { blocks } = parseEpisodeBlocks('### 12. 에필로그: 새벽의 서류')
+      expect(blocks).toHaveLength(2)
+      expect(blocks[0]).toEqual({ type: 'epilogue' })
+      expect(blocks[1]).toEqual({ type: 'paragraph', text: '새벽의 서류' })
     })
 
     // ── 에필로그 ──
