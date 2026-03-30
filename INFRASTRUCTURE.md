@@ -9,7 +9,7 @@
 
 | 리소스 | 서비스 | 용도 |
 |--------|--------|------|
-| grimoire-rg | Resource Group | 전체 리소스 그룹 |
+| zenith-rg | Resource Group | 전체 리소스 그룹 |
 | grimoireacr | Azure Container Registry (Basic) | Docker 이미지 저장소 |
 | grimoire-db-{dev/inhouse/prod} | Azure Database for PostgreSQL Flexible (B1ms) | 데이터베이스 |
 | grimoire-env | Azure Container Apps Environment | 컨테이너 앱 환경 |
@@ -136,7 +136,7 @@ grimoireacr.azurecr.io/grimoire-web:{env}-latest
 az ad sp create-for-rbac \
   --name "grimoire-github-actions" \
   --role contributor \
-  --scopes /subscriptions/{SUBSCRIPTION_ID}/resourceGroups/grimoire-rg \
+  --scopes /subscriptions/{SUBSCRIPTION_ID}/resourceGroups/zenith-rg \
   --sdk-auth
 ```
 
@@ -157,7 +157,7 @@ docker build -t grimoireacr.azurecr.io/grimoire-server:dev-manual .
 docker push grimoireacr.azurecr.io/grimoire-server:dev-manual
 az containerapp update \
   --name grimoire-server-dev \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   --image grimoireacr.azurecr.io/grimoire-server:dev-manual
 ```
 
@@ -170,7 +170,7 @@ docker build \
 docker push grimoireacr.azurecr.io/grimoire-web:dev-manual
 az containerapp update \
   --name grimoire-web-dev \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   --image grimoireacr.azurecr.io/grimoire-web:dev-manual \
   --set-env-vars API_URL=https://grimoire-server-dev.{FQDN}/api
 ```
@@ -183,19 +183,19 @@ az containerapp update \
 # 실시간 로그 스트리밍
 az containerapp logs show \
   --name grimoire-server-dev \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   --follow
 
 # 최근 로그 조회
 az containerapp logs show \
   --name grimoire-server-dev \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   --tail 100
 
 # 리비전 목록
 az containerapp revision list \
   --name grimoire-server-dev \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   -o table
 ```
 
@@ -206,7 +206,7 @@ az containerapp revision list \
 ```bash
 # 로컬 IP에서 DB 접근 허용 (마이그레이션 실행 시)
 az postgres flexible-server firewall-rule create \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   --name grimoire-db-dev \
   --rule-name AllowMyIP \
   --start-ip-address {MY_IP} \
@@ -218,7 +218,7 @@ npx prisma migrate deploy
 
 # 방화벽 규칙 제거 (마이그레이션 완료 후)
 az postgres flexible-server firewall-rule delete \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   --name grimoire-db-dev \
   --rule-name AllowMyIP \
   --yes
@@ -254,7 +254,7 @@ az postgres flexible-server firewall-rule delete \
 
 > FQDN은 Azure Container Apps 생성 후 확인 가능:
 > ```bash
-> az containerapp show --name grimoire-server-prod --resource-group grimoire-rg --query "properties.configuration.ingress.fqdn" -o tsv
+> az containerapp show --name grimoire-server-prod --resource-group zenith-rg --query "properties.configuration.ingress.fqdn" -o tsv
 > ```
 
 ### SSL 설정
