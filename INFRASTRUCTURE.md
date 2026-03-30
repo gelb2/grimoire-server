@@ -7,16 +7,17 @@
 
 ## 1. Azure 리소스 구성
 
-| 리소스 | 서비스 | 용도 |
-|--------|--------|------|
-| zenith-rg | Resource Group | 전체 리소스 그룹 |
-| grimoireacr | Azure Container Registry (Basic) | Docker 이미지 저장소 |
-| grimoire-db-{dev/inhouse/prod} | Azure Database for PostgreSQL Flexible (B1ms) | 데이터베이스 |
-| grimoire-env | Azure Container Apps Environment | 컨테이너 앱 환경 |
-| grimoire-server-{dev/inhouse/prod} | Azure Container Apps | API 서버 |
-| grimoire-web-{dev/inhouse/prod} | Azure Container Apps | 웹 프론트엔드 |
+| 리소스 | 서비스 | 리소스그룹 | 용도 |
+|--------|--------|-----------|------|
+| grimoireacr | Azure Container Registry (Basic) | grimoire-rg | Docker 이미지 저장소 |
+| grimoire-db-{dev/inhouse/prod} | Azure Database for PostgreSQL Flexible (B1ms) | grimoire-rg | 데이터베이스 |
+| zenith-env-dev | Azure Container Apps Environment | zenith-rg | 컨테이너 앱 환경 (ProjectZenith 공유) |
+| grimoire-server-{dev/inhouse/prod} | Azure Container Apps | zenith-rg | API 서버 |
+| grimoire-web-{dev/inhouse/prod} | Azure Container Apps | zenith-rg | 웹 프론트엔드 |
 
 > 리전: **Korea Central**
+> ⚠️ 리소스그룹 2개 사용: `grimoire-rg` (DB, ACR) + `zenith-rg` (Container Apps, ProjectZenith과 공유)
+> GitHub Actions 워크플로우는 `zenith-rg`를 참조한다.
 
 ---
 
