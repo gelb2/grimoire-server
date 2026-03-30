@@ -74,6 +74,8 @@ docker build -t grimoire-server .
 
 ### 마이그레이션 제어
 
+> 마이그레이션 규칙 상세: `MIGRATION.md` 참조
+
 | 환경변수 | 값 | 동작 |
 |---------|-----|------|
 | SKIP_MIGRATION | true | 마이그레이션 완전 스킵 |

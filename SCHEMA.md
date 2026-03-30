@@ -226,3 +226,4 @@ Payment (authorId — FK 없음, 결제 기록)
 - `docs/data-model.md` — DB 스키마 정의 (공유 문서 정본)
 - `docs/theme-spec.md` — AuthorTheme JSON 스키마 (overrides 필드 형식)
 - `docs/glossary.md` — Block 타입, 크레딧 사유 코드 정의
+- `MIGRATION.md` — 스키마 변경 절차 + 마이그레이션 규칙
