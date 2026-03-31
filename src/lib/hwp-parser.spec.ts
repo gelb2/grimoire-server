@@ -217,7 +217,7 @@ describe('parseHwpx', () => {
     const result = await parseHwpx(buffer)
 
     expect(result.blocks).toHaveLength(3)
-    expect(result.blocks[1]).toEqual({ type: 'divider' })
+    expect(result.blocks[1]).toEqual({ type: 'separator' })
   })
 
   it('빈 문단은 무시한다', async () => {
