@@ -100,6 +100,9 @@ export class ThemeController {
   /** 작가 기본 테마 조회 (하위 호환) */
   @Get(':authorSlug')
   async findByAuthorSlug(@Param('authorSlug') authorSlug: string) {
-    return this.getTheme.execute(authorSlug)
+    const theme = await this.getTheme.execute(authorSlug)
+    // 내부 필드 제거 — authorId(내부 UUID) 미노출
+    const { authorId, ...safe } = theme as any
+    return safe
   }
 }
