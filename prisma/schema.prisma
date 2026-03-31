@@ -180,7 +180,7 @@ model Payment {
   productId     String    @map("product_id")
   amount        Int
   credits       Int
-  payappTradeNo String?   @unique @map("payapp_trade_no")
+  externalTransactionId String?   @unique @map("external_transaction_id")
   status        String    @default("pending")
   createdAt     DateTime  @default(now()) @map("created_at")
   completedAt   DateTime? @map("completed_at")

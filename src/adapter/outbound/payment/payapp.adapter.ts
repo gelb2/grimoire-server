@@ -11,15 +11,18 @@ import {
  * PAYAPP 결제 게이트웨이 어댑터
  * - 결제 요청: PAYAPP API에 POST 전송
  * - 웹훅 검증: HMAC-SHA256 서명 비교
+ * - 인증 정보(userId, apiKey, secret)는 어댑터가 자체 관리
  */
 @Injectable()
 export class PayappAdapter implements PaymentGatewayPort {
   private readonly userId: string
   private readonly apiKey: string
+  private readonly webhookSecret: string
 
   constructor() {
     this.userId = process.env.PAYAPP_USER_ID || ''
     this.apiKey = process.env.PAYAPP_API_KEY || ''
+    this.webhookSecret = process.env.PAYAPP_SECRET || ''
   }
 
   /** PAYAPP API에 결제 요청 전송 */
@@ -58,10 +61,17 @@ export class PayappAdapter implements PaymentGatewayPort {
     }
   }
 
-  /** HMAC-SHA256 서명 검증 */
-  verifyWebhookSignature(payload: WebhookPayload, secret: string): boolean {
+  /** HMAC-SHA256 서명 검증 — 시크릿은 어댑터가 자체 관리 */
+  verifyWebhookSignature(payload: WebhookPayload): boolean {
+    if (!this.webhookSecret) {
+      if (process.env.NODE_ENV === 'production') {
+        return false // 프로덕션에서 시크릿 미설정 시 모든 웹훅 거부
+      }
+      return true // 개발 환경에서는 시크릿 없으면 검증 스킵
+    }
+
     const message = `${payload.tradeNo}|${payload.amount}|${payload.status}`
-    const expectedSignature = createHmac('sha256', secret).update(message).digest('hex')
+    const expectedSignature = createHmac('sha256', this.webhookSecret).update(message).digest('hex')
     return expectedSignature === payload.signature
   }
 }

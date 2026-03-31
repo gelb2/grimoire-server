@@ -34,6 +34,14 @@ export class AuthorUseCase {
           subtitle: w.subtitle,
           description: w.description,
           episodeCount: episodes.length,
+          episodes: episodes.map((ep) => ({
+            slug: ep.slug,
+            title: ep.title,
+            subtitle: ep.subtitle ?? null,
+            description: ep.description ?? null,
+            type: ep.type ?? 'episode',
+            orderNum: ep.orderNum ?? null,
+          })),
         }
       }),
     )
@@ -60,6 +68,14 @@ export class AuthorUseCase {
           subtitle: w.subtitle,
           description: w.description,
           episodeCount: episodes.length,
+          episodes: episodes.map((ep) => ({
+            slug: ep.slug,
+            title: ep.title,
+            subtitle: ep.subtitle ?? null,
+            description: ep.description ?? null,
+            type: ep.type ?? 'episode',
+            orderNum: ep.orderNum ?? null,
+          })),
           viewCount: w.viewCount,
         }
       }),
