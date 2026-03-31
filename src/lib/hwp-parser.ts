@@ -118,7 +118,12 @@ function extractBlocksFromSectionXml(xml: string): Block[] {
     const trimmedText = fullText.trim()
 
     // 구분선 패턴 감지 (반복 문자: -, =, _, *, ·, ―, — 등)
-    if (/^[-=_*·―—]{3,}$/.test(trimmedText.replace(/\s/g, ''))) {
+    // MD 파서 기준: --- → separator, * * * → divider
+    if (/^[-=_―—]{3,}$/.test(trimmedText.replace(/\s/g, ''))) {
+      blocks.push({ type: 'separator' })
+      continue
+    }
+    if (/^[*·]{3,}$/.test(trimmedText.replace(/\s/g, ''))) {
       blocks.push({ type: 'divider' })
       continue
     }
@@ -145,6 +150,31 @@ function extractBlocksFromSectionXml(xml: string): Block[] {
       }
       continue
     }
+
+    // 마크다운 헤딩 패턴 감지 (HWP→마크다운 변환 시 # 포함될 수 있음)
+    if (trimmedText.startsWith('# ') && !trimmedText.startsWith('## ')) {
+      blocks.push({ type: 'heading-1', title: trimmedText.slice(2).trim() })
+      continue
+    }
+    if (trimmedText.startsWith('## ') && !trimmedText.startsWith('### ')) {
+      blocks.push({ type: 'heading-2', title: trimmedText.slice(3).trim() })
+      continue
+    }
+    if (trimmedText.startsWith('### ')) {
+      const chapterNumMatch = trimmedText.slice(4).trim().match(/^(\d+)\.\s+(.+)$/)
+      if (chapterNumMatch) {
+        blocks.push({ type: 'chapter', num: chapterNumMatch[1], title: chapterNumMatch[2] })
+      } else {
+        blocks.push({ type: 'chapter', title: trimmedText.slice(4).trim() })
+      }
+      continue
+    }
+
+    // 볼드/이탤릭 전용 문단 (MD 파서와 동일)
+    const boldMatch = trimmedText.match(/^\*\*([^*]+)\*\*$/)
+    if (boldMatch) { blocks.push({ type: 'bold', text: boldMatch[1] }); continue }
+    const italicMatch = trimmedText.match(/^\*([^*]+)\*$/)
+    if (italicMatch) { blocks.push({ type: 'italic', text: italicMatch[1] }); continue }
 
     // 일반 문단
     blocks.push({ type: 'paragraph', text: trimmedText })
