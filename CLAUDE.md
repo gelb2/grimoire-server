@@ -36,6 +36,7 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 | 9 | `MIGRATION.md` | 마이그레이션 규칙 + 롤백 가이드 |
 | 10 | `TECH_STATUS.md` | 현재 구현 상태 + 배포 현황 |
 | 11 | `TESTING.md` | 테스트 전략 |
+| 12 | `PARSER.md` | 파서 규격 정본 (Block 인터페이스, 파서별 역할) |
 | — | `docs/TECH_REVIEW_SEMANTIC_CACHING.md` | 시맨틱 캐싱 기술 리뷰 (참고) |
 | — | `docs/PAYMENT_RESEARCH.md` | 결제 솔루션 비교 (참고) |
 | — | `docs/CHAT_FEATURE_RESEARCH.md` | AI 챗 기능 연구 (참고) |
