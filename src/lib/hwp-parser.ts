@@ -102,14 +102,38 @@ function extractBlocksFromSectionXml(xml: string): Block[] {
   while ((pMatch = paragraphRegex.exec(xml)) !== null) {
     const paragraphContent = pMatch[1]
 
-    // 문단 내 모든 <hp:t> 텍스트 수집
+    // 문단 내 run 단위로 텍스트 + 서식 수집
+    // <hp:run>에 <hp:charPr bold="1"/> 또는 italic="1"이 있으면 마크다운 인라인으로 변환
     const textParts: string[] = []
-    const textRegex = /<hp:t\b[^>]*>([\s\S]*?)<\/hp:t>/g
-    let tMatch: RegExpExecArray | null
+    const runRegex = /<hp:run\b[^>]*>([\s\S]*?)<\/hp:run>/g
+    let runMatch: RegExpExecArray | null
 
-    while ((tMatch = textRegex.exec(paragraphContent)) !== null) {
-      const text = decodeXmlEntities(tMatch[1]).trim()
-      if (text) textParts.push(text)
+    while ((runMatch = runRegex.exec(paragraphContent)) !== null) {
+      const runContent = runMatch[1]
+      const isBold = /bold\s*=\s*["']1["']/i.test(runContent) || /<hp:charPr[^>]*bold/i.test(runContent)
+      const isItalic = /italic\s*=\s*["']1["']/i.test(runContent) || /<hp:charPr[^>]*italic/i.test(runContent)
+
+      const tRegex = /<hp:t\b[^>]*>([\s\S]*?)<\/hp:t>/g
+      let tMatch: RegExpExecArray | null
+      while ((tMatch = tRegex.exec(runContent)) !== null) {
+        let text = decodeXmlEntities(tMatch[1]).trim()
+        if (!text) continue
+        // 서식을 마크다운 인라인으로 변환
+        if (isBold && isItalic) text = `***${text}***`
+        else if (isBold) text = `**${text}**`
+        else if (isItalic) text = `*${text}*`
+        textParts.push(text)
+      }
+    }
+
+    // run이 없는 경우 (직접 <hp:t> 포함) 폴백
+    if (textParts.length === 0) {
+      const textRegex = /<hp:t\b[^>]*>([\s\S]*?)<\/hp:t>/g
+      let tMatch: RegExpExecArray | null
+      while ((tMatch = textRegex.exec(paragraphContent)) !== null) {
+        const text = decodeXmlEntities(tMatch[1]).trim()
+        if (text) textParts.push(text)
+      }
     }
 
     const fullText = textParts.join('')

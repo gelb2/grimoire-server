@@ -75,9 +75,13 @@ function htmlToBlocks(html: string): Block[] {
     if (pMatch) {
       const text = stripHtmlTags(pMatch[1]).trim()
       if (text) {
-        // 이탤릭 전용 문단 감지
-        if (/^<em>([\s\S]*?)<\/em>$/i.test(pMatch[1].trim())) {
-          blocks.push({ type: 'italic', text })
+        // 전체 줄 이탤릭/볼드 감지 (stripHtmlTags가 마크다운으로 변환한 후)
+        const italicFullLine = text.match(/^\*([^*]+)\*$/)
+        const boldFullLine = text.match(/^\*\*([^*]+)\*\*$/)
+        if (boldFullLine) {
+          blocks.push({ type: 'bold', text: boldFullLine[1] })
+        } else if (italicFullLine) {
+          blocks.push({ type: 'italic', text: italicFullLine[1] })
         } else {
           blocks.push({ type: 'paragraph', text })
         }
@@ -95,11 +99,25 @@ function htmlToBlocks(html: string): Block[] {
   return blocks
 }
 
-/** HTML 태그를 제거하고 텍스트만 추출 */
+/** HTML 서식을 마크다운 인라인 문법으로 변환한 뒤 나머지 태그 제거
+ *  <strong>볼드</strong> → **볼드**
+ *  <em>이탤릭</em> → *이탤릭*
+ *  서식 유실 방지: 반드시 마크다운 변환 먼저, 태그 제거는 마지막 */
 function stripHtmlTags(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, '\n')
+    // 볼드+이탤릭 조합 (순서 중요: strong>em, em>strong 둘 다)
+    .replace(/<strong>\s*<em>([\s\S]*?)<\/em>\s*<\/strong>/gi, '***$1***')
+    .replace(/<em>\s*<strong>([\s\S]*?)<\/strong>\s*<\/em>/gi, '***$1***')
+    // 볼드
+    .replace(/<strong>([\s\S]*?)<\/strong>/gi, '**$1**')
+    .replace(/<b>([\s\S]*?)<\/b>/gi, '**$1**')
+    // 이탤릭
+    .replace(/<em>([\s\S]*?)<\/em>/gi, '*$1*')
+    .replace(/<i>([\s\S]*?)<\/i>/gi, '*$1*')
+    // 나머지 태그 제거
     .replace(/<[^>]+>/g, '')
+    // HTML 엔티티 디코딩
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
