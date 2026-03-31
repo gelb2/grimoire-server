@@ -22,16 +22,20 @@ subtitle: "숲속의 목격자"
       expect(body).toContain('# 선녀와 나무꾼')
     })
 
-    it('frontmatter가 없으면 에러를 던진다', () => {
-      expect(() => parseFrontmatter('no frontmatter')).toThrow('frontmatter가 없습니다')
+    it('frontmatter가 없으면 빈 메타데이터 + 전체를 body로 반환한다', () => {
+      const result = parseFrontmatter('no frontmatter')
+      expect(result.frontmatter.type).toBe('episode')
+      expect(result.body).toBe('no frontmatter')
     })
 
-    it('slug가 없으면 에러를 던진다', () => {
+    it('slug가 없으면 빈 slug로 기본값 적용한다', () => {
       const content = `---
 type: episode
 ---
 본문`
-      expect(() => parseFrontmatter(content)).toThrow('slug와 type은 필수')
+      const result = parseFrontmatter(content)
+      expect(result.frontmatter.slug).toBe('')
+      expect(result.frontmatter.type).toBe('episode')
     })
 
     it('따옴표를 제거한다', () => {

@@ -15,7 +15,11 @@ export function parseFrontmatter(content: string): {
 } {
   const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
   if (!match) {
-    throw new Error('frontmatter가 없습니다. ---로 감싸진 메타데이터를 추가하세요.')
+    // frontmatter 없는 일반 텍스트/마크다운 — 빈 메타데이터 + 전체를 body로 반환
+    return {
+      frontmatter: { slug: '', type: 'episode' } as unknown as Frontmatter,
+      body: content,
+    }
   }
 
   const meta: Record<string, string> = {}
@@ -30,9 +34,9 @@ export function parseFrontmatter(content: string): {
     meta[key] = val
   }
 
-  if (!meta.slug || !meta.type) {
-    throw new Error('frontmatter에 slug와 type은 필수입니다.')
-  }
+  // frontmatter가 있지만 slug/type이 없으면 기본값 적용
+  if (!meta.slug) meta.slug = ''
+  if (!meta.type) meta.type = 'episode'
 
   return {
     frontmatter: meta as unknown as Frontmatter,
