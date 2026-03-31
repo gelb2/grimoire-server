@@ -19,6 +19,9 @@ export class ContentController {
     @Param('workSlug') workSlug: string,
     @Param('episodeSlug') episodeSlug: string,
   ) {
-    return this.contentUseCase.getEpisode(authorSlug, workSlug, episodeSlug)
+    const episode = await this.contentUseCase.getEpisode(authorSlug, workSlug, episodeSlug)
+    // 내부 필드 제거 — rawMd(원본 마크다운), workId(내부 UUID) 미노출
+    const { rawMd, workId, ...safe } = episode as any
+    return safe
   }
 }

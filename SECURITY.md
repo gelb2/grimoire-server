@@ -161,8 +161,54 @@
 
 ---
 
-## 6. 참조 문서
+## 6. 보안 강화 TODO (제로 트러스트 로드맵)
+
+> 2026-03-31 보안 감사 + 경쟁사(한줄) 분석 기반. 우선순위 순.
+
+### 즉시 실행
+
+| 항목 | 현재 | 조치 |
+|------|------|------|
+| Source Map 프로덕션 비활성화 | 미확인 | `next.config`에서 `productionBrowserSourceMaps: false` 확인/설정 |
+| API 응답 필터링 | 미적용 | 내부 ID, 시스템 메타데이터가 응답에 불필요하게 노출되는지 점검 |
+| CORS origin 폴백 | `localhost:3001` | 환경변수 미설정 시 에러로 차단 (폴백 제거) |
+
+### 결제/티어 도입 시
+
+| 항목 | 설명 |
+|------|------|
+| 구독 티어 서버 사이드 검증 | 클라이언트가 보내는 요청을 DB 기반 티어로 교차 검증. 권한 밖 요청 403 차단 |
+| AI 모델 접근 제어 | 티어별 사용 가능 모델 제한 (현재는 서버가 모델을 결정하므로 공격 벡터 없음) |
+
+### 트래픽 증가 시
+
+| 항목 | 설명 |
+|------|------|
+| Rate Limiting IP 기반 강화 | 현재 단순 Throttle → 프록시 뒤 IP 식별 (X-Forwarded-For) 추가 |
+| 크레딧 동시성 | optimistic locking 적용 (동시 좋아요/크레딧 차감 경합 방지) |
+| WAF | Cloudflare WAF 유료 플랜 또는 Azure WAF 검토 |
+
+### 이미 적용된 항목 (확인 완료)
+
+| 항목 | 상태 |
+|------|------|
+| HttpOnly + Secure + SameSite=Strict Cookie | ✅ 처음부터 적용 |
+| LocalStorage 토큰 저장 금지 | ✅ |
+| JwtAuthGuard 전 mutation 적용 | ✅ |
+| AdminGuard 관리자 엔드포인트 | ✅ |
+| 소유권 검증 (자기 리소스만 수정/삭제) | ✅ |
+| ValidationPipe + class-validator | ✅ |
+| BFF 패턴 (API_URL 클라이언트 미노출) | ✅ |
+| NEXT_PUBLIC_ 최소화 (APP_ENV, GOOGLE_CLIENT_ID만) | ✅ |
+| Cloudflare DDoS 방어 + Proxy | ✅ |
+| Rate Limiting 전 엔드포인트 | ✅ |
+| DB 방화벽 Azure 서비스만 허용 | ✅ |
+
+---
+
+## 7. 참조 문서
 
 - `INFRASTRUCTURE.md` — Azure 리소스 구성
 - `docs/environments.md` — 환경별 설정 (정본)
 - 루트 `CLAUDE.md` §11 — 전수검사 체크리스트
+- 루트 `RESEARCH_HANLINE_API.md` — 경쟁사 한줄 API/보안 분석 (git 미추적)

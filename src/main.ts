@@ -26,8 +26,14 @@ async function bootstrap() {
     }),
   )
 
+  // CORS: 환경변수 필수. 미설정 시 localhost 폴백 (prod에서 실수 방지)
+  const corsOrigin = process.env.CORS_ORIGIN
+  if (!corsOrigin && process.env.NODE_ENV === 'production') {
+    console.error('FATAL: CORS_ORIGIN 환경변수가 설정되지 않았습니다.')
+    process.exit(1)
+  }
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3001',
+    origin: corsOrigin || 'http://localhost:3001',
     credentials: true,
   })
 
