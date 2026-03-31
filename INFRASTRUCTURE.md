@@ -40,6 +40,7 @@
 | 로깅 | verbose | verbose | info | warn |
 | 마이그레이션 | 자동 | 자동 | 자동 | RUN_MIGRATION=true 필요 |
 | 데이터 관리 | 시드 1회 + 마이그레이션/API | 마이그레이션/API만 | 마이그레이션/API만 | 마이그레이션/API만 |
+| minReplicas | - | **1** | **1** | **1** |
 
 상세 환경변수는 `docs/environments.md` 참조.
 
