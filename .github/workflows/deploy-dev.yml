@@ -57,3 +57,15 @@ jobs:
             --resource-group zenith-rg \
             --image grimoireacr.azurecr.io/grimoire-server:dev-${{ github.sha }} \
             -o none
+
+      # 오래된 이미지 정리 (환경별 최근 5개만 유지, Basic SKU 호환)
+      - name: Purge old images
+        run: |
+          TAGS=$(az acr repository show-tags --name grimoireacr --repository grimoire-server --orderby time_asc --query "[?starts_with(@, 'dev-')]" -o tsv)
+          TOTAL=$(echo "$TAGS" | wc -l)
+          DELETE=$((TOTAL - 5))
+          if [ "$DELETE" -gt 0 ]; then
+            echo "$TAGS" | head -n $DELETE | while read TAG; do
+              az acr repository delete --name grimoireacr --image "grimoire-server:$TAG" --yes 2>/dev/null || true
+            done
+          fi
