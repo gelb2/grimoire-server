@@ -86,8 +86,31 @@ interface Block {
 
 ---
 
-## 5. 참조
+## 5. BlockType 중앙 레지스트리
 
-- `src/domain/model/block.ts` — Block 인터페이스 정의
+- **정본:** `src/domain/model/block.ts` — `BLOCK_TYPES` const + `BlockType` union
+- **복사본:** `grimoire-web/src/features/reader/data/index.ts` — `BlockType` union (서버와 동기화)
+- 새 타입 추가 시: 서버 정본 → 웹 복사 → ChapterBlock case 추가 → 이 문서 업데이트
+
+## 6. 정규화 레이어
+
+**파일:** `src/lib/block-normalizer.ts`
+
+모든 파서 출력은 DB 저장 전에 `normalizeBlocks()`를 거친다.
+
+| 상황 | 처리 |
+|------|------|
+| 블록 타입이 BLOCK_TYPES에 없음 | `paragraph`로 폴백 (텍스트 보존) |
+| heading 블록에 title 없고 text만 있음 | text → title로 이동 |
+| 빈 블록 (내용 없음) | 제거 |
+| children 내부 블록 | 재귀 정규화 |
+
+적용 위치: `WorkManagementUseCase.parseContentWithMeta()` 반환 직전.
+
+## 7. 참조
+
+- `src/domain/model/block.ts` — BlockType 중앙 레지스트리 (정본)
+- `src/lib/block-normalizer.ts` — 정규화 레이어
+- `grimoire-web/src/features/reader/data/index.ts` — BlockType (복사본)
 - `grimoire-web/src/features/reader/ui/ChapterBlock.tsx` — 렌더링 컴포넌트
 - `grimoire-web/src/features/reader/ui/ChapterBlock.tsx:parseInlineText` — 인라인 서식 변환
