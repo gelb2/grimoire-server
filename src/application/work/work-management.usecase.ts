@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, ForbiddenException } from '@nestjs/common'
+import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
 import { Work, Episode } from '@domain/model/work'
@@ -66,7 +66,13 @@ export class WorkManagementUseCase {
     const episodeCount = await this.workRepo.countEpisodesByWorkId(work.id)
     const orderNum = episodeCount + 1
 
-    // 포맷에 따라 블록 파싱 + frontmatter 메타 추출
+    // sourceFormat 검증
+    const allowedFormats = ['md', 'markdown', 'txt', 'html', 'docx', 'hwp', 'hwpx']
+    if (input.sourceFormat && !allowedFormats.includes(input.sourceFormat)) {
+      throw new BadRequestException(`지원하지 않는 포맷: ${input.sourceFormat}`)
+    }
+
+    // 포맷에 따라 블록 파싱 + frontmatter 메타 추출 + 정규화
     const { blocks, meta } = this.parseContentWithMeta(input.rawContent, input.sourceFormat)
 
     return this.workRepo.createEpisode({
@@ -98,18 +104,21 @@ export class WorkManagementUseCase {
   private parseContentWithMeta(rawContent: string, sourceFormat?: string): { blocks: Block[]; meta?: { slug?: string; subtitle?: string; description?: string; type?: string } } {
     const format = sourceFormat || this.detectFormat(rawContent)
 
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { normalizeBlocks } = require('../../lib/block-normalizer')
+
     if (format === 'html') {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { parseHtml } = require('../../lib/html-parser')
       const { blocks } = parseHtml(rawContent)
-      return { blocks }
+      return { blocks: normalizeBlocks(blocks) }
     }
 
     if (format === 'txt') {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { parseTxt } = require('../../lib/txt-parser')
       const { blocks } = parseTxt(rawContent)
-      return { blocks }
+      return { blocks: normalizeBlocks(blocks) }
     }
 
     // markdown (기본)
@@ -129,7 +138,7 @@ export class WorkManagementUseCase {
     }
 
     const { blocks } = mdParser.parseEpisodeBlocks(body)
-    return { blocks, meta }
+    return { blocks: normalizeBlocks(blocks), meta }
   }
 
   /** 콘텐츠 포맷 자동 감지 */
