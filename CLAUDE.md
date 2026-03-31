@@ -54,6 +54,7 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 - Prisma 스키마 변경 → `docs/data-model.md` + `SCHEMA.md` 업데이트 (절차: `MIGRATION.md` 참조)
 - 서버 API 추가/변경 → 루트 `SYNC_STATUS.md` 업데이트
 - 환경변수/배포 변경 → `docs/environments.md` + `INFRASTRUCTURE.md` 업데이트
+- **Azure 인프라 설정 변경** (replicas, SKU, 스토리지, 방화벽 등) → `INFRASTRUCTURE.md` §9 설정값 표 업데이트 (같은 커밋)
 - 용어 추가 → `docs/glossary.md` 업데이트
 - 아키텍처 결정 변경 (트랜잭션, 동시성, 캐싱 등) → `ADR.md` 업데이트
 
