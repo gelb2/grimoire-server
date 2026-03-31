@@ -41,17 +41,32 @@ function htmlToBlocks(html: string): Block[] {
     const trimmed = line.trim()
     if (!trimmed) continue
 
-    // <hr> 구분선
+    // <hr> 구분선 → MD 파서의 --- (separator)와 동일
     if (/^<hr\s*\/?>$/i.test(trimmed)) {
-      blocks.push({ type: 'divider' })
+      blocks.push({ type: 'separator' })
       continue
     }
 
-    // <h1>~<h6> 제목 -> chapter 블록
-    const headingMatch = trimmed.match(/^<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i)
+    // <h1>~<h6> 제목 → MD 파서와 동일한 블록 타입으로 변환
+    const headingMatch = trimmed.match(/^<h([1-6])[^>]*>([\s\S]*?)<\/h[1-6]>/i)
     if (headingMatch) {
-      const text = stripHtmlTags(headingMatch[1]).trim()
-      if (text) blocks.push({ type: 'chapter', text })
+      const level = parseInt(headingMatch[1], 10)
+      const headingTitle = stripHtmlTags(headingMatch[2]).trim()
+      if (headingTitle) {
+        if (level === 1) {
+          blocks.push({ type: 'heading-1', title: headingTitle })
+        } else if (level === 2) {
+          blocks.push({ type: 'heading-2', title: headingTitle })
+        } else {
+          // h3 이하 → chapter (MD 파서의 ### 처리와 동일)
+          const chapterNumMatch = headingTitle.match(/^(\d+)\.\s+(.+)$/)
+          if (chapterNumMatch) {
+            blocks.push({ type: 'chapter', num: chapterNumMatch[1], title: chapterNumMatch[2] })
+          } else {
+            blocks.push({ type: 'chapter', title: headingTitle })
+          }
+        }
+      }
       continue
     }
 
