@@ -1,5 +1,41 @@
 # Changelog — grimoire-server
 
+## [0.12.0] - 2026-03-31
+
+### 고전문학 전문 백필 + body limit + 배포 복구
+
+#### Added
+- 고전문학 전문 백필: 위키문헌 API → 단편소설 30건 + 이광수 재생 20편(371K자) + 채만식 냉동어(86K자)
+- JSON body 크기 제한 2MB 확대 (장편소설 에피소드 업로드 대응, `src/main.ts`)
+- 연구문서 3건 `docs/`로 이동 (TECH_REVIEW_SEMANTIC_CACHING, PAYMENT_RESEARCH, CHAT_FEATURE_RESEARCH)
+- CLAUDE.md에 연구문서 참조 추가
+
+#### Fixed
+- GitHub Actions 리소스그룹 `grimoire-rg` → `zenith-rg` 복원 (전 환경 배포 실패 수정)
+- INFRASTRUCTURE.md 리소스그룹명 일괄 수정
+
+#### Removed
+- 위키문헌 전문 없는 작품 11건 삭제 (이광수 7 + 채만식 3 + 나도향 1)
+
+#### Deployment
+- dev → inhouse → prod 순차 배포 완료 (각 단계 성공 확인 후 진행)
+
+---
+
+## [0.11.0] - 2026-03-30
+
+### AI 프롬프트 확장 + 프리셋 시드 + 배포 완료
+
+#### Added
+- AI 테마 프롬프트 Phase 1/2 파라미터 해석 지침 추가 (타이포그래피 + 레이아웃 프리셋)
+- seed-theme-presets.ts — 사슴악마 8개 프리셋 시드 스크립트
+- db-sync.ts — prod → inhouse → dev DB 동기화 스크립트
+
+#### Deployment
+- inhouse → main 머지 완료
+- grimoire-server-prod, grimoire-server-inhouse Docker 이미지 재빌드/배포
+
+---
 ## [0.10.0] - 2026-03-28
 
 ### 크레딧 선물 + 테마 수정 API + HTML 파서

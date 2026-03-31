@@ -12,6 +12,13 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 
 현재 구현 현황은 `TECH_STATUS.md` 참조.
 
+### Azure 절대 규칙
+
+- 리소스그룹: **`zenith-rg` 1개만 사용** (모든 Azure 리소스가 여기에 있음)
+- 새 리소스그룹 생성 **절대 금지**
+- 리소스그룹명이 불확실하면: `az resource list --resource-group zenith-rg -o table`
+- GitHub Actions 워크플로우: `--resource-group zenith-rg` 고정
+
 ---
 
 ## 2. 필수 참조 문서 (읽는 순서)
