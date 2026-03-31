@@ -1,5 +1,5 @@
 import { WorkManagementUseCase } from './work-management.usecase'
-import { NotFoundException, ForbiddenException } from '@nestjs/common'
+import { NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
 
 describe('WorkManagementUseCase', () => {
   let useCase: WorkManagementUseCase
@@ -28,6 +28,9 @@ describe('WorkManagementUseCase', () => {
     orderNum: 1,
     blocks: [],
     rawMd: '본문',
+    status: 'upload',
+    sharedToken: null,
+    sharedExpireAt: null,
     createdAt: new Date(),
   }
 
@@ -46,6 +49,9 @@ describe('WorkManagementUseCase', () => {
       deleteEpisode: jest.fn(),
       countByAuthorId: jest.fn(),
       countEpisodesByWorkId: jest.fn(),
+      updateEpisodeStatus: jest.fn(),
+      findBySharedToken: jest.fn(),
+      findEpisodesFiltered: jest.fn(),
     }
     const mockBlobStorage = { isEnabled: false, uploadImage: jest.fn(), deleteImage: jest.fn() } as any
     useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage)
@@ -227,6 +233,92 @@ title: "테스트"
       await expect(
         useCase.deleteEpisode('author-1', 'ep-1'),
       ).rejects.toThrow(ForbiddenException)
+    })
+  })
+
+  describe('updateEpisodeStatus', () => {
+    it('작가가 에피소드 상태를 변경한다', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.updateEpisodeStatus.mockResolvedValue({ ...mockEpisode, status: 'public' })
+
+      const result = await useCase.updateEpisodeStatus('author-1', 'ep-1', 'public')
+      expect(result.status).toBe('public')
+      expect(mockWorkRepo.updateEpisodeStatus).toHaveBeenCalledWith('ep-1', 'public', undefined, undefined)
+    })
+
+    it('shared 상태로 직접 변경 불가', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+
+      await expect(
+        useCase.updateEpisodeStatus('author-1', 'ep-1', 'shared'),
+      ).rejects.toThrow(BadRequestException)
+    })
+
+    it('shared → public 변경 시 토큰 초기화', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue({ ...mockEpisode, status: 'shared', sharedToken: 'abc' })
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.updateEpisodeStatus.mockResolvedValue({ ...mockEpisode, status: 'public', sharedToken: null })
+
+      await useCase.updateEpisodeStatus('author-1', 'ep-1', 'public')
+      expect(mockWorkRepo.updateEpisodeStatus).toHaveBeenCalledWith('ep-1', 'public', null, null)
+    })
+
+    it('소유자가 아니면 ForbiddenException', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+
+      await expect(
+        useCase.updateEpisodeStatus('other-author', 'ep-1', 'public'),
+      ).rejects.toThrow(ForbiddenException)
+    })
+  })
+
+  describe('createShareLink', () => {
+    it('공유 링크를 생성한다', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.updateEpisodeStatus.mockResolvedValue({ ...mockEpisode, status: 'shared' })
+
+      const result = await useCase.createShareLink('author-1', 'ep-1', '24h')
+
+      expect(result.sharedToken).toBeDefined()
+      expect(result.sharedToken.length).toBe(48) // 24 bytes hex
+      expect(result.expireAt).toBeInstanceOf(Date)
+      expect(result.sharedUrl).toContain('/shared/')
+    })
+
+    it('만료 없는 공유 링크', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.updateEpisodeStatus.mockResolvedValue({ ...mockEpisode, status: 'shared' })
+
+      const result = await useCase.createShareLink('author-1', 'ep-1', 'never')
+      expect(result.expireAt).toBeNull()
+    })
+  })
+
+  describe('getEpisodeBySharedToken', () => {
+    it('유효한 공유 토큰으로 에피소드 반환', async () => {
+      const sharedEpisode = { ...mockEpisode, status: 'shared', sharedToken: 'abc', sharedExpireAt: new Date(Date.now() + 86400000) }
+      mockWorkRepo.findBySharedToken.mockResolvedValue(sharedEpisode)
+
+      const result = await useCase.getEpisodeBySharedToken('abc')
+      expect(result.id).toBe('ep-1')
+    })
+
+    it('만료된 공유 토큰 → ForbiddenException', async () => {
+      const expired = { ...mockEpisode, status: 'shared', sharedToken: 'abc', sharedExpireAt: new Date(Date.now() - 1000) }
+      mockWorkRepo.findBySharedToken.mockResolvedValue(expired)
+
+      await expect(useCase.getEpisodeBySharedToken('abc')).rejects.toThrow(ForbiddenException)
+    })
+
+    it('존재하지 않는 토큰 → NotFoundException', async () => {
+      mockWorkRepo.findBySharedToken.mockResolvedValue(null)
+
+      await expect(useCase.getEpisodeBySharedToken('no-token')).rejects.toThrow(NotFoundException)
     })
   })
 })

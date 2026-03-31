@@ -1,5 +1,8 @@
 import { Block } from './block'
 
+/** 에피소드 상태값: upload(업로드만)/public(공개)/nonPublic(비공개)/shared(공유링크) */
+export type EpisodeStatus = 'upload' | 'public' | 'nonPublic' | 'shared'
+
 export interface Work {
   id: string
   authorId: string
@@ -31,6 +34,9 @@ export interface Episode {
   orderNum: number
   blocks: Block[]
   rawMd: string
+  status: EpisodeStatus
+  sharedToken: string | null
+  sharedExpireAt: Date | null
   createdAt: Date
 }
 
@@ -42,6 +48,7 @@ export interface EpisodeSummary {
   description: string | null
   type: string
   orderNum: number
+  status: EpisodeStatus
 }
 
 export interface WorkDetail {

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
-import { Work, Episode, EpisodeSummary, WorkWithMeta } from '@domain/model/work'
+import { Work, Episode, EpisodeSummary, WorkWithMeta, EpisodeStatus } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 
 @Injectable()
@@ -36,9 +36,9 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     const rows = await this.prisma.episode.findMany({
       where: { workId },
       orderBy: { orderNum: 'asc' },
-      select: { id: true, slug: true, title: true, subtitle: true, description: true, type: true, orderNum: true },
+      select: { id: true, slug: true, title: true, subtitle: true, description: true, type: true, orderNum: true, status: true },
     })
-    return rows
+    return rows.map((r) => ({ ...r, status: r.status as EpisodeStatus }))
   }
 
   async findEpisodeById(id: string): Promise<Episode | null> {
@@ -220,6 +220,35 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
   async countAllEpisodes(): Promise<number> {
     return this.prisma.episode.count()
   }
+
+  async updateEpisodeStatus(id: string, status: EpisodeStatus, sharedToken?: string | null, sharedExpireAt?: Date | null): Promise<Episode> {
+    const row = await this.prisma.episode.update({
+      where: { id },
+      data: {
+        status,
+        sharedToken: sharedToken !== undefined ? sharedToken : undefined,
+        sharedExpireAt: sharedExpireAt !== undefined ? sharedExpireAt : undefined,
+      },
+    })
+    return toEpisodeDomain(row)
+  }
+
+  async findBySharedToken(token: string): Promise<Episode | null> {
+    const row = await this.prisma.episode.findUnique({ where: { sharedToken: token } })
+    return row ? toEpisodeDomain(row) : null
+  }
+
+  async findEpisodesFiltered(workId: string, excludeStatuses?: EpisodeStatus[]): Promise<EpisodeSummary[]> {
+    const rows = await this.prisma.episode.findMany({
+      where: {
+        workId,
+        ...(excludeStatuses?.length ? { status: { notIn: excludeStatuses } } : {}),
+      },
+      orderBy: { orderNum: 'asc' },
+      select: { id: true, slug: true, title: true, subtitle: true, description: true, type: true, orderNum: true, status: true },
+    })
+    return rows.map((r) => ({ ...r, status: r.status as EpisodeStatus }))
+  }
 }
 
 function toWorkDomain(row: {
@@ -231,7 +260,8 @@ function toWorkDomain(row: {
 
 function toEpisodeDomain(row: {
   id: string; workId: string; slug: string; title: string;
-  subtitle: string | null; description: string | null; type: string; orderNum: number; blocks: unknown; rawMd: string; createdAt: Date
+  subtitle: string | null; description: string | null; type: string; orderNum: number; blocks: unknown; rawMd: string;
+  status: string; sharedToken: string | null; sharedExpireAt: Date | null; createdAt: Date
 }): Episode {
-  return { id: row.id, workId: row.workId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, type: row.type, orderNum: row.orderNum, blocks: row.blocks as Block[], rawMd: row.rawMd, createdAt: row.createdAt }
+  return { id: row.id, workId: row.workId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, type: row.type, orderNum: row.orderNum, blocks: row.blocks as Block[], rawMd: row.rawMd, status: row.status as EpisodeStatus, sharedToken: row.sharedToken, sharedExpireAt: row.sharedExpireAt, createdAt: row.createdAt }
 }
