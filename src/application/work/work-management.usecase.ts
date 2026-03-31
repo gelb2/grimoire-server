@@ -1,7 +1,8 @@
 import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
+import { randomBytes } from 'crypto'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
-import { Work, Episode } from '@domain/model/work'
+import { Work, Episode, EpisodeStatus } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 
 @Injectable()
@@ -98,6 +99,69 @@ export class WorkManagementUseCase {
     if (!work || work.authorId !== authorId) throw new ForbiddenException('에피소드 삭제 권한이 없습니다')
 
     await this.workRepo.deleteEpisode(episodeId)
+  }
+
+  /** 에피소드 상태 변경 (작가 소유권 검증) */
+  async updateEpisodeStatus(authorId: string, episodeId: string, status: EpisodeStatus): Promise<Episode> {
+    const episode = await this.workRepo.findEpisodeById(episodeId)
+    if (!episode) throw new NotFoundException('에피소드를 찾을 수 없습니다')
+
+    const work = await this.workRepo.findById(episode.workId)
+    if (!work || work.authorId !== authorId) throw new ForbiddenException('에피소드 수정 권한이 없습니다')
+
+    // shared 상태로 직접 변경 불가 — createShareLink 사용
+    if (status === 'shared') throw new BadRequestException('공유 링크 생성은 별도 API를 사용하세요')
+
+    // shared → 다른 상태로 변경 시 토큰 초기화
+    const clearToken = episode.status === 'shared'
+    return this.workRepo.updateEpisodeStatus(
+      episodeId,
+      status,
+      clearToken ? null : undefined,
+      clearToken ? null : undefined,
+    )
+  }
+
+  /** 공유 링크 생성 (작가 소유권 검증) */
+  async createShareLink(
+    authorId: string,
+    episodeId: string,
+    expireIn: '12h' | '24h' | '48h' | 'never',
+  ): Promise<{ sharedToken: string; sharedUrl: string; expireAt: Date | null }> {
+    const episode = await this.workRepo.findEpisodeById(episodeId)
+    if (!episode) throw new NotFoundException('에피소드를 찾을 수 없습니다')
+
+    const work = await this.workRepo.findById(episode.workId)
+    if (!work || work.authorId !== authorId) throw new ForbiddenException('공유 링크 생성 권한이 없습니다')
+
+    const sharedToken = randomBytes(24).toString('hex')
+
+    let expireAt: Date | null = null
+    if (expireIn !== 'never') {
+      const hours = parseInt(expireIn)
+      expireAt = new Date(Date.now() + hours * 60 * 60 * 1000)
+    }
+
+    await this.workRepo.updateEpisodeStatus(episodeId, 'shared', sharedToken, expireAt)
+
+    const baseUrl = process.env.CORS_ORIGIN || 'http://localhost:3001'
+    return {
+      sharedToken,
+      sharedUrl: `${baseUrl}/shared/${sharedToken}`,
+      expireAt,
+    }
+  }
+
+  /** 공유 토큰으로 에피소드 조회 (만료 체크) */
+  async getEpisodeBySharedToken(token: string): Promise<Episode> {
+    const episode = await this.workRepo.findBySharedToken(token)
+    if (!episode) throw new NotFoundException('공유 링크를 찾을 수 없습니다')
+
+    if (episode.sharedExpireAt && new Date() > episode.sharedExpireAt) {
+      throw new ForbiddenException('이 공유 링크는 만료되었습니다. 로그인 하십시오.')
+    }
+
+    return episode
   }
 
   /** rawContent를 Block[]으로 변환 + frontmatter 메타 추출 */

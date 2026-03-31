@@ -8,7 +8,7 @@ import { FileInterceptor } from '@nestjs/platform-express'
 import { Throttle } from '@nestjs/throttler'
 import { WorkManagementUseCase } from '@application/work/work-management.usecase'
 import { BlobStorageService } from '@infrastructure/storage/blob-storage.service'
-import { CreateWorkDto, UpdateWorkDto, CreateEpisodeDto } from '@adapter/inbound/http/dto/work.dto'
+import { CreateWorkDto, UpdateWorkDto, CreateEpisodeDto, UpdateEpisodeStatusDto, CreateShareLinkDto } from '@adapter/inbound/http/dto/work.dto'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 
 const ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp']
@@ -63,6 +63,26 @@ export class WorkManagementController {
     if (!this.blobStorage.isEnabled) throw new BadRequestException('커버 이미지 기능이 아직 활성화되지 않았습니다')
 
     return this.workManagementUseCase.uploadCoverImage(req.user.sub, id, file.buffer, file.originalname, file.mimetype)
+  }
+
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Patch(':workId/episodes/:episodeId/status')
+  async updateEpisodeStatus(
+    @Req() req: AuthenticatedRequest,
+    @Param('episodeId') episodeId: string,
+    @Body() dto: UpdateEpisodeStatusDto,
+  ) {
+    return this.workManagementUseCase.updateEpisodeStatus(req.user.sub, episodeId, dto.status)
+  }
+
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @Post(':workId/episodes/:episodeId/share')
+  async createShareLink(
+    @Req() req: AuthenticatedRequest,
+    @Param('episodeId') episodeId: string,
+    @Body() dto: CreateShareLinkDto,
+  ) {
+    return this.workManagementUseCase.createShareLink(req.user.sub, episodeId, dto.expireIn)
   }
 }
 
