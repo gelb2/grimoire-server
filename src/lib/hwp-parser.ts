@@ -167,8 +167,10 @@ function extractBlocksFromSectionXml(xml: string): Block[] {
           num: chapterNumMatch[1],
           title: chapterNumMatch[2],
         })
-      } else if (styleId <= 2) {
-        blocks.push({ type: `heading-${styleId}` as string, title: trimmedText })
+      } else if (styleId === 1) {
+        blocks.push({ type: 'heading-1', title: trimmedText })
+      } else if (styleId === 2) {
+        blocks.push({ type: 'heading-2', title: trimmedText })
       } else {
         blocks.push({ type: 'chapter', title: trimmedText })
       }
