@@ -13,7 +13,7 @@ describe('PaymentUseCase', () => {
     productId: 'credit-10',
     amount: 1000,
     credits: 10,
-    payappTradeNo: null,
+    externalTransactionId: null,
     status: 'pending',
     createdAt: new Date(),
     completedAt: null,
@@ -23,7 +23,7 @@ describe('PaymentUseCase', () => {
     // $transaction mock: 콜백을 받아서 동일한 mock prisma를 tx로 넘긴다
     const paymentMock = {
       create: jest.fn().mockResolvedValue(mockPayment),
-      update: jest.fn().mockResolvedValue({ ...mockPayment, payappTradeNo: 'TRADE-001' }),
+      update: jest.fn().mockResolvedValue({ ...mockPayment, externalTransactionId: 'TRADE-001' }),
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([mockPayment]),
     }
@@ -51,7 +51,7 @@ describe('PaymentUseCase', () => {
 
     mockPaymentGateway = {
       initiatePayment: jest.fn().mockResolvedValue({
-        paymentUrl: 'https://payapp.kr/pay/test',
+        paymentUrl: 'https://example.com/pay/test',
         tradeNo: 'TRADE-001',
       }),
       verifyWebhookSignature: jest.fn().mockReturnValue(true),
@@ -104,16 +104,16 @@ describe('PaymentUseCase', () => {
           amount: 1000,
         }),
       )
-      expect(result.paymentUrl).toBe('https://payapp.kr/pay/test')
+      expect(result.paymentUrl).toBe('https://example.com/pay/test')
       expect(result.tradeNo).toBe('TRADE-001')
     })
 
-    it('tradeNo를 Payment 레코드에 업데이트한다', async () => {
+    it('externalTransactionId를 Payment 레코드에 업데이트한다', async () => {
       await useCase.initiatePayment('author-1', 'credit-10', 'https://example.com/return')
 
       expect(mockPrisma.payment.update).toHaveBeenCalledWith({
         where: { id: 'pay-1' },
-        data: { payappTradeNo: 'TRADE-001' },
+        data: { externalTransactionId: 'TRADE-001' },
       })
     })
 
@@ -136,12 +136,9 @@ describe('PaymentUseCase', () => {
     }
 
     it('서명 검증에 실패하면 예외를 던진다', async () => {
-      const originalSecret = process.env.PAYAPP_SECRET
-      process.env.PAYAPP_SECRET = 'test-secret'
       mockPaymentGateway.verifyWebhookSignature.mockReturnValue(false)
 
       await expect(useCase.processWebhook(successPayload)).rejects.toThrow('웹훅 서명 검증 실패')
-      process.env.PAYAPP_SECRET = originalSecret || ''
     })
 
     it('tradeNo에 해당하는 결제가 없으면 무시한다 (멱등성)', async () => {
@@ -157,7 +154,7 @@ describe('PaymentUseCase', () => {
       mockPrisma.payment.findUnique.mockResolvedValue({
         ...mockPayment,
         status: 'completed',
-        payappTradeNo: 'TRADE-001',
+        externalTransactionId: 'TRADE-001',
       })
 
       const result = await useCase.processWebhook(successPayload)
@@ -170,7 +167,7 @@ describe('PaymentUseCase', () => {
     it('성공 웹훅 시 원자적 트랜잭션으로 크레딧 부여 + 상태 변경한다', async () => {
       mockPrisma.payment.findUnique.mockResolvedValue({
         ...mockPayment,
-        payappTradeNo: 'TRADE-001',
+        externalTransactionId: 'TRADE-001',
       })
 
       const result = await useCase.processWebhook(successPayload)
@@ -201,7 +198,7 @@ describe('PaymentUseCase', () => {
     it('실패 웹훅 시 상태를 failed로 변경하고 크레딧을 부여하지 않는다', async () => {
       mockPrisma.payment.findUnique.mockResolvedValue({
         ...mockPayment,
-        payappTradeNo: 'TRADE-001',
+        externalTransactionId: 'TRADE-001',
       })
 
       const result = await useCase.processWebhook({
@@ -221,7 +218,7 @@ describe('PaymentUseCase', () => {
     it('취소 웹훅 시 상태를 failed로 변경한다', async () => {
       mockPrisma.payment.findUnique.mockResolvedValue({
         ...mockPayment,
-        payappTradeNo: 'TRADE-001',
+        externalTransactionId: 'TRADE-001',
       })
 
       const result = await useCase.processWebhook({
