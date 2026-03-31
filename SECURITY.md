@@ -115,7 +115,53 @@
 
 ---
 
-## 5. 참조 문서
+## 5. 네트워크/포트 보안 현황
+
+> 설정값 자체는 `INFRASTRUCTURE.md` §9 참조. 여기는 **왜 안전한지, 공격 시나리오별 방어**를 기록한다.
+
+### 외부 노출 포트
+
+| 레이어 | 열린 포트 | 비고 |
+|--------|----------|------|
+| Cloudflare (최외곽) | 443 (HTTPS) | DDoS 방어 + CDN + 실제 Azure IP 은닉 |
+| Container Apps | 443만 (리버스 프록시) | 3000/3001은 컨테이너 내부 포트, 인터넷 노출 안 됨 |
+| PostgreSQL | 5432 (방화벽 차단) | AllowAzureServices만 허용, 외부 IP 전부 차단 |
+| ACR | 443 (인증 필요) | pull/push에 ACR_USERNAME/PASSWORD 필수 |
+
+> 인터넷에서 포트 스캔 시 Cloudflare IP의 443만 보인다.
+> 3000, 3001, 5432는 Azure 내부 네트워크에서만 접근 가능.
+
+### 공격 시나리오별 방어
+
+| 공격 | 방어 | 설정 위치 |
+|------|------|----------|
+| DDoS | Cloudflare Proxy (무료 플랜 자동 방어) | Cloudflare 대시보드 |
+| 포트 스캔 | Container Apps: 443만 노출. DB: 방화벽 차단 | Azure 플랫폼 구조 |
+| SQL 인젝션 | Prisma ORM 파라미터 바인딩. raw SQL 미사용 | 코드 레벨 |
+| Brute force 로그인 | 회원가입 시간당 5회, 로그인 분당 10회 | `auth.controller.ts` @Throttle |
+| API 남용 | 전 엔드포인트 Throttle 적용 (분당 3~30회) | 각 controller |
+| CORS 우회 | 환경별 도메인 1개만 허용 (`*` 금지) | `main.ts` enableCors |
+| DB 직접 접근 | 방화벽: Azure 서비스만 허용. 개인 IP 사용 후 즉시 제거 | Azure DB 방화벽 |
+| 이미지 저장소 탈취 | ACR 인증 필수 (GitHub Secrets) | Azure ACR |
+
+### DB 방화벽 운영 규칙
+
+- 평상시: AllowAzureServices(0.0.0.0)만 허용
+- 로컬 DB 직접 접속 필요 시: 개인 IP 방화벽 추가 → 작업 완료 → **즉시 제거**
+- 방화벽 규칙 추가/제거 시 INFRASTRUCTURE.md §9 업데이트
+
+### 비용 폭탄 방지 (보안 관점)
+
+| 설정 | 값 | 효과 |
+|------|-----|------|
+| maxReplicas | 1 (전 환경) | 자동 확장으로 인한 과금 폭증 불가 |
+| autoGrow | Disabled (전 DB) | 스토리지 자동 확장 없음 |
+| 예산 알림 | $100/월 (50%/80%/100% 알림) | 비정상 과금 감지 |
+| ACR 이미지 정리 | 배포 시 자동 정리 (환경별 최근 5개 유지) | 저장 비용 제한 |
+
+---
+
+## 6. 참조 문서
 
 - `INFRASTRUCTURE.md` — Azure 리소스 구성
 - `docs/environments.md` — 환경별 설정 (정본)

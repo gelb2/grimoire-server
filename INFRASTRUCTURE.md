@@ -40,6 +40,7 @@
 | 로깅 | verbose | verbose | info | warn |
 | 마이그레이션 | 자동 | 자동 | 자동 | RUN_MIGRATION=true 필요 |
 | 데이터 관리 | 시드 1회 + 마이그레이션/API | 마이그레이션/API만 | 마이그레이션/API만 | 마이그레이션/API만 |
+| minReplicas | - | **1** | **1** | **1** |
 
 상세 환경변수는 `docs/environments.md` 참조.
 
@@ -226,16 +227,58 @@ az postgres flexible-server firewall-rule delete \
 
 ---
 
-## 9. 비용 예측
+## 9. 인프라 설정값 현황
+
+> 인프라 설정 변경 시 이 표를 반드시 업데이트한다 (같은 커밋).
+> 설정값은 `az` CLI로 확인: `az containerapp show`, `az postgres flexible-server show`
+
+### Container Apps (6개)
+
+| 앱 | CPU | 메모리 | minReplicas | maxReplicas | 포트 | 커스텀 도메인 | SSL |
+|----|-----|--------|-------------|-------------|------|-------------|-----|
+| web-dev | 0.5 | 1Gi | 1 | 1 | 3001 | dev.grimoire-book.com | ✅ |
+| server-dev | 0.5 | 1Gi | 1 | 1 | 3000 | dev-api.grimoire-book.com | ✅ |
+| web-inhouse | 0.5 | 1Gi | 1 | 1 | 3001 | inhouse.grimoire-book.com | ✅ |
+| server-inhouse | 0.5 | 1Gi | 1 | 1 | 3000 | inhouse-api.grimoire-book.com | ✅ |
+| web-prod | 0.5 | 1Gi | 1 | 1 | 3001 | grimoire-book.com | ✅ |
+| server-prod | 0.5 | 1Gi | 1 | 1 | 3000 | api.grimoire-book.com | ✅ |
+
+### PostgreSQL (3개)
+
+| DB | SKU | 스토리지 | autoGrow | 백업 | HA | Geo백업 |
+|----|-----|---------|----------|------|-----|---------|
+| db-dev | B1ms (1 vCore, 2GB) | 32GB | 꺼짐 | 7일 | 꺼짐 | 꺼짐 |
+| db-inhouse | B1ms (1 vCore, 2GB) | 32GB | 꺼짐 | 7일 | 꺼짐 | 꺼짐 |
+| db-prod | B1ms (1 vCore, 2GB) | 32GB | 꺼짐 | 7일 | 꺼짐 | 꺼짐 |
+
+> 백업 7일: 지난 7일 내 아무 시점으로 복원 가능 (Point-in-Time Restore). 자동 동작.
+> HA (고가용성): DB 2대 자동 전환. 현재 꺼짐 — 장애 시 수 분 다운타임 발생. 비용 2배이므로 트래픽 증가 시 검토.
+> autoGrow: 스토리지 자동 확장. 꺼짐 — 32GB 고정. 비용 폭탄 방지.
+
+### Container Registry
+
+| 항목 | 값 |
+|------|-----|
+| SKU | Basic ($5/월, 10GB 포함) |
+| 이미지 정리 | 꺼짐 — 수동 정리 필요 |
+
+### 예산 알림
+
+| 예산 | 금액 | 알림 |
+|------|------|------|
+| grimoire-monthly-100 | $100/월 | 50%/80%/100% → hiphopxy@naver.com |
+
+### 월 비용 추정
 
 | 리소스 | 단가 | 수량 | 월 비용 |
 |--------|------|------|---------|
-| PostgreSQL B1ms | ~$12/월 | 3 | ~$36 |
-| Container Apps | 사용량 기반 | 6 | ~$3-5 |
+| PostgreSQL B1ms + 32GB | ~$16/월 | 3 | ~$48 |
+| Container Apps (min=1, 0.5vCPU) | ~$5/월 | 6 | ~$30 |
 | Container Registry Basic | $5/월 | 1 | $5 |
-| **합계** | | | **~$44-46/월** |
+| 도메인 (grimoire-book.com) | $0.87/월 | 1 | ~$1 |
+| **합계** | | | **~$84/월** |
 
-> 예산 알림: $50/월 설정 (`az consumption budget`)
+> 비용 폭탄 방지: maxReplicas=1 (자동 확장 없음) + autoGrow=Disabled (스토리지 고정) + 예산 알림 $100
 
 ---
 
