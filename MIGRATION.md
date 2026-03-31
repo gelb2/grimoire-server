@@ -67,7 +67,7 @@ ls prisma/migrations/
 ```bash
 # 방화벽 열기
 az postgres flexible-server firewall-rule create \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   --name grimoire-db-{env} \
   --rule-name AllowMyIP \
   --start-ip-address {MY_IP} --end-ip-address {MY_IP}
@@ -78,7 +78,7 @@ npx prisma migrate deploy
 
 # 방화벽 닫기
 az postgres flexible-server firewall-rule delete \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   --name grimoire-db-{env} \
   --rule-name AllowMyIP --yes
 ```
@@ -143,13 +143,13 @@ npx prisma migrate status
 ```bash
 # 온디맨드 백업 생성
 az postgres flexible-server backup create \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   --name grimoire-db-prod \
   --backup-name "pre-migration-$(date +%Y%m%d)"
 
 # 백업 목록 확인
 az postgres flexible-server backup list \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   --name grimoire-db-prod \
   -o table
 ```
@@ -259,7 +259,7 @@ git add prisma/migrations/ && git commit -m "fix: {원래_마이그레이션명}
 #    Azure Portal → PostgreSQL Flexible Server → 복원
 #    또는:
 az postgres flexible-server restore \
-  --resource-group grimoire-rg \
+  --resource-group zenith-rg \
   --name grimoire-db-prod-restored \
   --source-server grimoire-db-prod \
   --restore-time "2026-01-01T12:00:00Z"
