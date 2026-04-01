@@ -239,24 +239,38 @@ export const themePresets: Record<string, Record<string, unknown>> = {
  * preset 기본값 + overrides를 merge한 완전한 테마 객체 반환
  * overrides가 우선, preset이 베이스
  */
-export function resolveTheme(preset: string, overrides: Record<string, unknown> | null): Record<string, unknown> {
-  // custom preset: overrides가 곧 테마. 누락 필드는 defaultTypography/defaultUI로만 보완.
-  // 프리셋 preset: preset 기본값을 베이스로, overrides로 덮어쓰기.
-  if (preset === 'custom') {
-    if (!overrides || Object.keys(overrides).length === 0) return { ...themePresets['midnight'] }
-    const baseDecorations = (overrides.decorations ?? defaultDecorations) as Record<string, unknown>
-    return { ...defaultTypography, ...defaultUI, decorations: { ...defaultDecorations, ...baseDecorations }, ...overrides }
+/** 하위 호환: layout → episodeListLayout 매핑 */
+function normalizeOverrides(overrides: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...overrides }
+  // layout → episodeListLayout 하위 호환
+  if (result.layout && !result.episodeListLayout) {
+    result.episodeListLayout = result.layout
   }
-  const base = themePresets[preset] ?? themePresets['midnight']
-  if (!overrides || Object.keys(overrides).length === 0) return { ...base }
+  // navStyle 제거 (삭제된 필드)
+  delete result.navStyle
+  return result
+}
 
-  // decorations는 깊은 merge
+export function resolveTheme(preset: string, overrides: Record<string, unknown> | null): Record<string, unknown> {
+  const normalized = overrides ? normalizeOverrides(overrides) : null
+
+  // custom preset: overrides가 곧 테마. 누락 필드는 defaultTypography/defaultUI로만 보완.
+  if (preset === 'custom') {
+    if (!normalized || Object.keys(normalized).length === 0) return { ...themePresets['midnight'] }
+    const baseDecorations = (normalized.decorations ?? defaultDecorations) as Record<string, unknown>
+    return { ...defaultTypography, ...defaultUI, decorations: { ...defaultDecorations, ...baseDecorations }, ...normalized }
+  }
+
+  // 프리셋 preset: preset 기본값을 베이스로, overrides로 덮어쓰기.
+  const base = themePresets[preset] ?? themePresets['midnight']
+  if (!normalized || Object.keys(normalized).length === 0) return { ...base }
+
   const baseDecorations = (base.decorations ?? defaultDecorations) as Record<string, unknown>
-  const overrideDecorations = (overrides.decorations ?? {}) as Record<string, unknown>
+  const overrideDecorations = (normalized.decorations ?? {}) as Record<string, unknown>
 
   return {
     ...base,
-    ...overrides,
+    ...normalized,
     decorations: { ...baseDecorations, ...overrideDecorations },
   }
 }
