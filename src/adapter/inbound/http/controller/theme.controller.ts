@@ -21,6 +21,7 @@ import { GetThemeUseCase } from '@application/theme/get-theme.usecase'
 import { BakeThemeUseCase } from '@application/theme/bake-theme.usecase'
 import { GenerateThemeDto } from '../dto/theme.dto'
 import { bakeThemeToCSS } from '@lib/theme-baker'
+import { resolveTheme } from '@domain/model/theme-presets'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 
 @Controller('themes')
@@ -97,12 +98,13 @@ export class ThemeController {
     return theme ?? {}
   }
 
-  /** 작가 기본 테마 조회 (하위 호환) */
+  /** 작가 기본 테마 조회 — preset + overrides merge한 완전한 theme 반환 */
   @Get(':authorSlug')
   async findByAuthorSlug(@Param('authorSlug') authorSlug: string) {
     const theme = await this.getTheme.execute(authorSlug)
-    // 내부 필드 제거 — authorId(내부 UUID) 미노출
     const { authorId, ...safe } = theme as any
-    return safe
+    // preset 기반으로 완전한 테마 객체 생성 (프론트는 이 값을 그대로 사용)
+    const resolved = resolveTheme(theme.preset, theme.overrides as Record<string, unknown> | null)
+    return { ...safe, theme: resolved }
   }
 }
