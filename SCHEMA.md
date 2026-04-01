@@ -77,6 +77,9 @@
 | rawMd | raw_md | String | - | 원본 마크다운 |
 | viewCount | view_count | Int | default(0) | 조회수 |
 | sourceFormat | source_format | String | default("markdown") | 원고 포맷 (markdown/txt/docx) |
+| status | status | String | default("upload") | 상태 (upload/public/nonPublic/shared) |
+| sharedToken | shared_token | String? | @unique | 공유 링크 토큰 |
+| sharedExpireAt | shared_expire_at | DateTime? | - | 공유 링크 만료 시각 |
 | createdAt | created_at | DateTime | default(now()) | 생성일 |
 
 ### credit_logs

@@ -282,7 +282,60 @@ az postgres flexible-server firewall-rule delete \
 
 ---
 
-## 10. Cloudflare DNS 설정 가이드
+## 10. DB 동기화 정책
+
+> 운영 데이터를 하위 환경으로 동기화하여 테스트 데이터 정합성을 확보한다.
+
+### 동기화 흐름
+
+```
+prod ──→ inhouse (PII 유지, 내부 QA용)
+prod ──→ dev     (PII 마스킹)
+dev  ──→ local   (수동, 이미 마스킹된 데이터)
+```
+
+### 자동 동기화 (GitHub Actions)
+
+| 항목 | 값 |
+|------|-----|
+| 워크플로우 | `.github/workflows/db-sync-nightly.yml` |
+| 스케줄 | 매일 자정 KST (UTC 15:00) |
+| 수동 트리거 | `workflow_dispatch` (source/target/mask 선택) |
+| 필요 시크릿 | `DB_PASSWORD`, `AZURE_CREDENTIALS` |
+
+### PII 마스킹 정책
+
+| 대상 → | inhouse | dev | local |
+|--------|:-------:|:---:|:-----:|
+| email | 유지 | 마스킹 | 마스킹 |
+| passwordHash | 유지 | 마스킹 | 마스킹 |
+| providerEmail | 유지 | 마스킹 | 마스킹 |
+
+마스킹 형식: `author-{n}@masked.local`, 고정 bcrypt 해시
+
+### localhost 동기화 (수동)
+
+```bash
+# Docker DB 실행 중이어야 함
+./scripts/db-sync-local.sh
+```
+
+### 방화벽 처리
+
+- 동기화 시작 시 러너 IP를 임시 방화벽 규칙으로 추가
+- 동기화 완료 후 (실패 포함) 반드시 제거 (`if: always()` / `trap EXIT`)
+- 규칙명: `github-actions-sync` (자동) / `temp-local-sync` (수동)
+
+### 스크립트
+
+| 스크립트 | 용도 |
+|---------|------|
+| `scripts/db-sync.ts` | 데이터 동기화 (Prisma 기반, PII 마스킹 지원) |
+| `scripts/db-sync-local.sh` | dev → localhost 동기화 (방화벽 자동 관리) |
+
+---
+
+## 11. Cloudflare DNS 설정 가이드
 
 ### CNAME 레코드 설정
 
@@ -307,7 +360,7 @@ az postgres flexible-server firewall-rule delete \
 
 ---
 
-## 11. 초기 세팅
+## 12. 초기 세팅
 
 ```bash
 # Azure 리소스 일괄 생성
@@ -319,7 +372,7 @@ chmod +x scripts/azure-setup.sh
 
 ---
 
-## 12. 참조 문서
+## 13. 참조 문서
 
 - `docs/environments.md` — 빌드 환경 + 배포 전략 (정본)
 - `SECURITY.md` — 보안 정책 + 배포 전 체크리스트

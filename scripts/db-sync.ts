@@ -2,41 +2,88 @@
  * DB 동기화 스크립트 — source DB의 데이터를 target DB로 복사
  *
  * 사용법:
- *   npx tsx scripts/db-sync.ts prod dev
  *   npx tsx scripts/db-sync.ts prod inhouse
- *   npx tsx scripts/db-sync.ts inhouse dev
+ *   npx tsx scripts/db-sync.ts prod dev --mask-pii
+ *   npx tsx scripts/db-sync.ts dev local
+ *
+ * 옵션:
+ *   --mask-pii    PII(이메일, 비밀번호 해시, OAuth 이메일)를 마스킹
+ *
+ * 환경변수:
+ *   DB_PASSWORD   Azure DB 비밀번호 (미설정 시 기본값 사용)
  */
 
 import { PrismaClient } from '@prisma/client'
 
-const PW = 'REMOVED_CREDENTIAL_010'
+const PW = process.env.DB_PASSWORD || 'REMOVED_CREDENTIAL_010'
 const ADMIN = 'grimoireadmin'
 
+// PII 마스킹용 고정 bcrypt 해시 (비밀번호: "masked2026")
+const MASKED_PASSWORD_HASH = '$2b$10$KjXGfJxQJfzQ2q8lRj5zWOBYcZJg.Zq0Z9R8Q1RVG8J5r5t8N2H0O'
+
 function getDbUrl(env: string): string {
+  if (env === 'local') {
+    const localPw = process.env.LOCAL_DB_PASSWORD || 'REMOVED_CREDENTIAL_011'
+    return `postgresql://${ADMIN}:${localPw}@localhost:5432/grimoire`
+  }
   return `postgresql://${ADMIN}:${PW}@grimoire-db-${env}.postgres.database.azure.com:5432/grimoire?sslmode=require`
 }
 
-const TABLES = [
-  'Author', 'Theme', 'Work', 'Episode', 'SocialAccount', 'SignupHistory',
-  'CreditLog', 'Bookmark', 'ReadingProgress', 'Like', 'Subscription',
-  'Comment', 'Payment', 'DailyView',
-] as const
+const VALID_ENVS = ['prod', 'inhouse', 'dev', 'local']
+
+// 동기화 방향 검증 (상위 → 하위만 허용)
+const ENV_RANK: Record<string, number> = { prod: 3, inhouse: 2, dev: 1, local: 0 }
+
+function maskAuthors(authors: any[], maskPii: boolean): any[] {
+  if (!maskPii) return authors
+  return authors.map((a, i) => ({
+    ...a,
+    email: `author-${i + 1}@masked.local`,
+    passwordHash: MASKED_PASSWORD_HASH,
+  }))
+}
+
+function maskSocialAccounts(accounts: any[], maskPii: boolean): any[] {
+  if (!maskPii) return accounts
+  return accounts.map((sa, i) => ({
+    ...sa,
+    providerEmail: `social-${i + 1}@masked.local`,
+  }))
+}
 
 async function main() {
-  const [source, target] = process.argv.slice(2)
+  const args = process.argv.slice(2)
+  const maskPii = args.includes('--mask-pii')
+  const positionalArgs = args.filter((a) => !a.startsWith('--'))
+  const [source, target] = positionalArgs
+
   if (!source || !target) {
-    console.error('사용법: npx tsx scripts/db-sync.ts [source] [target]')
-    console.error('예: npx tsx scripts/db-sync.ts prod dev')
+    console.error('사용법: npx tsx scripts/db-sync.ts [source] [target] [--mask-pii]')
+    console.error('예: npx tsx scripts/db-sync.ts prod dev --mask-pii')
+    console.error('환경: prod, inhouse, dev, local')
     process.exit(1)
   }
+
+  if (!VALID_ENVS.includes(source) || !VALID_ENVS.includes(target)) {
+    console.error(`❌ 올바르지 않은 환경: ${source}, ${target}`)
+    console.error(`   허용 환경: ${VALID_ENVS.join(', ')}`)
+    process.exit(1)
+  }
+
   if (source === target) {
     console.error('❌ source와 target이 같습니다')
     process.exit(1)
   }
 
-  console.log(`╔══════════════════════════════════════╗`)
-  console.log(`║   DB 동기화: ${source} → ${target}`)
-  console.log(`╚══════════════════════════════════════╝`)
+  if (ENV_RANK[source] <= ENV_RANK[target]) {
+    console.error(`❌ 하위 → 상위 동기화 금지: ${source} → ${target}`)
+    console.error('   허용 방향: prod → inhouse → dev → local')
+    process.exit(1)
+  }
+
+  console.log(`╔══════════════════════════════════════════╗`)
+  console.log(`║   DB 동기화: ${source} → ${target}${maskPii ? ' (PII 마스킹)' : ''}`)
+  console.log(`╚══════════════════════════════════════════╝`)
 
   const sourceDb = new PrismaClient({ datasources: { db: { url: getDbUrl(source) } } })
   const targetDb = new PrismaClient({ datasources: { db: { url: getDbUrl(target) } } })
@@ -48,12 +95,29 @@ async function main() {
     const themes = await sourceDb.theme.findMany()
     const works = await sourceDb.work.findMany()
     const episodes = await sourceDb.episode.findMany()
+    const socialAccounts = await sourceDb.socialAccount.findMany()
+    const signupHistories = await sourceDb.signupHistory.findMany()
     const creditLogs = await sourceDb.creditLog.findMany()
+    const bookmarks = await sourceDb.bookmark.findMany()
+    const readingProgress = await sourceDb.readingProgress.findMany()
+    const likes = await sourceDb.like.findMany()
+    const subscriptions = await sourceDb.subscription.findMany()
+    const comments = await sourceDb.comment.findMany()
+    const payments = await sourceDb.payment.findMany()
     const dailyViews = await sourceDb.dailyView.findMany()
 
     console.log(`  authors: ${authors.length}, themes: ${themes.length}, works: ${works.length}, episodes: ${episodes.length}`)
+    console.log(`  socialAccounts: ${socialAccounts.length}, creditLogs: ${creditLogs.length}, payments: ${payments.length}`)
+    console.log(`  bookmarks: ${bookmarks.length}, likes: ${likes.length}, comments: ${comments.length}, dailyViews: ${dailyViews.length}`)
 
-    // 2. Target 데이터 삭제 (역순)
+    // PII 마스킹 적용
+    const maskedAuthors = maskAuthors(authors, maskPii)
+    const maskedSocialAccounts = maskSocialAccounts(socialAccounts, maskPii)
+    if (maskPii) {
+      console.log(`  ⚠ PII 마스킹 적용됨: email, passwordHash, providerEmail`)
+    }
+
+    // 2. Target 데이터 삭제 (FK 역순)
     console.log(`\n[2/3] ${target} DB 데이터 초기화...`)
     await targetDb.dailyView.deleteMany()
     await targetDb.comment.deleteMany()
@@ -71,44 +135,85 @@ async function main() {
     await targetDb.author.deleteMany()
     console.log('  초기화 완료')
 
-    // 3. Target에 데이터 삽입
+    // 3. Target에 데이터 삽입 (FK 순서)
     console.log(`\n[3/3] ${target} DB에 데이터 삽입...`)
 
-    for (const a of authors) {
+    for (const a of maskedAuthors) {
       await targetDb.author.create({ data: a })
     }
-    console.log(`  authors: ${authors.length}`)
+    console.log(`  ✓ authors: ${maskedAuthors.length}`)
 
     for (const t of themes) {
       await targetDb.theme.create({ data: t as any })
     }
-    console.log(`  themes: ${themes.length}`)
+    console.log(`  ✓ themes: ${themes.length}`)
 
     for (const w of works) {
       await targetDb.work.create({ data: w as any })
     }
-    console.log(`  works: ${works.length}`)
+    console.log(`  ✓ works: ${works.length}`)
 
     for (const ep of episodes) {
       await targetDb.episode.create({ data: ep as any })
     }
-    console.log(`  episodes: ${episodes.length}`)
+    console.log(`  ✓ episodes: ${episodes.length}`)
+
+    for (const sa of maskedSocialAccounts) {
+      await targetDb.socialAccount.create({ data: sa as any })
+    }
+    console.log(`  ✓ socialAccounts: ${maskedSocialAccounts.length}`)
+
+    for (const sh of signupHistories) {
+      await targetDb.signupHistory.create({ data: sh as any })
+    }
+    console.log(`  ✓ signupHistories: ${signupHistories.length}`)
 
     for (const cl of creditLogs) {
       await targetDb.creditLog.create({ data: cl })
     }
-    console.log(`  creditLogs: ${creditLogs.length}`)
+    console.log(`  ✓ creditLogs: ${creditLogs.length}`)
+
+    for (const bm of bookmarks) {
+      await targetDb.bookmark.create({ data: bm as any })
+    }
+    console.log(`  ✓ bookmarks: ${bookmarks.length}`)
+
+    for (const rp of readingProgress) {
+      await targetDb.readingProgress.create({ data: rp as any })
+    }
+    console.log(`  ✓ readingProgress: ${readingProgress.length}`)
+
+    for (const l of likes) {
+      await targetDb.like.create({ data: l as any })
+    }
+    console.log(`  ✓ likes: ${likes.length}`)
+
+    for (const s of subscriptions) {
+      await targetDb.subscription.create({ data: s as any })
+    }
+    console.log(`  ✓ subscriptions: ${subscriptions.length}`)
+
+    for (const c of comments) {
+      await targetDb.comment.create({ data: c as any })
+    }
+    console.log(`  ✓ comments: ${comments.length}`)
+
+    for (const p of payments) {
+      await targetDb.payment.create({ data: p as any })
+    }
+    console.log(`  ✓ payments: ${payments.length}`)
 
     for (const dv of dailyViews) {
       await targetDb.dailyView.create({ data: dv })
     }
-    console.log(`  dailyViews: ${dailyViews.length}`)
+    console.log(`  ✓ dailyViews: ${dailyViews.length}`)
 
     // 검증
-    const count = await targetDb.author.count()
-    console.log(`\n╔══════════════════════════════════════╗`)
-    console.log(`║   완료: ${target} DB 작가 ${count}명`)
-    console.log(`╚══════════════════════════════════════╝`)
+    const authorCount = await targetDb.author.count()
+    const episodeCount = await targetDb.episode.count()
+    console.log(`\n╔══════════════════════════════════════════╗`)
+    console.log(`║   완료: ${target} DB — 작가 ${authorCount}명, 에피소드 ${episodeCount}편`)
+    console.log(`╚══════════════════════════════════════════╝`)
 
   } finally {
     await sourceDb.$disconnect()

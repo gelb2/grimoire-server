@@ -1,4 +1,4 @@
-import { IsString, IsOptional, MinLength } from 'class-validator'
+import { IsString, IsOptional, MinLength, IsIn } from 'class-validator'
 
 export class CreateWorkDto {
   @IsString() @MinLength(1) title!: string
@@ -17,4 +17,12 @@ export class CreateEpisodeDto {
   @IsString() @MinLength(1) title!: string
   @IsString() rawContent!: string
   @IsString() @IsOptional() sourceFormat?: string // 'markdown' | 'txt' | 'docx' | 'hwp' | 'hwpx'
+}
+
+export class UpdateEpisodeStatusDto {
+  @IsString() @IsIn(['upload', 'public', 'nonPublic']) status!: 'upload' | 'public' | 'nonPublic'
+}
+
+export class CreateShareLinkDto {
+  @IsString() @IsIn(['12h', '24h', '48h', 'never']) expireIn!: '12h' | '24h' | '48h' | 'never'
 }

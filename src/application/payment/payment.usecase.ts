@@ -54,7 +54,7 @@ export class PaymentUseCase {
       },
     })
 
-    // PAYAPP 결제 요청
+    // 결제 게이트웨이 호출
     const result = await this.paymentGateway.initiatePayment({
       productId: product.id,
       productName: product.name,
@@ -63,10 +63,10 @@ export class PaymentUseCase {
       returnUrl,
     })
 
-    // tradeNo 업데이트
+    // 외부 거래 ID 업데이트
     await this.prisma.payment.update({
       where: { id: payment.id },
-      data: { payappTradeNo: result.tradeNo },
+      data: { externalTransactionId: result.tradeNo },
     })
 
     return {
@@ -78,21 +78,15 @@ export class PaymentUseCase {
 
   /** 웹훅 처리 — 서명 검증 + 크레딧 부여 */
   async processWebhook(payload: WebhookPayload) {
-    // 서명 검증 — 프로덕션에서 시크릿 미설정 시 모든 웹훅 거부
-    const secret = process.env.PAYAPP_SECRET || ''
-    if (!secret && process.env.NODE_ENV === 'production') {
-      throw new BadRequestException('PAYAPP_SECRET 미설정 — 프로덕션에서 웹훅을 처리할 수 없습니다')
-    }
-    if (secret) {
-      const valid = this.paymentGateway.verifyWebhookSignature(payload, secret)
-      if (!valid) {
-        throw new BadRequestException('웹훅 서명 검증 실패')
-      }
+    // 서명 검증 — 어댑터가 자체 시크릿으로 검증
+    const valid = this.paymentGateway.verifyWebhookSignature(payload)
+    if (!valid) {
+      throw new BadRequestException('웹훅 서명 검증 실패')
     }
 
-    // tradeNo로 Payment 조회
+    // 외부 거래 ID로 Payment 조회
     const payment = await this.prisma.payment.findUnique({
-      where: { payappTradeNo: payload.tradeNo },
+      where: { externalTransactionId: payload.tradeNo },
     })
 
     // 결제 레코드 없으면 무시 (멱등성)
