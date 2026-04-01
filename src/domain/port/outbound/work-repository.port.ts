@@ -1,4 +1,4 @@
-import { Work, Episode, EpisodeSummary, WorkWithMeta } from '@domain/model/work'
+import { Work, Episode, EpisodeSummary, WorkWithMeta, EpisodeStatus } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 
 export interface WorkRepositoryPort {
@@ -40,4 +40,10 @@ export interface WorkRepositoryPort {
   countAll(): Promise<number>
   /** 전체 에피소드 수 */
   countAllEpisodes(): Promise<number>
+  /** 에피소드 상태 변경 */
+  updateEpisodeStatus(id: string, status: EpisodeStatus, sharedToken?: string | null, sharedExpireAt?: Date | null): Promise<Episode>
+  /** 공유 토큰으로 에피소드 조회 */
+  findBySharedToken(token: string): Promise<Episode | null>
+  /** 특정 에피소드 목록 조회 (status 필터링 포함) */
+  findEpisodesFiltered(workId: string, excludeStatuses?: EpisodeStatus[]): Promise<EpisodeSummary[]>
 }

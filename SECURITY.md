@@ -142,6 +142,8 @@
 | API 남용 | 전 엔드포인트 Throttle 적용 (분당 3~30회) | 각 controller |
 | CORS 우회 | 환경별 도메인 1개만 허용 (`*` 금지) | `main.ts` enableCors |
 | DB 직접 접근 | 방화벽: Azure 서비스만 허용. 개인 IP 사용 후 즉시 제거 | Azure DB 방화벽 |
+| **에피소드 크롤링** | 현재: 비로그인 조회 가능 (public 에피소드). 대응: 에피소드 상태값(nonPublic) + Rate Limiting + Cloudflare Bot | `content.controller.ts` + DB |
+| 내부 필드 노출 | API 응답에서 rawMd, workId, authorId 제거 완료 | `content.controller.ts`, `theme.controller.ts` |
 | 이미지 저장소 탈취 | ACR 인증 필수 (GitHub Secrets) | Azure ACR |
 
 ### DB 방화벽 운영 규칙

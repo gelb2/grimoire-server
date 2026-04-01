@@ -36,6 +36,15 @@ export interface AuthorSpace {
   works: WorkSummary[]
 }
 
+export interface EpisodeMeta {
+  slug: string
+  title: string
+  subtitle: string | null
+  description: string | null
+  type: string
+  orderNum: number | null
+}
+
 export interface WorkSummary {
   id: string
   slug: string
@@ -43,4 +52,5 @@ export interface WorkSummary {
   subtitle: string | null
   description: string | null
   episodeCount: number
+  episodes: EpisodeMeta[]
 }

@@ -12,6 +12,11 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 
 현재 구현 현황은 `TECH_STATUS.md` 참조.
 
+### 시각적 정본: 사슴악마 (deerdevil)
+
+파서 출력(Block[])의 시각적 기준은 운영 사슴악마다. 루트 `CLAUDE.md` §1 "시각적 정본" 참조.
+파서 변경 후 사슴악마 에피소드와 시각적으로 다르면 → **파서 버그**.
+
 ### Azure 절대 규칙
 
 - 리소스그룹: **`zenith-rg` 1개만 사용** (모든 Azure 리소스가 여기에 있음)
@@ -58,6 +63,11 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 - **Azure 인프라 설정 변경** (replicas, SKU, 스토리지, 방화벽 등) → `INFRASTRUCTURE.md` §9 설정값 표 업데이트 (같은 커밋)
 - 용어 추가 → `docs/glossary.md` 업데이트
 - 아키텍처 결정 변경 (트랜잭션, 동시성, 캐싱 등) → `ADR.md` 업데이트
+- **API 엔드포인트 추가/변경 시 보안 체크** → `SECURITY.md` §4 배포 전 체크리스트 + §6 보안 TODO 확인
+  - 응답에 내부 ID(authorId, workId) 노출하지 않는가?
+  - 인증(JwtAuthGuard) 적용했는가?
+  - Rate Limiting(@Throttle) 적용했는가?
+  - 소유권 검증(본인 리소스만 수정/삭제)했는가?
 
 ---
 

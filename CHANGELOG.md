@@ -1,5 +1,31 @@
 # Changelog — grimoire-server
 
+## [0.13.0] - 2026-03-31
+
+### 에피소드 상태값 시스템 + 만료 공유 링크
+
+#### Added
+- Episode 모델에 status(upload/public/nonPublic/shared), sharedToken, sharedExpireAt 필드 추가
+- EpisodeStatus 도메인 타입 + 접근 제어 로직 (ContentUseCase)
+  - upload: 작가 본인만 조회
+  - public: 누구나 조회
+  - nonPublic: 로그인 사용자만
+  - shared: 공유 토큰으로만 접근 (만료 시간 12h/24h/48h/무한)
+- OptionalJwtAuthGuard — 토큰 있으면 파싱, 없어도 통과 (content.controller.ts)
+- API 엔드포인트 3개:
+  - `PATCH /works/:workId/episodes/:id/status` — 상태 변경 (작가 전용)
+  - `POST /works/:workId/episodes/:id/share` — 공유 링크 생성 (작가 전용)
+  - `GET /shared/:token` — 공유 링크 접근 (비로그인 가능)
+- 서버 테스트 14개 추가 (ContentUseCase 상태별 접근 + WorkManagement 상태/공유/만료)
+- 대시보드: 작품별 에피소드 목록 펼침 + 상태 배지 + 상태 변경 드롭다운 + 공유 링크 모달
+- `/shared/[token]` 프론트엔드 라우트 (공유 에피소드 뷰어)
+
+#### Changed
+- `getWorkDetail()`에 requestAuthorId 파라미터 추가 — 작가 본인이면 upload 에피소드 포함
+- `getEpisode()`에 status 기반 접근 제어 추가
+- EpisodeSummary에 status 필드 추가
+- content.controller.ts에 OptionalJwtAuthGuard 적용 (GET 요청에서도 로그인 여부 감지)
+
 ## [0.12.0] - 2026-03-31
 
 ### 고전문학 전문 백필 + body limit + 배포 복구

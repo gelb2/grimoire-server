@@ -1,0 +1,195 @@
+name: DB Sync (Nightly)
+
+# 매일 자정 KST (UTC 15:00) 자동 실행 + 수동 트리거
+on:
+  schedule:
+    - cron: '0 15 * * *'
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source 환경'
+        required: true
+        default: 'prod'
+        type: choice
+        options: ['prod', 'inhouse', 'dev']
+      target:
+        description: 'Target 환경'
+        required: true
+        default: 'dev'
+        type: choice
+        options: ['inhouse', 'dev']
+      mask_pii:
+        description: 'PII 마스킹 적용'
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: db-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-prod-to-inhouse:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: 러너 IP 확인
+        id: ip
+        run: echo "RUNNER_IP=$(curl -s ifconfig.me)" >> $GITHUB_OUTPUT
+
+      - name: 방화벽 규칙 추가 (prod + inhouse)
+        run: |
+          for DB in grimoire-db-prod grimoire-db-inhouse; do
+            az postgres flexible-server firewall-rule create \
+              --resource-group zenith-rg \
+              --name $DB \
+              --rule-name github-actions-sync \
+              --start-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
+              --end-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
+              --output none 2>/dev/null || true
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: Prisma Generate
+        run: npx prisma generate
+
+      - name: prod → inhouse 동기화 (PII 유지)
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: npx tsx scripts/db-sync.ts prod inhouse
+
+      - name: 방화벽 규칙 제거
+        if: always()
+        run: |
+          for DB in grimoire-db-prod grimoire-db-inhouse; do
+            az postgres flexible-server firewall-rule delete \
+              --resource-group zenith-rg \
+              --name $DB \
+              --rule-name github-actions-sync \
+              --yes --output none 2>/dev/null || true
+          done
+
+  sync-prod-to-dev:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: 러너 IP 확인
+        id: ip
+        run: echo "RUNNER_IP=$(curl -s ifconfig.me)" >> $GITHUB_OUTPUT
+
+      - name: 방화벽 규칙 추가 (prod + dev)
+        run: |
+          for DB in grimoire-db-prod grimoire-db-dev; do
+            az postgres flexible-server firewall-rule create \
+              --resource-group zenith-rg \
+              --name $DB \
+              --rule-name github-actions-sync \
+              --start-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
+              --end-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
+              --output none 2>/dev/null || true
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: Prisma Generate
+        run: npx prisma generate
+
+      - name: prod → dev 동기화 (PII 마스킹)
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: npx tsx scripts/db-sync.ts prod dev --mask-pii
+
+      - name: 방화벽 규칙 제거
+        if: always()
+        run: |
+          for DB in grimoire-db-prod grimoire-db-dev; do
+            az postgres flexible-server firewall-rule delete \
+              --resource-group zenith-rg \
+              --name $DB \
+              --rule-name github-actions-sync \
+              --yes --output none 2>/dev/null || true
+          done
+
+  # 수동 트리거 — 임의 source/target 지정 가능
+  sync-manual:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: 러너 IP 확인
+        id: ip
+        run: echo "RUNNER_IP=$(curl -s ifconfig.me)" >> $GITHUB_OUTPUT
+
+      - name: 방화벽 규칙 추가
+        run: |
+          for DB in grimoire-db-${{ inputs.source }} grimoire-db-${{ inputs.target }}; do
+            az postgres flexible-server firewall-rule create \
+              --resource-group zenith-rg \
+              --name $DB \
+              --rule-name github-actions-sync \
+              --start-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
+              --end-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
+              --output none 2>/dev/null || true
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: Prisma Generate
+        run: npx prisma generate
+
+      - name: DB 동기화
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          MASK_FLAG=""
+          if [ "${{ inputs.mask_pii }}" = "true" ]; then
+            MASK_FLAG="--mask-pii"
+          fi
+          npx tsx scripts/db-sync.ts ${{ inputs.source }} ${{ inputs.target }} $MASK_FLAG
+
+      - name: 방화벽 규칙 제거
+        if: always()
+        run: |
+          for DB in grimoire-db-${{ inputs.source }} grimoire-db-${{ inputs.target }}; do
+            az postgres flexible-server firewall-rule delete \
+              --resource-group zenith-rg \
+              --name $DB \
+              --rule-name github-actions-sync \
+              --yes --output none 2>/dev/null || true
+          done

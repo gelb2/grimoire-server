@@ -7,8 +7,8 @@
 ## 단기 (Phase 1 마무리)
 
 ### 외부 연동
-- [ ] PAYAPP 실제 연동 (API 키 발급 필요)
-- [ ] PAYAPP 웹훅 HMAC-SHA256 서명 검증 (PAYAPP 키 발급 후)
+- [ ] 결제 게이트웨이 실제 연동 (PayApp or Polar — API 키 발급 필요)
+- [ ] 결제 웹훅 서명 검증 (키 발급 후)
 
 ## 중기 (Phase 2)
 
