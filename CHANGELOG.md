@@ -1,5 +1,23 @@
 # Changelog — grimoire-server
 
+## [0.14.0] - 2026-04-01
+
+### 테마 resolveTheme + 프리셋 체계 + 결제 리팩터링
+
+#### Added
+- resolveTheme 함수 도입 — preset 기본값 + overrides를 merge한 완전한 테마 객체 반환
+- theme-presets.ts — 9개 프리셋 정의 (midnight, parchment, morning, neon, cream, magazine, gallery, minimal, deerDevil)
+- custom preset 처리 — overrides 기반, 누락 필드는 defaultTypography/defaultUI로 보완
+- layout → episodeListLayout 하위 호환 매핑 (normalizeOverrides)
+- navStyle 삭제 처리 (삭제된 필드 자동 제거)
+- UI 세부 조정 필드 12개 추가 (tabPillRadius, labelLetterSpacing, cardWatermarkOpacity, cardHoverLift, cardCtaText, subtitleStyle, episodeLabelFormat, sectionSpacing, showPreface, showAfterword, showProfileTab, subscribeButtonStyle)
+
+#### Changed
+- 결제 모듈 payappTradeNo → externalTransactionId 리팩터링
+- docs/theme-spec.md 동기화 (web 정본 → server 복사, episodeListLayout 리네이밍 + 새 필드 반영)
+
+---
+
 ## [0.13.0] - 2026-03-31
 
 ### 에피소드 상태값 시스템 + 만료 공유 링크
