@@ -240,6 +240,13 @@ export const themePresets: Record<string, Record<string, unknown>> = {
  * overrides가 우선, preset이 베이스
  */
 export function resolveTheme(preset: string, overrides: Record<string, unknown> | null): Record<string, unknown> {
+  // custom preset: overrides가 곧 테마. 누락 필드는 defaultTypography/defaultUI로만 보완.
+  // 프리셋 preset: preset 기본값을 베이스로, overrides로 덮어쓰기.
+  if (preset === 'custom') {
+    if (!overrides || Object.keys(overrides).length === 0) return { ...themePresets['midnight'] }
+    const baseDecorations = (overrides.decorations ?? defaultDecorations) as Record<string, unknown>
+    return { ...defaultTypography, ...defaultUI, decorations: { ...defaultDecorations, ...baseDecorations }, ...overrides }
+  }
   const base = themePresets[preset] ?? themePresets['midnight']
   if (!overrides || Object.keys(overrides).length === 0) return { ...base }
 
