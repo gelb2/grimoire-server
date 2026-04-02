@@ -141,11 +141,15 @@ model ReadingProgress {
 
 model Like {
   id        String   @id @default(uuid())
-  authorId  String   @map("author_id")
+  authorId  String?  @map("author_id")
   episodeId String   @map("episode_id")
+  ipAddress String?  @map("ip_address")
+  cookieId  String?  @map("cookie_id")
   createdAt DateTime @default(now()) @map("created_at")
 
   @@unique([authorId, episodeId])
+  @@index([episodeId])
+  @@index([ipAddress, cookieId, episodeId])
   @@map("likes")
 }
 
@@ -160,14 +164,17 @@ model Subscription {
 }
 
 model Comment {
-  id        String    @id @default(uuid())
-  authorId  String    @map("author_id")
-  episodeId String    @map("episode_id")
-  content   String
-  parentId  String?   @map("parent_id")
-  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
-  replies   Comment[] @relation("CommentReplies")
-  createdAt DateTime  @default(now()) @map("created_at")
+  id           String    @id @default(uuid())
+  authorId     String?   @map("author_id")
+  episodeId    String    @map("episode_id")
+  content      String
+  nickname     String?
+  passwordHash String?   @map("password_hash")
+  ipAddress    String?   @map("ip_address")
+  parentId     String?   @map("parent_id")
+  parent       Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies      Comment[] @relation("CommentReplies")
+  createdAt    DateTime  @default(now()) @map("created_at")
 
   @@index([episodeId, createdAt])
   @@index([parentId])
