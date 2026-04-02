@@ -182,6 +182,19 @@
 | 구독 티어 서버 사이드 검증 | 클라이언트가 보내는 요청을 DB 기반 티어로 교차 검증. 권한 밖 요청 403 차단 |
 | AI 모델 접근 제어 | 티어별 사용 가능 모델 제한 (현재는 서버가 모델을 결정하므로 공격 벡터 없음) |
 
+### 봇/크롤러 방어 (2026-04-02 추가, 비로그인 정책 도입에 따른 긴급)
+
+| 항목 | 현재 | 조치 | 우선순위 |
+|------|------|------|---------|
+| helmet (HTTP 헤더 보안) | 미설치 | `npm install helmet` → main.ts에 `app.use(helmet())` 적용. X-Frame-Options, CSP, HSTS 등 | 높음 |
+| CAPTCHA | 없음 | 회원가입/로그인에 reCAPTCHA v3 또는 hCaptcha 도입. 비로그인 댓글에도 적용 검토 | 높음 |
+| 봇 감지 미들웨어 | 없음 | User-Agent 블랙리스트 + 요청 패턴 분석 미들웨어 추가 | 중간 |
+| User-Agent 검증 | 없음 | 알려진 봇 User-Agent 차단 (curl, python-requests 등 비브라우저 차단) | 중간 |
+| CSRF 토큰 | 없음 | HttpOnly 쿠키 사용 중이라 실효성 제한적이나, 상태 변경 API에 CSRF 토큰 검토 | 낮음 |
+
+> honeypot 필드 (2026-04-02 적용 완료): 비로그인 댓글 작성 시 숨겨진 `website` 필드로 봇 자동 입력 차단.
+> robots.txt (2026-04-02 수정 완료): /api/, /dashboard/, /admin/, /login, /register, /library/ disallow 적용.
+
 ### 트래픽 증가 시
 
 | 항목 | 설명 |

@@ -1,5 +1,43 @@
 # Changelog — grimoire-server
 
+## [0.15.0] - 2026-04-02
+
+### 비로그인 좋아요/댓글 지원 (디시인사이드 스타일)
+
+#### Added
+- OptionalAuthGuard — 토큰 선택적 인증 (비로그인 통과)
+- IP 추출 유틸 (X-Forwarded-For → X-Real-IP → req.ip)
+- 익명 좋아요 — IP + 쿠키 기반 중복 방지, 취소 불가
+- 익명 댓글 — 닉네임 + 비밀번호 (bcrypt 해시), 비번으로 삭제
+- GET /social/likes/:episodeId/status — 좋아요 상태+수 조회 (로그인/비로그인 모두)
+- 익명 관련 테스트 12개 추가 (social.usecase.spec.ts)
+
+#### Changed
+- Like 모델: authorId nullable, ipAddress/cookieId 컬럼 추가
+- Comment 모델: authorId nullable, nickname/passwordHash/ipAddress 컬럼 추가
+- 좋아요/댓글 API: JwtAuthGuard → OptionalAuthGuard 변경
+- docs/api-contract.md, docs/data-model.md 업데이트
+
+---
+
+## [0.14.0] - 2026-04-01
+
+### 테마 resolveTheme + 프리셋 체계 + 결제 리팩터링
+
+#### Added
+- resolveTheme 함수 도입 — preset 기본값 + overrides를 merge한 완전한 테마 객체 반환
+- theme-presets.ts — 9개 프리셋 정의 (midnight, parchment, morning, neon, cream, magazine, gallery, minimal, deerDevil)
+- custom preset 처리 — overrides 기반, 누락 필드는 defaultTypography/defaultUI로 보완
+- layout → episodeListLayout 하위 호환 매핑 (normalizeOverrides)
+- navStyle 삭제 처리 (삭제된 필드 자동 제거)
+- UI 세부 조정 필드 12개 추가 (tabPillRadius, labelLetterSpacing, cardWatermarkOpacity, cardHoverLift, cardCtaText, subtitleStyle, episodeLabelFormat, sectionSpacing, showPreface, showAfterword, showProfileTab, subscribeButtonStyle)
+
+#### Changed
+- 결제 모듈 payappTradeNo → externalTransactionId 리팩터링
+- docs/theme-spec.md 동기화 (web 정본 → server 복사, episodeListLayout 리네이밍 + 새 필드 반영)
+
+---
+
 ## [0.13.0] - 2026-03-31
 
 ### 에피소드 상태값 시스템 + 만료 공유 링크
