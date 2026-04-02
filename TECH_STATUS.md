@@ -7,7 +7,7 @@
 
 ## 1. 현재 버전
 
-**v0.12.0** — 전문 백필 + body limit 2MB + 리소스그룹 통합 + 배포 복구
+**v0.14.0** — 테마 resolveTheme + 9개 프리셋 체계 + 결제 리팩터링 + 에피소드 상태값
 
 ---
 
@@ -22,7 +22,7 @@
 |----------|------|
 | Health | 구현 완료 |
 | Auth (이메일 + Google OAuth) | 구현 완료 |
-| Theme (생성/조회/퍼블리시/CSS) | 구현 완료 |
+| Theme (생성/조회/퍼블리시/CSS/resolveTheme) | 구현 완료 |
 | Manuscript (파싱 + 파일 업로드) | 구현 완료 |
 | Work Management (작품/에피소드 CRUD) | 구현 완료 |
 | Author (공개 조회) | 구현 완료 |
@@ -101,9 +101,10 @@
 
 ## 4. 다음 단계
 
+- Prisma 마이그레이션 히스토리 정비 (squash + 정리)
 - Cloudflare DNS CNAME 레코드 설정
 - Google OAuth 실제 연동 (Client ID 필요)
-- PAYAPP 실제 연동 (API 키 필요)
+- 결제 게이트웨이 실제 연동 (API 키 필요)
 - Redis 캐시 (테마 DB 호출 캐싱)
 - 크레딧-원화-AI토큰 비용 정밀 계산식 구현
 - 계정 잠금 정책 + 감사 로그

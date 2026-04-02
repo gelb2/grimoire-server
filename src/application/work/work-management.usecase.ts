@@ -164,8 +164,15 @@ export class WorkManagementUseCase {
     return episode
   }
 
+  /** 지원하는 텍스트 기반 포맷 */
+  private static readonly SUPPORTED_TEXT_FORMATS = new Set(['md', 'markdown', 'txt', 'html'])
+
   /** rawContent를 Block[]으로 변환 + frontmatter 메타 추출 */
   private parseContentWithMeta(rawContent: string, sourceFormat?: string): { blocks: Block[]; meta?: { slug?: string; subtitle?: string; description?: string; type?: string } } {
+    // 미지원 포맷 검증 (pdf, docx 등은 텍스트 파싱 불가 — 별도 파일 업로드 경로 사용)
+    if (sourceFormat && !WorkManagementUseCase.SUPPORTED_TEXT_FORMATS.has(sourceFormat)) {
+      throw new BadRequestException(`미지원 포맷: ${sourceFormat}. 지원: md, txt, html`)
+    }
     const format = sourceFormat || this.detectFormat(rawContent)
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports

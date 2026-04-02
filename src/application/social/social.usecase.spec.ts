@@ -7,6 +7,8 @@ describe('SocialUseCase', () => {
     toggleLike: jest.Mock
     getLikeCount: jest.Mock
     isLiked: jest.Mock
+    createAnonymousLike: jest.Mock
+    isAnonymousLiked: jest.Mock
     toggleSubscription: jest.Mock
     getSubscriptions: jest.Mock
     getSubscriberCount: jest.Mock
@@ -15,6 +17,8 @@ describe('SocialUseCase', () => {
     getComments: jest.Mock
     deleteComment: jest.Mock
     getCommentCount: jest.Mock
+    createAnonymousComment: jest.Mock
+    deleteAnonymousComment: jest.Mock
     getTotalLikesForAuthor: jest.Mock
   }
 
@@ -38,6 +42,8 @@ describe('SocialUseCase', () => {
       toggleLike: jest.fn().mockResolvedValue({ liked: true, likeCount: 1 }),
       getLikeCount: jest.fn().mockResolvedValue(5),
       isLiked: jest.fn().mockResolvedValue(false),
+      createAnonymousLike: jest.fn().mockResolvedValue({ likeCount: 6 }),
+      isAnonymousLiked: jest.fn().mockResolvedValue(false),
       toggleSubscription: jest.fn().mockResolvedValue({ subscribed: true }),
       getSubscriptions: jest.fn().mockResolvedValue([mockSubscription]),
       getSubscriberCount: jest.fn().mockResolvedValue(10),
@@ -46,6 +52,8 @@ describe('SocialUseCase', () => {
       getComments: jest.fn().mockResolvedValue([mockComment]),
       deleteComment: jest.fn().mockResolvedValue(undefined),
       getCommentCount: jest.fn().mockResolvedValue(3),
+      createAnonymousComment: jest.fn().mockResolvedValue({ ...mockComment, authorId: null, nickname: '익명' }),
+      deleteAnonymousComment: jest.fn().mockResolvedValue(undefined),
       getTotalLikesForAuthor: jest.fn().mockResolvedValue(15),
     }
 
@@ -184,6 +192,140 @@ describe('SocialUseCase', () => {
       await useCase.deleteComment('comment-1', 'author-1')
 
       expect(mockSocialRepo.deleteComment).toHaveBeenCalledWith('comment-1', 'author-1')
+    })
+  })
+
+  // ── 익명 좋아요 ──
+
+  describe('anonymousLike', () => {
+    it('익명 좋아요를 생성하고 liked: true를 반환한다', async () => {
+      const result = await useCase.anonymousLike('ep-1', '127.0.0.1', 'cookie-abc')
+
+      expect(mockSocialRepo.createAnonymousLike).toHaveBeenCalledWith({
+        episodeId: 'ep-1',
+        ipAddress: '127.0.0.1',
+        cookieId: 'cookie-abc',
+      })
+      expect(result.liked).toBe(true)
+      expect(result.likeCount).toBe(6)
+    })
+  })
+
+  describe('getLikeStatus', () => {
+    it('로그인 사용자의 좋아요 상태를 조회한다', async () => {
+      mockSocialRepo.isLiked.mockResolvedValue(true)
+
+      const result = await useCase.getLikeStatus('ep-1', 'author-1')
+
+      expect(mockSocialRepo.isLiked).toHaveBeenCalledWith('author-1', 'ep-1')
+      expect(result.liked).toBe(true)
+      expect(result.likeCount).toBe(5)
+    })
+
+    it('비로그인 사용자의 좋아요 상태를 IP+쿠키로 조회한다', async () => {
+      mockSocialRepo.isAnonymousLiked.mockResolvedValue(true)
+
+      const result = await useCase.getLikeStatus('ep-1', undefined, '127.0.0.1', 'cookie-abc')
+
+      expect(mockSocialRepo.isAnonymousLiked).toHaveBeenCalledWith('127.0.0.1', 'cookie-abc', 'ep-1')
+      expect(result.liked).toBe(true)
+    })
+
+    it('인증 정보 없으면 liked: false를 반환한다', async () => {
+      const result = await useCase.getLikeStatus('ep-1')
+
+      expect(result.liked).toBe(false)
+      expect(result.likeCount).toBe(5)
+    })
+  })
+
+  // ── 익명 댓글 ──
+
+  describe('createAnonymousComment', () => {
+    it('닉네임+비밀번호로 익명 댓글을 생성한다', async () => {
+      const result = await useCase.createAnonymousComment({
+        episodeId: 'ep-1',
+        content: '익명 댓글입니다',
+        nickname: '익명이',
+        password: '1234',
+        ipAddress: '127.0.0.1',
+      })
+
+      expect(mockSocialRepo.createAnonymousComment).toHaveBeenCalled()
+      expect(result.authorId).toBeNull()
+      expect(result.nickname).toBe('익명')
+    })
+
+    it('닉네임이 2자 미만이면 BadRequestException', async () => {
+      await expect(useCase.createAnonymousComment({
+        episodeId: 'ep-1',
+        content: '댓글',
+        nickname: 'a',
+        password: '1234',
+        ipAddress: '127.0.0.1',
+      })).rejects.toThrow(BadRequestException)
+    })
+
+    it('닉네임이 20자 초과이면 BadRequestException', async () => {
+      await expect(useCase.createAnonymousComment({
+        episodeId: 'ep-1',
+        content: '댓글',
+        nickname: 'a'.repeat(21),
+        password: '1234',
+        ipAddress: '127.0.0.1',
+      })).rejects.toThrow(BadRequestException)
+    })
+
+    it('비밀번호가 4자 미만이면 BadRequestException', async () => {
+      await expect(useCase.createAnonymousComment({
+        episodeId: 'ep-1',
+        content: '댓글',
+        nickname: '익명이',
+        password: '123',
+        ipAddress: '127.0.0.1',
+      })).rejects.toThrow(BadRequestException)
+    })
+
+    it('비밀번호가 20자 초과이면 BadRequestException', async () => {
+      await expect(useCase.createAnonymousComment({
+        episodeId: 'ep-1',
+        content: '댓글',
+        nickname: '익명이',
+        password: 'a'.repeat(21),
+        ipAddress: '127.0.0.1',
+      })).rejects.toThrow(BadRequestException)
+    })
+
+    it('빈 내용이면 BadRequestException', async () => {
+      await expect(useCase.createAnonymousComment({
+        episodeId: 'ep-1',
+        content: '',
+        nickname: '익명이',
+        password: '1234',
+        ipAddress: '127.0.0.1',
+      })).rejects.toThrow(BadRequestException)
+    })
+
+    it('HTML 태그를 이스케이프한다', async () => {
+      await useCase.createAnonymousComment({
+        episodeId: 'ep-1',
+        content: '<script>alert("xss")</script>',
+        nickname: '<b>해커</b>',
+        password: '1234',
+        ipAddress: '127.0.0.1',
+      })
+
+      const call = mockSocialRepo.createAnonymousComment.mock.calls[0][0]
+      expect(call.content).toBe('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;')
+      expect(call.nickname).toBe('&lt;b&gt;해커&lt;/b&gt;')
+    })
+  })
+
+  describe('deleteAnonymousComment', () => {
+    it('비밀번호로 익명 댓글 삭제를 레포에 위임한다', async () => {
+      await useCase.deleteAnonymousComment('comment-1', '1234')
+
+      expect(mockSocialRepo.deleteAnonymousComment).toHaveBeenCalledWith('comment-1', '1234')
     })
   })
 })

@@ -17,6 +17,7 @@ const defaultTypography = {
   titleWeight: 'bold',
   letterSpacing: 'normal',
   bodyLineHeight: 'relaxed',
+  bodySize: 'normal',
   contentWidth: 'normal',
   heroStyle: 'minimal',
 }
