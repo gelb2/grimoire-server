@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core'
 import { ValidationPipe } from '@nestjs/common'
 import * as cookieParser from 'cookie-parser'
+import helmet from 'helmet'
 import { AppModule } from './app.module'
 import { validateEnv } from '@infrastructure/config/env.validation'
 
@@ -10,6 +11,9 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     bodyParser: true,
   })
+
+  // HTTP 헤더 보안 (X-Frame-Options, HSTS, CSP 등)
+  app.use(helmet())
 
   // JSON body 크기 제한 확대 (장편소설 원고 업로드 대응)
   app.use(require('express').json({ limit: '2mb' }))
