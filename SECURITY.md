@@ -171,7 +171,7 @@
 
 | 항목 | 현재 | 조치 |
 |------|------|------|
-| Source Map 프로덕션 비활성화 | 미확인 | `next.config`에서 `productionBrowserSourceMaps: false` 확인/설정 |
+| Source Map 프로덕션 비활성화 | ✅ 적용됨 | `next.config.ts`에 `productionBrowserSourceMaps: false` 확인 완료 (2026-04-02) |
 | API 응답 필터링 | 미적용 | 내부 ID, 시스템 메타데이터가 응답에 불필요하게 노출되는지 점검 |
 | CORS origin 폴백 | `localhost:3001` | 환경변수 미설정 시 에러로 차단 (폴백 제거) |
 
@@ -186,8 +186,8 @@
 
 | 항목 | 현재 | 조치 | 우선순위 |
 |------|------|------|---------|
-| helmet (HTTP 헤더 보안) | 미설치 | `npm install helmet` → main.ts에 `app.use(helmet())` 적용. X-Frame-Options, CSP, HSTS 등 | 높음 |
-| CAPTCHA | 없음 | 회원가입/로그인에 reCAPTCHA v3 또는 hCaptcha 도입. 비로그인 댓글에도 적용 검토 | 높음 |
+| helmet (HTTP 헤더 보안) | ✅ 적용됨 | main.ts에 `app.use(helmet())` 적용 완료 (2026-04-02) | 완료 |
+| CAPTCHA | 없음 → 키 발급 대기 | Google reCAPTCHA v3 키 발급 후 회원가입/로그인에 도입 예정 | 높음 |
 | 봇 감지 미들웨어 | 없음 | User-Agent 블랙리스트 + 요청 패턴 분석 미들웨어 추가 | 중간 |
 | User-Agent 검증 | 없음 | 알려진 봇 User-Agent 차단 (curl, python-requests 등 비브라우저 차단) | 중간 |
 | CSRF 토큰 | 없음 | HttpOnly 쿠키 사용 중이라 실효성 제한적이나, 상태 변경 API에 CSRF 토큰 검토 | 낮음 |
