@@ -5,6 +5,7 @@ import { Response } from 'express'
 import { AuthUseCase } from '@application/auth/auth.usecase'
 import { RegisterDto, LoginDto } from '@adapter/inbound/http/dto/auth.dto'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
+import { verifyRecaptcha } from '@adapter/inbound/http/util/recaptcha-verifier'
 
 /** 쿠키 옵션 상수 */
 const COOKIE_NAME = 'grimoire_token'
@@ -36,7 +37,8 @@ export class AuthController {
 
   @Throttle({ default: { ttl: 3600000, limit: 5 } })  // 시간당 5회
   @Post('register')
-  async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) res: Response) {
+  async register(@Body() dto: RegisterDto & { recaptchaToken?: string }, @Res({ passthrough: true }) res: Response) {
+    await verifyRecaptcha(dto.recaptchaToken || '')
     const { author, token } = await this.authUseCase.register(dto)
     setAuthCookie(res, token)
     return {
@@ -53,7 +55,8 @@ export class AuthController {
 
   @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Post('login')
-  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
+  async login(@Body() dto: LoginDto & { recaptchaToken?: string }, @Res({ passthrough: true }) res: Response) {
+    await verifyRecaptcha(dto.recaptchaToken || '')
     const { author, token } = await this.authUseCase.login(dto)
     setAuthCookie(res, token)
     return {
