@@ -28,6 +28,8 @@
 | email | email | String | unique | 이메일 |
 | passwordHash | password_hash | String? | - | 비밀번호 해시 (bcryptjs) |
 | credits | credits | Int | default(3) | 크레딧 잔액 |
+| plan | plan | String | default("free") | 구독 플랜 (free/pro/premium) |
+| planExpireAt | plan_expire_at | DateTime? | - | 플랜 만료일 |
 | theme | - | Theme? | 1:1 관계 | 작가 테마 |
 | works | - | Work[] | 1:N 관계 | 작품 목록 |
 | socialAccounts | - | SocialAccount[] | 1:N 관계 | 소셜 로그인 계정 |
@@ -44,6 +46,7 @@
 | overrides | overrides | Json? | - | AuthorTheme 커스텀 값 (`docs/theme-spec.md` 참조) |
 | rawDescription | raw_description | String? | - | 작가 원본 구술 텍스트 |
 | bakedCssUrl | baked_css_url | String? | - | Baking된 CSS 파일 URL |
+| isSlotted | is_slotted | Boolean | default(true) | 활성 슬롯 배치 여부 |
 | updatedAt | updated_at | DateTime | @updatedAt | 수정일 |
 
 ### works
