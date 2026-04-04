@@ -6,6 +6,7 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler'
 // 인프라
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import { BlobStorageService } from '@infrastructure/storage/blob-storage.service'
+import { SemanticCacheService } from '@lib/semantic-cache'
 
 // 유스케이스
 import { GenerateThemeUseCase } from '@application/theme/generate-theme.usecase'
@@ -98,6 +99,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     // 인프라
     PrismaService,
     BlobStorageService,
+    SemanticCacheService,
 
     // 유스케이스
     GenerateThemeUseCase,
