@@ -9,4 +9,8 @@ export interface ThemeRepositoryPort {
   update(themeId: string, preset: string, overrides: AuthorTheme, rawDescription: string): Promise<Theme>
   delete(themeId: string): Promise<void>
   updateBakedCssUrl(themeId: string, url: string): Promise<void>
+  countSlottedByAuthorId(authorId: string): Promise<number>
+  updateSlotStatus(themeId: string, isSlotted: boolean): Promise<Theme>
+  findSlottedByAuthorId(authorId: string): Promise<Theme[]>
+  unslotAllByAuthorId(authorId: string): Promise<void>
 }

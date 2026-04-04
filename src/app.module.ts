@@ -21,6 +21,8 @@ import { PaymentUseCase } from '@application/payment/payment.usecase'
 import { ReaderUseCase } from '@application/reader/reader.usecase'
 import { DiscoveryUseCase } from '@application/discovery/discovery.usecase'
 import { AdminUseCase } from '@application/admin/admin.usecase'
+import { ThemeSlotUseCase } from '@application/theme/theme-slot.usecase'
+import { PlanUseCase } from '@application/plan/plan.usecase'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
 import { SocialUseCase } from '@application/social/social.usecase'
 import { StatsUseCase } from '@application/stats/stats.usecase'
@@ -41,6 +43,7 @@ import { AnalysisController } from '@adapter/inbound/http/controller/analysis.co
 import { SocialController } from '@adapter/inbound/http/controller/social.controller'
 import { StatsController } from '@adapter/inbound/http/controller/stats.controller'
 import { CreditController } from '@adapter/inbound/http/controller/credit.controller'
+import { PlanController } from '@adapter/inbound/http/controller/plan.controller'
 
 // 아웃바운드 어댑터
 import { PrismaAuthorRepository } from '@adapter/outbound/persistence/prisma-author.repository'
@@ -85,6 +88,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     SocialController,
     StatsController,
     CreditController,
+    PlanController,
   ],
   providers: [
     // 인프라
@@ -105,6 +109,8 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     ReaderUseCase,
     DiscoveryUseCase,
     AdminUseCase,
+    ThemeSlotUseCase,
+    PlanUseCase,
     NovelAnalysisUseCase,
     SocialUseCase,
     StatsUseCase,

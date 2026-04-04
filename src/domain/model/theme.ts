@@ -91,5 +91,6 @@ export interface Theme {
   overrides: AuthorTheme | null
   rawDescription: string | null
   bakedCssUrl: string | null
+  isSlotted: boolean
   updatedAt: Date
 }

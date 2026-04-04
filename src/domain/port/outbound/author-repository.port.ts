@@ -14,4 +14,6 @@ export interface AuthorRepositoryPort {
   updateBio(id: string, bio: string): Promise<Author>
   /** 전체 작가 수 */
   count(): Promise<number>
+  /** 구독 플랜 업데이트 */
+  updatePlan(id: string, plan: string, planExpireAt: Date | null): Promise<Author>
 }
