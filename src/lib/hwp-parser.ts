@@ -112,6 +112,8 @@ function extractBlocksFromSectionXml(xml: string): Block[] {
       const runContent = runMatch[1]
       const isBold = /bold\s*=\s*["']1["']/i.test(runContent) || /<hp:charPr[^>]*bold/i.test(runContent)
       const isItalic = /italic\s*=\s*["']1["']/i.test(runContent) || /<hp:charPr[^>]*italic/i.test(runContent)
+      const isUnderline = /underline\s*=\s*["']1["']/i.test(runContent) || /<hp:charPr[^>]*underline/i.test(runContent)
+      const isStrikethrough = /strikethrough\s*=\s*["']1["']/i.test(runContent) || /<hp:charPr[^>]*strikethrough/i.test(runContent)
 
       const tRegex = /<hp:t\b[^>]*>([\s\S]*?)<\/hp:t>/g
       let tMatch: RegExpExecArray | null
@@ -122,6 +124,8 @@ function extractBlocksFromSectionXml(xml: string): Block[] {
         if (isBold && isItalic) text = `***${text}***`
         else if (isBold) text = `**${text}**`
         else if (isItalic) text = `*${text}*`
+        if (isUnderline) text = `<u>${text}</u>`
+        if (isStrikethrough) text = `~~${text}~~`
         textParts.push(text)
       }
     }
