@@ -102,7 +102,16 @@ const THEME_SYSTEM_PROMPT = `당신은 소설 퍼블리싱 플랫폼의 웹 테�
 - 둥근 느낌 → cardRadius: "12px", tabPillRadius: "24px"
 - 날카로운 느낌 → cardRadius: "4px", tabPillRadius: "8px"
 - 모던 → cardRadius: "8px", tabPillRadius: "20px"
-- cardCtaText: 한국어 CTA (기본 "읽기 →", 분위기에 따라 "계속 읽기 →", "다음 이야기 →" 등)`
+- cardCtaText: 한국어 CTA (기본 "읽기 →", 분위기에 따라 "계속 읽기 →", "다음 이야기 →" 등)
+
+=== 절대 규칙 ===
+- 빈 문자열("")을 값으로 사용하지 마세요. 모든 문자열 필드에 의미 있는 값을 넣으세요.
+- decorations.dividerColor는 반드시 accent와 어울리는 #hex 색상을 넣으세요.
+- decorations.headerSubtitle는 반드시 영문 대문자 카테고리를 넣으세요.
+- decorations.footerText는 반드시 작가/작품 분위기를 표현하는 문장을 넣으세요.
+- tagline은 반드시 작가공간을 대표하는 한 줄 문구를 넣으세요.
+- headerIcon은 "none" 대신 작품 분위기에 맞는 아이콘을 선택하세요.
+- cardAccentPosition은 "none" 대신 "left"를 기본으로 사용하세요.`
 
 @Injectable()
 export class ClaudeThemeAdapter implements ClaudeApiPort {
@@ -110,7 +119,27 @@ export class ClaudeThemeAdapter implements ClaudeApiPort {
     const response = await askClaude(THEME_SYSTEM_PROMPT, description, {
       maxTokens: 2048,
     })
-    return parseClaudeJSON<AuthorTheme>(response)
+    const theme = parseClaudeJSON<AuthorTheme>(response)
+    return this.ensureNoEmptyValues(theme)
+  }
+
+  /** Claude 응답에서 빈 문자열/누락값을 기본값으로 보정 */
+  private ensureNoEmptyValues(theme: AuthorTheme): AuthorTheme {
+    const d = theme.decorations ?? {} as any
+    const accent = theme.accent || '#9a8060'
+
+    if (!d.dividerColor) d.dividerColor = accent
+    if (!d.headerSubtitle) d.headerSubtitle = 'FICTION'
+    if (!d.footerText) d.footerText = theme.tagline || 'A story worth reading'
+    if (!d.headerIcon || d.headerIcon === 'none') d.headerIcon = 'dot'
+    if (!d.cardAccentPosition || d.cardAccentPosition === 'none') d.cardAccentPosition = 'left'
+    if (!d.dividerIcon) d.dividerIcon = 'dot'
+    theme.decorations = d
+
+    if (!theme.tagline) theme.tagline = d.footerText || ''
+    if (!theme.heroStyle) theme.heroStyle = 'minimal'
+
+    return theme
   }
 
   async ask(systemPrompt: string, userMessage: string, options?: { maxTokens?: number }): Promise<string> {
