@@ -115,6 +115,12 @@ function stripHtmlTags(html: string): string {
     // 이탤릭
     .replace(/<em>([\s\S]*?)<\/em>/gi, '*$1*')
     .replace(/<i>([\s\S]*?)<\/i>/gi, '*$1*')
+    // 밑줄 → HTML <u> 태그로 보존 (프론트에서 parseInlineText가 처리)
+    .replace(/<u>([\s\S]*?)<\/u>/gi, '<u>$1</u>')
+    // 취소선 → ~~text~~ (마크다운 확장)
+    .replace(/<s>([\s\S]*?)<\/s>/gi, '~~$1~~')
+    .replace(/<del>([\s\S]*?)<\/del>/gi, '~~$1~~')
+    .replace(/<strike>([\s\S]*?)<\/strike>/gi, '~~$1~~')
     // 나머지 태그 제거
     .replace(/<[^>]+>/g, '')
     // HTML 엔티티 디코딩
