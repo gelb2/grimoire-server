@@ -9,11 +9,13 @@ export interface Author {
   bio?: string
   role: string
   credits: number
+  plan: string
+  planExpireAt: Date | null
   createdAt: Date
 }
 
 /** 외부 노출용 작가 정보 (민감 필드 제거) */
-export type SafeAuthor = Omit<Author, 'passwordHash' | 'email' | 'role'>
+export type SafeAuthor = Omit<Author, 'passwordHash' | 'email' | 'role' | 'planExpireAt'>
 
 /** 작가 공개 프로필 — SafeAuthor + 통계 + 작품 목록 */
 export interface AuthorPublicProfile {
@@ -25,7 +27,7 @@ export interface AuthorPublicProfile {
 
 /** Author → SafeAuthor 변환 (passwordHash, email, role 제거) */
 export function toSafeAuthor(author: Author): SafeAuthor {
-  const { passwordHash, email, role, ...safe } = author
+  const { passwordHash, email, role, planExpireAt, ...safe } = author
   return safe
 }
 

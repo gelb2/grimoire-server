@@ -26,16 +26,17 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
       where: { slug },
       select: { defaultThemeId: true },
     })
-    if (!author?.defaultThemeId) {
-      // defaultThemeId 없으면 첫 번째 테마 반환 (하위 호환)
-      const firstTheme = await this.prisma.theme.findFirst({
-        where: { author: { slug } },
-        orderBy: { updatedAt: 'desc' },
-      })
-      return firstTheme ? toDomain(firstTheme) : null
+    if (author?.defaultThemeId) {
+      const theme = await this.prisma.theme.findUnique({ where: { id: author.defaultThemeId } })
+      // defaultThemeId가 슬롯에 있는 경우만 반환
+      if (theme?.isSlotted) return toDomain(theme)
     }
-    const theme = await this.prisma.theme.findUnique({ where: { id: author.defaultThemeId } })
-    return theme ? toDomain(theme) : null
+    // defaultThemeId 없거나 비슬롯 → 슬롯된 첫 번째 테마 반환
+    const firstSlotted = await this.prisma.theme.findFirst({
+      where: { author: { slug }, isSlotted: true },
+      orderBy: { updatedAt: 'desc' },
+    })
+    return firstSlotted ? toDomain(firstSlotted) : null
   }
 
   async countByAuthorId(authorId: string): Promise<number> {
@@ -93,6 +94,33 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
       data: { bakedCssUrl: url },
     })
   }
+
+  async countSlottedByAuthorId(authorId: string): Promise<number> {
+    return this.prisma.theme.count({ where: { authorId, isSlotted: true } })
+  }
+
+  async updateSlotStatus(themeId: string, isSlotted: boolean): Promise<Theme> {
+    const row = await this.prisma.theme.update({
+      where: { id: themeId },
+      data: { isSlotted },
+    })
+    return toDomain(row)
+  }
+
+  async findSlottedByAuthorId(authorId: string): Promise<Theme[]> {
+    const rows = await this.prisma.theme.findMany({
+      where: { authorId, isSlotted: true },
+      orderBy: { updatedAt: 'desc' },
+    })
+    return rows.map(toDomain)
+  }
+
+  async unslotAllByAuthorId(authorId: string): Promise<void> {
+    await this.prisma.theme.updateMany({
+      where: { authorId },
+      data: { isSlotted: false },
+    })
+  }
 }
 
 function toDomain(row: {
@@ -103,6 +131,7 @@ function toDomain(row: {
   overrides: unknown
   rawDescription: string | null
   bakedCssUrl: string | null
+  isSlotted: boolean
   updatedAt: Date
 }): Theme {
   return {
@@ -113,6 +142,7 @@ function toDomain(row: {
     overrides: row.overrides as AuthorTheme | null,
     rawDescription: row.rawDescription,
     bakedCssUrl: row.bakedCssUrl,
+    isSlotted: row.isSlotted,
     updatedAt: row.updatedAt,
   }
 }

@@ -224,6 +224,18 @@ const minimal = {
 }
 
 /** 프리셋 맵 — preset 이름으로 기본값 조회 */
+/** 시스템 기본 테마 — 만기 시 폴백용 */
+const systemDefault: Record<string, unknown> = {
+  bgPrimary: '#f8f7f5', bgSecondary: '#ffffff',
+  textPrimary: '#1a1918', textMuted: '#6b6967', textDim: '#9a9894', textBright: '#000000',
+  accent: '#475569', accent2: '#64748b', border: '#e2e0dd',
+  fontBody: 'serif', fontHeading: 'serif',
+  animation: 'fade', tone: 'light', episodeListLayout: 'grid',
+  decorations: { dividerIcon: 'dot', dividerColor: '#64748b', headerIcon: 'dot', headerSubtitle: 'GRIMOIRE LIBRARY', cardAccentPosition: 'left', footerText: '당신만의 이야기를 시작하세요' },
+  ...defaultTypography, ...defaultUI,
+  tagline: '모든 이야기가 시작되는 곳',
+}
+
 export const themePresets: Record<string, Record<string, unknown>> = {
   midnight,
   deerDevil: midnight,
@@ -234,6 +246,7 @@ export const themePresets: Record<string, Record<string, unknown>> = {
   magazine,
   gallery,
   minimal,
+  'system-default': systemDefault,
 }
 
 /**

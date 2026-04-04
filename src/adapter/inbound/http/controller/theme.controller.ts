@@ -19,6 +19,7 @@ import { Response } from 'express'
 import { GenerateThemeUseCase } from '@application/theme/generate-theme.usecase'
 import { GetThemeUseCase } from '@application/theme/get-theme.usecase'
 import { BakeThemeUseCase } from '@application/theme/bake-theme.usecase'
+import { ThemeSlotUseCase } from '@application/theme/theme-slot.usecase'
 import { GenerateThemeDto } from '../dto/theme.dto'
 import { bakeThemeToCSS } from '@lib/theme-baker'
 import { resolveTheme } from '@domain/model/theme-presets'
@@ -30,6 +31,7 @@ export class ThemeController {
     private readonly generateTheme: GenerateThemeUseCase,
     private readonly getTheme: GetThemeUseCase,
     private readonly bakeTheme: BakeThemeUseCase,
+    private readonly themeSlot: ThemeSlotUseCase,
   ) {}
 
   /** 테마 AI 생성 (슬롯 체크 포함) */
@@ -62,6 +64,29 @@ export class ThemeController {
   async deleteTheme(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string) {
     await this.getTheme.deleteTheme(req.user.sub, themeId)
     return { deleted: true }
+  }
+
+  /** 테마를 슬롯에 배치 */
+  @Post(':themeId/slot')
+  @UseGuards(JwtAuthGuard)
+  async assignSlot(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string) {
+    const theme = await this.themeSlot.assignSlot(req.user.sub, themeId)
+    return { themeId: theme.id, isSlotted: theme.isSlotted }
+  }
+
+  /** 테마를 슬롯에서 제거 */
+  @Delete(':themeId/slot')
+  @UseGuards(JwtAuthGuard)
+  async removeFromSlot(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string) {
+    const theme = await this.themeSlot.removeFromSlot(req.user.sub, themeId)
+    return { themeId: theme.id, isSlotted: theme.isSlotted }
+  }
+
+  /** 슬롯 현황 조회 */
+  @Get('slots/info')
+  @UseGuards(JwtAuthGuard)
+  async getSlotInfo(@Req() req: AuthenticatedRequest) {
+    return this.themeSlot.getSlotInfo(req.user.sub)
   }
 
   /** 테마를 CSS로 베이킹 */

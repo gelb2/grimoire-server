@@ -1,4 +1,4 @@
-import { Injectable, Inject, BadRequestException, NotFoundException } from '@nestjs/common'
+import { Injectable, Inject, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common'
 import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
 import { ThemeRepositoryPort } from '@domain/port/outbound/theme-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
@@ -6,6 +6,7 @@ import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.po
 import { CreditReason } from '@domain/model/credit'
 import { Theme } from '@domain/model/theme'
 import { THEME_SLOT_LIMITS } from '@domain/model/config'
+import { isPlanExpired } from '@domain/model/plan'
 
 @Injectable()
 export class GenerateThemeUseCase {
@@ -23,21 +24,23 @@ export class GenerateThemeUseCase {
       throw new NotFoundException('작가를 찾을 수 없습니다')
     }
 
-    // 테마 슬롯 확인
-    const plan = 'free' // 추후 author.plan으로 전환
+    // 플랜 만기 체크
+    if (isPlanExpired(author.plan, author.planExpireAt)) {
+      throw new ForbiddenException('구독 플랜이 만료되었습니다. 플랜을 갱신하세요.')
+    }
+
+    // 슬롯 여유 체크 (슬롯에 배치된 테마 수 기준)
+    const plan = author.plan
     const slotLimit = THEME_SLOT_LIMITS[plan] ?? 1
-    const currentCount = await this.themeRepo.countByAuthorId(authorId)
-    if (currentCount >= slotLimit) {
+    const slottedCount = await this.themeRepo.countSlottedByAuthorId(authorId)
+    if (slottedCount >= slotLimit) {
       throw new BadRequestException(
-        `테마 슬롯이 가득 찼습니다 (${currentCount}/${slotLimit}). 기존 테마를 삭제하세요.`,
+        `테마 슬롯이 가득 찼습니다 (${slottedCount}/${slotLimit}). 기존 테마를 슬롯에서 제거하세요.`,
       )
     }
 
-    // 일일 무료 생성 횟수 확인 (추후 Redis 등으로 전환)
-    // 현재는 항상 크레딧 차감 (일일 무료 횟수 추적은 Phase 2)
+    // 크레딧 확인 + 즉시 차감
     const reason = CreditReason.THEME_GENERATE
-
-    // 크레딧 확인 + 즉시 차감 (Tajook 패턴)
     if (author.credits < 1) {
       throw new BadRequestException('크레딧이 부족합니다')
     }
@@ -58,8 +61,8 @@ export class GenerateThemeUseCase {
       : themeData.tone === 'light' ? 'morning'
       : 'custom'
 
-    // DB에 저장 (create — 슬롯 제한 이미 체크됨)
-    const name = themeName ?? `테마 ${currentCount + 1}`
+    // DB에 저장 (isSlotted=true 기본값 → 자동으로 슬롯에 배치)
+    const name = themeName ?? `테마 ${slottedCount + 1}`
     return this.themeRepo.create(authorId, name, preset, themeData, description)
   }
 }
