@@ -52,6 +52,20 @@ export async function parseHwpx(
   try {
     const zip = await JSZip.loadAsync(buffer)
 
+    // Zip bomb 방어: 압축해제 총 크기 50MB 제한
+    const MAX_UNCOMPRESSED = 50 * 1024 * 1024
+    let totalSize = 0
+    for (const filename of Object.keys(zip.files)) {
+      const file = zip.files[filename]
+      if (!file.dir) {
+        const content = await file.async('uint8array')
+        totalSize += content.length
+        if (totalSize > MAX_UNCOMPRESSED) {
+          throw new Error('HWPX 파일이 너무 큽니다 (압축해제 50MB 초과)')
+        }
+      }
+    }
+
     // section 파일들을 순서대로 수집
     const sectionFiles = Object.keys(zip.files)
       .filter((name) => /^Contents\/section\d+\.xml$/i.test(name))

@@ -39,7 +39,8 @@ export class ThemeController {
   @Post('generate')
   @UseGuards(JwtAuthGuard)
   async generate(@Req() req: AuthenticatedRequest, @Body() dto: GenerateThemeDto) {
-    const theme = await this.generateTheme.execute(dto.authorId, dto.description, dto.name)
+    // IDOR 방지: body의 authorId 대신 JWT의 sub 사용
+    const theme = await this.generateTheme.execute(req.user.sub, dto.description, dto.name)
     return { themeId: theme.id, preview: theme.overrides }
   }
 
