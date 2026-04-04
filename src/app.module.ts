@@ -24,6 +24,7 @@ import { AdminUseCase } from '@application/admin/admin.usecase'
 import { ThemeSlotUseCase } from '@application/theme/theme-slot.usecase'
 import { PlanUseCase } from '@application/plan/plan.usecase'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
+import { ChatUseCase } from '@application/chat/chat.usecase'
 import { SocialUseCase } from '@application/social/social.usecase'
 import { StatsUseCase } from '@application/stats/stats.usecase'
 
@@ -44,6 +45,7 @@ import { SocialController } from '@adapter/inbound/http/controller/social.contro
 import { StatsController } from '@adapter/inbound/http/controller/stats.controller'
 import { CreditController } from '@adapter/inbound/http/controller/credit.controller'
 import { PlanController } from '@adapter/inbound/http/controller/plan.controller'
+import { ChatController } from '@adapter/inbound/http/controller/chat.controller'
 
 // 아웃바운드 어댑터
 import { PrismaAuthorRepository } from '@adapter/outbound/persistence/prisma-author.repository'
@@ -53,6 +55,7 @@ import { PrismaCreditRepository } from '@adapter/outbound/persistence/prisma-cre
 import { PrismaReaderRepository } from '@adapter/outbound/persistence/prisma-reader.repository'
 import { PrismaSocialRepository } from '@adapter/outbound/persistence/prisma-social.repository'
 import { PrismaStatsRepository } from '@adapter/outbound/persistence/prisma-stats.repository'
+import { PrismaChatRepository } from '@adapter/outbound/persistence/prisma-chat.repository'
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
 import { OpenAIEmbeddingAdapter } from '@adapter/outbound/embedding/openai-embedding.adapter'
 import { PgVectorAdapter } from '@adapter/outbound/vector/pgvector.adapter'
@@ -89,6 +92,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     StatsController,
     CreditController,
     PlanController,
+    ChatController,
   ],
   providers: [
     // 인프라
@@ -112,6 +116,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     ThemeSlotUseCase,
     PlanUseCase,
     NovelAnalysisUseCase,
+    ChatUseCase,
     SocialUseCase,
     StatsUseCase,
     JwtAuthGuard,
@@ -132,6 +137,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'EmbeddingPort', useClass: OpenAIEmbeddingAdapter },
     { provide: 'VectorStorePort', useClass: PgVectorAdapter },
     { provide: 'PaymentGatewayPort', useClass: PayappAdapter },
+    { provide: 'ChatRepositoryPort', useClass: PrismaChatRepository },
     { provide: 'BlobStoragePort', useClass: BlobStorageService },
   ],
 })
