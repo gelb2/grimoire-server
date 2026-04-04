@@ -17,6 +17,8 @@ model Author {
   bio             String?
   role            String          @default("user")
   credits         Int             @default(3)
+  plan            String          @default("free")
+  planExpireAt    DateTime?       @map("plan_expire_at")
   defaultThemeId  String?         @map("default_theme_id")
   themes          Theme[]
   works           Work[]
@@ -35,6 +37,7 @@ model Theme {
   overrides      Json?
   rawDescription String?  @map("raw_description")
   bakedCssUrl    String?  @map("baked_css_url")
+  isSlotted      Boolean  @default(true) @map("is_slotted")
   updatedAt      DateTime @updatedAt @map("updated_at")
   works          Work[]
 
