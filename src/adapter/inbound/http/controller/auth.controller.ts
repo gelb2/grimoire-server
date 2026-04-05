@@ -107,4 +107,12 @@ export class AuthController {
       role: author.role,
     }
   }
+
+  /** 비밀번호 변경 */
+  @UseGuards(JwtAuthGuard)
+  @Post('change-password')
+  async changePassword(@Req() req: AuthenticatedRequest, @Body() body: { currentPassword: string; newPassword: string }) {
+    await this.authUseCase.changePassword(req.user.sub, body.currentPassword, body.newPassword)
+    return { success: true }
+  }
 }
