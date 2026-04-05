@@ -253,9 +253,9 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
 
 function toWorkDomain(row: {
   id: string; authorId: string; slug: string; title: string;
-  subtitle: string | null; description: string | null; coverImage?: string | null; themeId?: string | null; viewCount?: number; createdAt: Date
+  subtitle: string | null; description: string | null; coverImage?: string | null; context?: string | null; instructions?: string | null; themeId?: string | null; viewCount?: number; createdAt: Date
 }): Work {
-  return { id: row.id, authorId: row.authorId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, coverImage: row.coverImage ?? null, themeId: row.themeId ?? null, viewCount: row.viewCount ?? 0, createdAt: row.createdAt }
+  return { id: row.id, authorId: row.authorId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, coverImage: row.coverImage ?? null, context: row.context ?? null, instructions: row.instructions ?? null, themeId: row.themeId ?? null, viewCount: row.viewCount ?? 0, createdAt: row.createdAt }
 }
 
 function toEpisodeDomain(row: {

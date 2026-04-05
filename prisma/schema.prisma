@@ -54,6 +54,8 @@ model Work {
   subtitle    String?
   description String?
   coverImage  String?   @map("cover_image")
+  context     String?   // 작품 맥락 (세계관, 캐릭터, 배경 — 채팅 시 고정 주입)
+  instructions String?  // 작품 지침 (문체 규칙, 톤, 금지사항 — 채팅 시 고정 주입)
   themeId     String?   @map("theme_id")
   theme       Theme?    @relation(fields: [themeId], references: [id])
   viewCount   Int       @default(0) @map("view_count")
