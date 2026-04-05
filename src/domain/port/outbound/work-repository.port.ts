@@ -24,6 +24,7 @@ export interface WorkRepositoryPort {
     sourceFormat?: string
   }): Promise<Episode>
   deleteEpisode(id: string): Promise<void>
+  updateEpisodeIndexed(id: string, isIndexed: boolean): Promise<void>
   countByAuthorId(authorId: string): Promise<number>
   countEpisodesByWorkId(workId: string): Promise<number>
   /** 제목으로 작품 검색 (LIKE) */
