@@ -112,4 +112,19 @@ export class AuthUseCase {
     }
     return author
   }
+
+  /** 비밀번호 변경 */
+  async changePassword(authorId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const author = await this.authorRepo.findById(authorId)
+    if (!author) throw new BadRequestException('작가를 찾을 수 없습니다')
+    if (!author.passwordHash) throw new BadRequestException('소셜 로그인 계정은 비밀번호를 변경할 수 없습니다')
+
+    const isMatch = await bcrypt.compare(currentPassword, author.passwordHash)
+    if (!isMatch) throw new UnauthorizedException('현재 비밀번호가 올바르지 않습니다')
+
+    if (newPassword.length < 6) throw new BadRequestException('새 비밀번호는 6자 이상이어야 합니다')
+
+    const newHash = await bcrypt.hash(newPassword, 10)
+    await this.authorRepo.updatePasswordHash(authorId, newHash)
+  }
 }

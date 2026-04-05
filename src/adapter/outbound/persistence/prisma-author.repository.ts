@@ -82,6 +82,14 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
     })
     return toDomain(row)
   }
+
+  async updatePasswordHash(id: string, passwordHash: string): Promise<Author> {
+    const row = await this.prisma.author.update({
+      where: { id },
+      data: { passwordHash },
+    })
+    return toDomain(row)
+  }
 }
 
 function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; bio?: string | null; role: string; credits: number; plan: string; planExpireAt?: Date | null; createdAt: Date }): Author {
