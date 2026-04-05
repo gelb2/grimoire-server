@@ -114,6 +114,10 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     await this.prisma.episode.delete({ where: { id } })
   }
 
+  async updateEpisodeIndexed(id: string, isIndexed: boolean): Promise<void> {
+    await this.prisma.episode.update({ where: { id }, data: { isIndexed } })
+  }
+
   async countByAuthorId(authorId: string): Promise<number> {
     return this.prisma.work.count({ where: { authorId } })
   }

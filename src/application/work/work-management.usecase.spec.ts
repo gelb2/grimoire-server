@@ -54,7 +54,8 @@ describe('WorkManagementUseCase', () => {
       findEpisodesFiltered: jest.fn(),
     }
     const mockBlobStorage = { isEnabled: false, uploadImage: jest.fn(), deleteImage: jest.fn() } as any
-    useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage)
+    const mockNovelAnalysis = { indexEpisode: jest.fn().mockResolvedValue({ chunkCount: 0, tokensUsed: 0 }) } as any
+    useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage, mockNovelAnalysis)
   })
 
   describe('createWork', () => {
