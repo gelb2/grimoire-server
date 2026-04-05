@@ -16,4 +16,6 @@ export interface AuthorRepositoryPort {
   count(): Promise<number>
   /** 구독 플랜 업데이트 */
   updatePlan(id: string, plan: string, planExpireAt: Date | null): Promise<Author>
+  /** 비밀번호 해시 업데이트 */
+  updatePasswordHash(id: string, passwordHash: string): Promise<Author>
 }
