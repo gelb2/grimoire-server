@@ -82,6 +82,7 @@ model Episode {
   viewCount      Int       @default(0) @map("view_count")
   sourceFormat   String    @default("markdown") @map("source_format")
   status         String    @default("upload") @map("status")
+  isIndexed      Boolean   @default(false) @map("is_indexed")
   sharedToken    String?   @unique @map("shared_token")
   sharedExpireAt DateTime? @map("shared_expire_at")
   createdAt      DateTime  @default(now()) @map("created_at")

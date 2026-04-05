@@ -4,12 +4,14 @@ import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
 import { Work, Episode, EpisodeStatus } from '@domain/model/work'
 import { Block } from '@domain/model/block'
+import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
 
 @Injectable()
 export class WorkManagementUseCase {
   constructor(
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
     @Inject('BlobStoragePort') private readonly blobStorage: BlobStoragePort,
+    private readonly novelAnalysis: NovelAnalysisUseCase,
   ) {}
 
   /** 작품 생성 */
@@ -76,7 +78,7 @@ export class WorkManagementUseCase {
     // 포맷에 따라 블록 파싱 + frontmatter 메타 추출 + 정규화
     const { blocks, meta } = this.parseContentWithMeta(input.rawContent, input.sourceFormat)
 
-    return this.workRepo.createEpisode({
+    const episode = await this.workRepo.createEpisode({
       workId: work.id,
       slug: meta?.slug || slug || `episode-${orderNum}`,
       title: input.title,
@@ -88,6 +90,15 @@ export class WorkManagementUseCase {
       rawMd: input.rawContent,
       sourceFormat: input.sourceFormat || 'markdown',
     })
+
+    // 비동기 RAG 인덱싱 (에피소드 생성 응답은 즉시 반환)
+    if (input.rawContent.length >= 100) {
+      this.novelAnalysis.indexEpisode(episode.id, work.id, input.rawContent)
+        .then(() => this.workRepo.updateEpisodeIndexed(episode.id, true))
+        .catch(() => { /* 인덱싱 실패해도 에피소드 생성은 성공 */ })
+    }
+
+    return episode
   }
 
   /** 에피소드 삭제 (소유권 검증) */
