@@ -60,6 +60,8 @@
 | title | title | String | - | 작품 제목 |
 | subtitle | subtitle | String? | - | 부제 |
 | description | description | String? | - | 설명 |
+| context | context | String? | - | 작품 맥락/프로젝트 메모리 (AI 채팅 시 주입) |
+| instructions | instructions | String? | - | 작품 지침 (문체 규칙, 톤 — AI 채팅 시 주입) |
 | viewCount | view_count | Int | default(0) | 조회수 |
 | episodes | - | Episode[] | 1:N 관계 | 에피소드 목록 |
 | createdAt | created_at | DateTime | default(now()) | 생성일 |
@@ -74,6 +76,7 @@
 | slug | slug | String | @@unique([workId, slug]) | URL 경로 |
 | title | title | String | - | 제목 |
 | subtitle | subtitle | String? | - | 부제 |
+| description | description | String? | - | 에피소드 설명 |
 | type | type | String | default("episode") | 에피소드 유형 (episode/preface/afterword/bonus) |
 | orderNum | order_num | Int | - | 순서 |
 | blocks | blocks | Json | - | 파싱된 Block[] (`docs/glossary.md` Block 타입 참조) |
@@ -81,6 +84,7 @@
 | viewCount | view_count | Int | default(0) | 조회수 |
 | sourceFormat | source_format | String | default("markdown") | 원고 포맷 (markdown/txt/docx) |
 | status | status | String | default("upload") | 상태 (upload/public/nonPublic/shared) |
+| isIndexed | is_indexed | Boolean | default(false) | RAG 벡터 인덱싱 완료 여부 |
 | sharedToken | shared_token | String? | @unique | 공유 링크 토큰 |
 | sharedExpireAt | shared_expire_at | DateTime? | - | 공유 링크 만료 시각 |
 | createdAt | created_at | DateTime | default(now()) | 생성일 |
@@ -139,8 +143,10 @@
 | Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
 |-------------|---------|------|------|------|
 | id | id | String (uuid) | PK | 식별자 |
-| authorId | author_id | String | @@unique([authorId, episodeId]) | 독자(작가) ID |
-| episodeId | episode_id | String | @@unique([authorId, episodeId]) | 에피소드 ID |
+| authorId | author_id | String? | @@unique([authorId, episodeId]) | 독자 ID (null=익명) |
+| episodeId | episode_id | String | @@index | 에피소드 ID |
+| ipAddress | ip_address | String? | @@index(ip+cookie+episode) | 익명 좋아요 IP |
+| cookieId | cookie_id | String? | @@index(ip+cookie+episode) | 익명 브라우저 식별 |
 | createdAt | created_at | DateTime | default(now()) | 좋아요 생성일 |
 
 ### subscriptions
@@ -157,9 +163,15 @@
 | Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
 |-------------|---------|------|------|------|
 | id | id | String (uuid) | PK | 식별자 |
-| authorId | author_id | String | - | 작성자 ID |
-| episodeId | episode_id | String | - | 에피소드 ID |
+| authorId | author_id | String? | - | 작성자 ID (null=익명) |
+| episodeId | episode_id | String | @@index(episode+created) | 에피소드 ID |
 | content | content | String | - | 댓글 내용 (1~500자) |
+| nickname | nickname | String? | - | 익명 댓글 닉네임 |
+| passwordHash | password_hash | String? | - | 익명 댓글 비밀번호 (bcrypt) |
+| ipAddress | ip_address | String? | - | 익명 댓글 IP |
+| parentId | parent_id | String? | FK→comments, @@index | 부모 댓글 (대댓글용) |
+| parent | - | Comment? | 관계 ("CommentReplies") | 부모 참조 |
+| replies | - | Comment[] | 관계 ("CommentReplies") | 대댓글 목록 |
 | createdAt | created_at | DateTime | default(now()) | 작성일 |
 
 ### payments
@@ -171,10 +183,33 @@
 | productId | product_id | String | - | 상품 ID |
 | amount | amount | Int | - | 결제 금액 (원) |
 | credits | credits | Int | - | 부여 크레딧 수 |
-| payappTradeNo | payapp_trade_no | String? | unique | PAYAPP 거래 번호 |
+| externalTransactionId | external_transaction_id | String? | unique | 외부 결제 거래 번호 |
 | status | status | String | default("pending") | 결제 상태 (pending/completed/failed) |
 | createdAt | created_at | DateTime | default(now()) | 결제 요청일 |
 | completedAt | completed_at | DateTime? | - | 결제 완료일 |
+
+### chat_sessions
+
+| Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
+|-------------|---------|------|------|------|
+| id | id | String (uuid) | PK | 세션 식별자 |
+| authorId | author_id | String | @@index([authorId, workId]) | 작가 ID |
+| workId | work_id | String | @@index([authorId, workId]) | 작품 ID |
+| title | title | String | default("새 대화") | 세션 제목 |
+| messages | - | ChatMessage[] | 1:N 관계 | 메시지 목록 |
+| createdAt | created_at | DateTime | default(now()) | 생성일 |
+| updatedAt | updated_at | DateTime | @updatedAt | 수정일 |
+
+### chat_messages
+
+| Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
+|-------------|---------|------|------|------|
+| id | id | String (uuid) | PK | 메시지 식별자 |
+| session | - | ChatSession | 관계 (onDelete: Cascade) | 세션 참조 |
+| sessionId | session_id | String | FK→chat_sessions, @@index([sessionId, createdAt]) | 세션 |
+| role | role | String | - | 역할 ("user" \| "assistant") |
+| content | content | String | - | 메시지 내용 |
+| createdAt | created_at | DateTime | default(now()) | 작성일 |
 
 ---
 
@@ -211,10 +246,11 @@
 ## 5. 관계 다이어그램
 
 ```
-Author ──1:1── Theme
+Author ──1:N── Theme
 Author ──1:N── Work ──1:N── Episode
 Author ──1:N── SocialAccount
-Author ──1:N── CreditLog (비정규화 — FK 없음, 감사용)
+Author ──1:N── CreditLog
+ChatSession ──1:N── ChatMessage (cascade delete) (비정규화 — FK 없음, 감사용)
 SignupHistory (독립 — 재가입 방지 전용)
 Bookmark (authorId + episodeId — FK 없음, 독자 행위 기록)
 ReadingProgress (authorId + episodeId — FK 없음, 독자 행위 기록)
