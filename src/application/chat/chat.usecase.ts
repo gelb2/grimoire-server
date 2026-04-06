@@ -47,13 +47,22 @@ export class ChatUseCase {
     // 1. 사용자 메시지 저장
     const userMsg = await this.chatRepo.addMessage(sessionId, 'user', userMessage)
 
-    // 2. Work의 context + instructions 로드 (프로젝트 메모리/지침)
+    // 2. Work의 context + instructions + 에피소드 매니페스트 로드
     let workContext = ''
     let workInstructions = ''
+    let episodeManifest = ''
     try {
       const work = await this.workRepo.findById(session.workId)
       if (work?.context) workContext = work.context
       if (work?.instructions) workInstructions = work.instructions
+
+      // 에피소드 매니페스트 자동 생성 (DB에서 읽기)
+      const episodes = await this.workRepo.findEpisodes(session.workId)
+      if (episodes.length > 0) {
+        episodeManifest = episodes
+          .map(ep => `${ep.type === 'episode' ? `ep${ep.orderNum}` : ep.type}: ${ep.title}`)
+          .join('\n')
+      }
     } catch { /* 무시 */ }
 
     // 3. RAG: 질문 임베딩 → 관련 원고 청크 검색 (25개로 증가)
@@ -75,10 +84,13 @@ export class ChatUseCase {
       .map(m => `${m.role === 'user' ? '작가' : 'AI'}: ${m.content}`)
       .join('\n\n')
 
-    // 5. 시스템 프롬프트 조립: 고정 지침 + 작품 맥락 + 작품 지침
+    // 5. 시스템 프롬프트 조립: 고정 지침 + 매니페스트 + 맥락 + 지침
     let systemPrompt = CHAT_SYSTEM_PROMPT
+    if (episodeManifest) {
+      systemPrompt += `\n\n=== 이 작품의 에피소드 목록 (정확히 이것만 존재함, 이 목록에 없는 에피소드를 만들지 마라) ===\n${episodeManifest}`
+    }
     if (workContext) {
-      systemPrompt += `\n\n=== 작품 맥락 (항상 참고) ===\n${workContext}`
+      systemPrompt += `\n\n=== 프로젝트 메모리 (AI가 축적한 작품 정보) ===\n${workContext}`
     }
     if (workInstructions) {
       systemPrompt += `\n\n=== 작품 지침 (항상 따를 것) ===\n${workInstructions}`
