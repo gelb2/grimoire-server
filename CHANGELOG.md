@@ -1,5 +1,29 @@
 # Changelog — grimoire-server
 
+## [0.16.0] - 2026-04-07
+
+### AI 채팅 + 구독 플랜 + 시맨틱 캐싱
+
+#### Added
+- AI 채팅 기능 — RAG 기반 작가 어시스턴트 (세션/메시지/히스토리 API 5개)
+- 자정 프로젝트 메모리 자동 재생성 (MemoryRegenerationService, @Cron)
+- 에피소드 매니페스트 자동 주입 (시스템 프롬프트)
+- 에피소드 업로드 시 자동 RAG 인덱싱 + Episode.isIndexed 필드
+- Work.context/instructions 필드 — AI 채팅 시 고정 주입
+- 구독 플랜 시스템 (free/pro/premium) + Author.plan/planExpireAt
+- 테마 슬롯 관리 (Theme.isSlotted, 활성/보관, 슬롯 용량 제한)
+- 시맨틱 캐싱 서비스 (분석+테마+채팅 공용, pgvector 유사도 검색)
+- POST /admin/authors/:authorId/plan — 관리자 플랜 수동 설정
+- GET /plan — 플랜 정보 조회
+- @nestjs/schedule 패키지 추가
+
+#### Changed
+- Theme 모델: name, isSlotted 필드 추가
+- Author 모델: plan, planExpireAt 필드 추가
+- 문서 일괄 현행화 (api-contract, data-model, glossary, SCHEMA, theme-spec)
+
+---
+
 ## [0.15.0] - 2026-04-02
 
 ### 비로그인 좋아요/댓글 지원 (디시인사이드 스타일)
