@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common'
 import { APP_GUARD } from '@nestjs/core'
 import { JwtModule } from '@nestjs/jwt'
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler'
+import { ScheduleModule } from '@nestjs/schedule'
 
 // 인프라
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
@@ -26,6 +27,7 @@ import { ThemeSlotUseCase } from '@application/theme/theme-slot.usecase'
 import { PlanUseCase } from '@application/plan/plan.usecase'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
 import { ChatUseCase } from '@application/chat/chat.usecase'
+import { MemoryRegenerationService } from '@application/chat/memory-regeneration.service'
 import { SocialUseCase } from '@application/social/social.usecase'
 import { StatsUseCase } from '@application/stats/stats.usecase'
 
@@ -66,6 +68,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'grimoire-dev-secret',
       signOptions: { expiresIn: '7d' },
@@ -119,6 +122,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     PlanUseCase,
     NovelAnalysisUseCase,
     ChatUseCase,
+    MemoryRegenerationService,
     SocialUseCase,
     StatsUseCase,
     JwtAuthGuard,
