@@ -1,6 +1,7 @@
 /**
- * 테마 프리셋 정의 — 프론트엔드 presets.ts와 동일한 값
- * API가 preset + overrides를 merge해서 완전한 테마를 내려줄 때 사용
+ * 테마 프리셋 정의 — 시스템 프리셋 8종 (DB system theme의 원본 값)
+ * 프리셋 = DB에 authorId=null, source='system'으로 저장된 시스템 테마
+ * deerDevil은 프리셋이 아님 (사슴악마 작가의 테마 데이터)
  */
 
 const defaultDecorations = {
@@ -37,7 +38,7 @@ const defaultUI = {
   subscribeButtonStyle: 'outlined',
 }
 
-// Midnight — 시스템 기본 다크 프리셋 (deerDevil과 독립적)
+// Midnight — 시스템 다크 프리셋 (book 아이콘, 보라 계열 accent)
 const midnight = {
   bgPrimary: '#08080e',
   bgSecondary: '#0e0e16',
@@ -65,33 +66,6 @@ const midnight = {
   ...defaultUI,
 }
 
-// DeerDevil — 사슴악마 작가 AI 생성 전용 테마 (antler 아이콘)
-const deerDevil = {
-  bgPrimary: '#07070a',
-  bgSecondary: '#0d0d12',
-  textPrimary: '#cdc8bc',
-  textMuted: '#7a7570',
-  textDim: '#4a4740',
-  textBright: '#e8e3d8',
-  accent: '#9a8060',
-  accent2: '#c4a46a',
-  border: '#1e1e26',
-  fontBody: 'serif',
-  fontHeading: 'serif',
-  animation: 'typing',
-  tone: 'dark',
-  episodeListLayout: 'series',
-  decorations: {
-    dividerIcon: 'antler',
-    dividerColor: '#9a8060',
-    headerIcon: 'antler',
-    headerSubtitle: 'Short Fiction Anthology',
-    cardAccentPosition: 'left',
-    footerText: 'Inspired by the sensibility of A24',
-  },
-  ...defaultTypography,
-  ...defaultUI,
-}
 
 const parchment = {
   bgPrimary: '#f5f0e8',
@@ -252,22 +226,9 @@ const minimal = {
   ...defaultUI,
 }
 
-/** 프리셋 맵 — preset 이름으로 기본값 조회 */
-/** 시스템 기본 테마 — 만기 시 폴백용 */
-const systemDefault: Record<string, unknown> = {
-  bgPrimary: '#f8f7f5', bgSecondary: '#ffffff',
-  textPrimary: '#1a1918', textMuted: '#6b6967', textDim: '#9a9894', textBright: '#000000',
-  accent: '#475569', accent2: '#64748b', border: '#e2e0dd',
-  fontBody: 'serif', fontHeading: 'serif',
-  animation: 'fade', tone: 'light', episodeListLayout: 'grid',
-  decorations: { dividerIcon: 'dot', dividerColor: '#64748b', headerIcon: 'dot', headerSubtitle: 'GRIMOIRE LIBRARY', cardAccentPosition: 'left', footerText: '당신만의 이야기를 시작하세요' },
-  ...defaultTypography, ...defaultUI,
-  tagline: '모든 이야기가 시작되는 곳',
-}
-
+/** 프리셋 맵 — 시스템 프리셋 8종. DB system theme 삽입 시 원본으로 사용 */
 export const themePresets: Record<string, Record<string, unknown>> = {
   midnight,
-  deerDevil,
   parchment,
   morning,
   neon,
@@ -275,45 +236,5 @@ export const themePresets: Record<string, Record<string, unknown>> = {
   magazine,
   gallery,
   minimal,
-  'system-default': systemDefault,
 }
 
-/**
- * preset 기본값 + overrides를 merge한 완전한 테마 객체 반환
- * overrides가 우선, preset이 베이스
- */
-/** 하위 호환: layout → episodeListLayout 매핑 */
-function normalizeOverrides(overrides: Record<string, unknown>): Record<string, unknown> {
-  const result = { ...overrides }
-  // layout → episodeListLayout 하위 호환
-  if (result.layout && !result.episodeListLayout) {
-    result.episodeListLayout = result.layout
-  }
-  // navStyle 제거 (삭제된 필드)
-  delete result.navStyle
-  return result
-}
-
-export function resolveTheme(preset: string, overrides: Record<string, unknown> | null): Record<string, unknown> {
-  const normalized = overrides ? normalizeOverrides(overrides) : null
-
-  // custom preset: overrides가 곧 테마. 누락 필드는 defaultTypography/defaultUI로만 보완.
-  if (preset === 'custom') {
-    if (!normalized || Object.keys(normalized).length === 0) return { ...themePresets['midnight'] }
-    const baseDecorations = (normalized.decorations ?? defaultDecorations) as Record<string, unknown>
-    return { ...defaultTypography, ...defaultUI, decorations: { ...defaultDecorations, ...baseDecorations }, ...normalized }
-  }
-
-  // 프리셋 preset: preset 기본값을 베이스로, overrides로 덮어쓰기.
-  const base = themePresets[preset] ?? themePresets['midnight']
-  if (!normalized || Object.keys(normalized).length === 0) return { ...base }
-
-  const baseDecorations = (base.decorations ?? defaultDecorations) as Record<string, unknown>
-  const overrideDecorations = (normalized.decorations ?? {}) as Record<string, unknown>
-
-  return {
-    ...base,
-    ...normalized,
-    decorations: { ...baseDecorations, ...overrideDecorations },
-  }
-}
