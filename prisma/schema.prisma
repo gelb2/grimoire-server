@@ -37,7 +37,7 @@ model Theme {
   overrides      Json?
   rawDescription String?  @map("raw_description")
   bakedCssUrl    String?  @map("baked_css_url")
-  isSlotted      Boolean  @default(true) @map("is_slotted")
+  isSlotted      Boolean  @default(false) @map("is_slotted")
   source         String   @default("user")
   updatedAt      DateTime @updatedAt @map("updated_at")
   works          Work[]
