@@ -75,6 +75,23 @@ describe('parseDocx', () => {
     expect(result.blocks).toHaveLength(0)
   })
 
+  it('변환 결과가 50MB 초과하면 에러를 던진다', async () => {
+    // 50MB 초과하는 HTML 생성
+    const hugeHtml = '<p>' + 'x'.repeat(51 * 1024 * 1024) + '</p>'
+    mockConvertToHtml.mockResolvedValue({
+      value: hugeHtml,
+      messages: [],
+    })
+
+    await expect(parseDocx(Buffer.from('dummy'))).rejects.toThrow('DOCX 파일 콘텐츠가 너무 큽니다')
+  })
+
+  it('mammoth 에러 시 예외를 전파한다', async () => {
+    mockConvertToHtml.mockRejectedValue(new Error('Unsupported file type'))
+
+    await expect(parseDocx(Buffer.from('dummy'))).rejects.toThrow('Unsupported file type')
+  })
+
   it('metadata로 frontmatter를 생성한다', async () => {
     mockConvertToHtml.mockResolvedValue({
       value: '<p>내용</p>',

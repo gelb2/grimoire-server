@@ -72,16 +72,28 @@ export class ParseManuscriptUseCase {
         return { frontmatter: result.frontmatter, title, blocks: result.blocks }
       }
       case 'docx': {
-        const result = await parseDocx(buffer, metadata)
-        return { frontmatter: result.frontmatter, title, blocks: result.blocks }
+        try {
+          const result = await parseDocx(buffer, metadata)
+          return { frontmatter: result.frontmatter, title, blocks: result.blocks }
+        } catch (err) {
+          throw new BadRequestException(err instanceof Error ? err.message : 'DOCX 파싱 실패')
+        }
       }
       case 'hwp': {
-        const result = await parseHwp(buffer, metadata)
-        return { frontmatter: result.frontmatter, title, blocks: result.blocks }
+        try {
+          const result = await parseHwp(buffer, metadata)
+          return { frontmatter: result.frontmatter, title, blocks: result.blocks }
+        } catch (err) {
+          throw new BadRequestException(err instanceof Error ? err.message : 'HWP 파싱 실패')
+        }
       }
       case 'hwpx': {
-        const result = await parseHwpx(buffer, metadata)
-        return { frontmatter: result.frontmatter, title, blocks: result.blocks }
+        try {
+          const result = await parseHwpx(buffer, metadata)
+          return { frontmatter: result.frontmatter, title, blocks: result.blocks }
+        } catch (err) {
+          throw new BadRequestException(err instanceof Error ? err.message : 'HWPX 파싱 실패')
+        }
       }
       default:
         throw new BadRequestException(`지원하지 않는 포맷: ${format}`)

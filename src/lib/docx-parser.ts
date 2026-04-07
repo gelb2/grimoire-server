@@ -1,9 +1,15 @@
 import * as mammoth from 'mammoth'
 import { Block, Frontmatter } from '@domain/model'
 
+/** mammoth 변환 결과 HTML 최대 크기: 50MB (HWPX Zip Bomb 방어와 동일 기준) */
+const MAX_HTML_SIZE = 50 * 1024 * 1024
+
 /**
  * DOCX 파일 Buffer를 Block[]로 변환하는 파서
  * mammoth로 HTML 추출 -> 간단한 HTML->Block[] 변환
+ *
+ * 보안: mammoth 변환 결과가 50MB를 초과하면 에러를 던진다.
+ * DOCX 내부는 ZIP 컨테이너이므로, 작은 파일이라도 해제 후 거대한 콘텐츠가 될 수 있다.
  */
 export async function parseDocx(
   buffer: Buffer,
@@ -11,6 +17,12 @@ export async function parseDocx(
 ): Promise<{ frontmatter: Frontmatter; blocks: Block[] }> {
   const result = await mammoth.convertToHtml({ buffer })
   const html = result.value
+
+  // 콘텐츠 크기 방어: mammoth 출력 HTML이 50MB 초과 시 거부
+  if (Buffer.byteLength(html, 'utf-8') > MAX_HTML_SIZE) {
+    throw new Error('DOCX 파일 콘텐츠가 너무 큽니다 (변환 결과 50MB 초과)')
+  }
+
   const blocks = htmlToBlocks(html)
 
   const frontmatter: Frontmatter = {
