@@ -6,7 +6,7 @@
 
 /** 장식 요소 */
 export interface ThemeDecorations {
-  dividerIcon: 'antler' | 'flower' | 'star' | 'geometric' | 'brush' | 'leaf' | 'camellia' | 'umbrella' | 'waterwheel' | 'dot' | 'line' | 'none'
+  dividerIcon: 'antler' | 'flower' | 'star' | 'geometric' | 'brush' | 'leaf' | 'camellia' | 'umbrella' | 'waterwheel' | 'book' | 'dot' | 'line' | 'none'
   dividerColor: string
   headerIcon: 'antler' | 'quill' | 'book' | 'dot' | 'none'
   headerSubtitle: string
@@ -92,5 +92,6 @@ export interface Theme {
   rawDescription: string | null
   bakedCssUrl: string | null
   isSlotted: boolean
+  source: 'system' | 'ai' | 'user'
   updatedAt: Date
 }
