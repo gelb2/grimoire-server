@@ -49,6 +49,14 @@ export class GetThemeUseCase {
     return this.themeRepo.findByAuthorSlug(authorSlug)
   }
 
+  /** 개별 테마 조회 (소유권 확인) */
+  async findById(authorId: string, themeId: string): Promise<Theme> {
+    const theme = await this.themeRepo.findById(themeId)
+    if (!theme) throw new NotFoundException('테마를 찾을 수 없습니다')
+    if (theme.authorId !== authorId) throw new ForbiddenException('본인의 테마만 조회할 수 있습니다')
+    return theme
+  }
+
   /** 내 테마 목록 조회 (슬롯 여부 무관 — 대시보드용) */
   async listByAuthor(authorId: string): Promise<Theme[]> {
     return this.themeRepo.findAllByAuthorId(authorId)
@@ -60,7 +68,7 @@ export class GetThemeUseCase {
     if (!theme) throw new NotFoundException('테마를 찾을 수 없습니다')
     if (theme.authorId !== authorId) throw new ForbiddenException('본인의 테마만 수정할 수 있습니다')
 
-    return this.themeRepo.update(themeId, 'custom', overrides, 'manual_edit')
+    return this.themeRepo.update(themeId, 'custom', overrides, 'manual_edit', 'user')
   }
 
   /** 테마 삭제 */

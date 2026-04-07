@@ -63,6 +63,6 @@ export class GenerateThemeUseCase {
 
     // DB에 저장 (isSlotted=true 기본값 → 자동으로 슬롯에 배치)
     const name = themeName ?? `테마 ${slottedCount + 1}`
-    return this.themeRepo.create(authorId, name, preset, themeData, description)
+    return this.themeRepo.create(authorId, name, preset, themeData, description, 'ai')
   }
 }

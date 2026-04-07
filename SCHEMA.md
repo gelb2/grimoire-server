@@ -47,6 +47,7 @@
 | rawDescription | raw_description | String? | - | 작가 원본 구술 텍스트 |
 | bakedCssUrl | baked_css_url | String? | - | Baking된 CSS 파일 URL |
 | isSlotted | is_slotted | Boolean | default(true) | 활성 슬롯 배치 여부 |
+| source | source | String | default("user") | 테마 출처 (system/ai/user) |
 | updatedAt | updated_at | DateTime | @updatedAt | 수정일 |
 
 ### works
