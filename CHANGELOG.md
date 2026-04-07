@@ -1,5 +1,36 @@
 # Changelog — grimoire-server
 
+## [0.19.0] - 2026-04-08
+
+### 테마 시스템 정합성 정리 — 데드코드 제거 + 문서 보강
+
+#### Changed
+- themePresets에서 deerDevil, system-default 제거 (프리셋 아닌 데드코드)
+- resolveTheme(), normalizeOverrides() 미사용 함수 제거
+- isSlotted 기본값 true → false (기획 의도: 보관 상태로 생성)
+- theme-spec.md 프리셋 표 8종 완성 (Magazine, Gallery, Minimal 추가)
+- glossary.md 프리셋 정의 보강 (deerDevil 제외 명시)
+- midnight 주석 수정 (book 아이콘, 보라 accent)
+
+---
+
+## [0.18.0] - 2026-04-07
+
+### 시스템 테마 DB 통합 + 프리셋 API
+
+#### Added
+- 시스템 테마 8종 DB INSERT (authorId=null, source=system)
+- GET /themes/presets — 시스템 프리셋 목록 API (deerDevil, system-default 제외)
+- POST /themes/from-preset — 프리셋에서 테마 생성 API
+
+#### Changed
+- SYSTEM_DEFAULT_THEME 하드코딩 제거 → DB 시스템 테마(midnight) 폴백
+- resolveTheme() 머지 로직 제거 — overrides가 곧 완전한 테마
+- 슬롯 제한값 기획서 기준 수정 (Pro=3, Premium=8)
+- 시스템 테마 수정/삭제 차단 (ForbiddenException)
+
+---
+
 ## [0.17.0] - 2026-04-07
 
 ### 테마 시스템 리팩토링 — source 필드 + deerDevil 분리 + 개별 조회 API
