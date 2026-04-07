@@ -6,6 +6,13 @@
 
 ## 단기 (Phase 1 마무리)
 
+### 보안
+- [ ] 🔴 IDOR: 테마 생성에서 `dto.authorId` → `req.user.sub`로 변경 (`theme.controller.ts`)
+- [ ] 🟡 크레딧 차감 Race Condition: `$transaction`으로 체크+차감 원자화 (`generate-theme.usecase.ts`)
+- [ ] 🟡 HWPX Zip Bomb: 압축해제 크기 50MB 제한 추가 (`hwp-parser.ts`)
+- [ ] DOCX 파싱: mammoth 추출 콘텐츠 최대 크기 제한
+- [ ] CORS_ORIGIN 누락 시 명시적 에러 또는 localhost 폴백
+
 ### 외부 연동
 - [ ] 결제 게이트웨이 실제 연동 (PayApp or Polar — API 키 발급 필요)
 - [ ] 결제 웹훅 서명 검증 (키 발급 후)
