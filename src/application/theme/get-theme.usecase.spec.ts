@@ -12,7 +12,7 @@ describe('GetThemeUseCase', () => {
   const mockTheme = {
     id: 'theme-1', authorId: 'author-1', name: '다크 테마', preset: 'midnight',
     overrides: { bgPrimary: '#0a0a0a' }, rawDescription: '어두운 분위기',
-    bakedCssUrl: null, isSlotted: true, updatedAt: new Date(),
+    bakedCssUrl: null, isSlotted: true, source: 'ai', updatedAt: new Date(),
   }
 
   beforeEach(() => {
@@ -70,7 +70,7 @@ describe('GetThemeUseCase', () => {
       mockThemeRepo.findById.mockResolvedValue(mockTheme)
       mockThemeRepo.update.mockResolvedValue({ ...mockTheme, overrides: { bgPrimary: '#ffffff' } })
       const result = await useCase.updateOverrides('author-1', 'theme-1', { bgPrimary: '#ffffff' } as any)
-      expect(mockThemeRepo.update).toHaveBeenCalledWith('theme-1', 'custom', { bgPrimary: '#ffffff' }, 'manual_edit')
+      expect(mockThemeRepo.update).toHaveBeenCalledWith('theme-1', 'custom', { bgPrimary: '#ffffff' }, 'manual_edit', 'user')
     })
 
     it('다른 작가의 테마를 수정하면 ForbiddenException', async () => {

@@ -16,7 +16,7 @@ describe('GenerateThemeUseCase', () => {
     animation: 'typing' as const, tone: 'dark' as const,
     episodeListLayout: 'series' as const, decorations: { dividerIcon: 'dot' as const, dividerColor: '#c4a46c', headerIcon: 'dot' as const, headerSubtitle: 'TEST', cardAccentPosition: 'left' as const, footerText: 'test' },
   }
-  const mockTheme = { id: 'theme-1', authorId: 'author-1', name: '테마 1', preset: 'midnight', overrides: mockThemeData, rawDescription: '어둡고 묵직한', bakedCssUrl: null, isSlotted: true, updatedAt: new Date() }
+  const mockTheme = { id: 'theme-1', authorId: 'author-1', name: '테마 1', preset: 'midnight', overrides: mockThemeData, rawDescription: '어둡고 묵직한', bakedCssUrl: null, isSlotted: true, source: 'ai' as const, updatedAt: new Date() }
 
   beforeEach(() => {
     mockClaudeApi = { generateTheme: jest.fn().mockResolvedValue(mockThemeData) }
@@ -68,7 +68,7 @@ describe('GenerateThemeUseCase', () => {
     const lightTheme = { ...mockThemeData, tone: 'light' as const }
     mockClaudeApi.generateTheme.mockResolvedValue(lightTheme)
     await useCase.execute('author-1', '밝은 분위기')
-    expect(mockThemeRepo.create).toHaveBeenCalledWith('author-1', '테마 1', 'morning', lightTheme, '밝은 분위기')
+    expect(mockThemeRepo.create).toHaveBeenCalledWith('author-1', '테마 1', 'morning', lightTheme, '밝은 분위기', 'ai')
   })
 
   it('Claude API 실패 시 크레딧을 환불한다', async () => {

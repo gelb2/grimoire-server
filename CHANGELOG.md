@@ -1,5 +1,23 @@
 # Changelog — grimoire-server
 
+## [0.17.0] - 2026-04-07
+
+### 테마 시스템 리팩토링 — source 필드 + deerDevil 분리 + 개별 조회 API
+
+#### Added
+- Theme 모델에 `source` 필드 추가 (system/ai/user) — 테마 출처 명시적 구분
+- GET /themes/detail/:themeId — 개별 테마 상세 조회 API (인증, 소유권 확인, resolved theme 반환)
+- GetThemeUseCase.findById — 소유권 확인 포함 개별 조회
+- dividerIcon/headerIcon에 "book" 옵션 추가
+
+#### Changed
+- deerDevil/midnight 프리셋 독립 분리 (midnight: book 아이콘+은보라 색상, deerDevil: antler 유지)
+- generate-theme: source='ai' 기록
+- updateOverrides: source='user' 기록
+- seed-themes: deerdevil 작가 preset을 'deerDevil'로 변경
+
+---
+
 ## [0.16.0] - 2026-04-07
 
 ### AI 채팅 + 구독 플랜 + 시맨틱 캐싱

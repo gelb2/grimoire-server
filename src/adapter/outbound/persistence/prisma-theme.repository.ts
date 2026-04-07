@@ -49,6 +49,7 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
     preset: string,
     overrides: AuthorTheme,
     rawDescription: string,
+    source: string = 'user',
   ): Promise<Theme> {
     const row = await this.prisma.theme.create({
       data: {
@@ -57,6 +58,7 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
         preset,
         overrides: overrides as object,
         rawDescription,
+        source,
       },
     })
     return toDomain(row)
@@ -67,6 +69,7 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
     preset: string,
     overrides: AuthorTheme,
     rawDescription: string,
+    source?: string,
   ): Promise<Theme> {
     const row = await this.prisma.theme.update({
       where: { id: themeId },
@@ -74,6 +77,7 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
         preset,
         overrides: overrides as object,
         rawDescription,
+        ...(source && { source }),
       },
     })
     return toDomain(row)
@@ -132,6 +136,7 @@ function toDomain(row: {
   rawDescription: string | null
   bakedCssUrl: string | null
   isSlotted: boolean
+  source: string
   updatedAt: Date
 }): Theme {
   return {
@@ -143,6 +148,7 @@ function toDomain(row: {
     rawDescription: row.rawDescription,
     bakedCssUrl: row.bakedCssUrl,
     isSlotted: row.isSlotted,
+    source: row.source as 'system' | 'ai' | 'user',
     updatedAt: row.updatedAt,
   }
 }

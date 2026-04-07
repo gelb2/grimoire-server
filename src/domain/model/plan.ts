@@ -68,5 +68,6 @@ export const SYSTEM_DEFAULT_THEME: Theme = {
   rawDescription: null,
   bakedCssUrl: null,
   isSlotted: false,
+  source: 'system',
   updatedAt: new Date('2026-01-01'),
 }
