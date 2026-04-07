@@ -65,7 +65,7 @@ export class GenerateThemeUseCase {
     })
   }
 
-  /** 시스템 테마를 복사하여 작가 테마 생성 (크레딧 소모 없음) */
+  /** 시스템 테마를 복사하여 작가 테마 생성 (크레딧 소모 없음, 중복 방지) */
   async createFromPreset(authorId: string, presetName: string, themeName?: string): Promise<Theme> {
     // DB에서 시스템 테마 조회
     const systemTheme = await this.themeRepo.findSystemThemeByPreset(presetName)
@@ -78,8 +78,16 @@ export class GenerateThemeUseCase {
       throw new ForbiddenException('구독 플랜이 만료되었습니다. 플랜을 갱신하세요.')
     }
 
+    // 중복 방지: 같은 프리셋 기반 + 수정되지 않은 테마가 이미 있으면 기존 것 반환
+    const existing = await this.themeRepo.findAllByAuthorId(authorId)
+    const duplicate = existing.find((t) => {
+      if (t.preset !== presetName) return false
+      // overrides가 시스템 테마 원본과 동일하면 중복
+      return JSON.stringify(t.overrides) === JSON.stringify(systemTheme.overrides)
+    })
+    if (duplicate) return duplicate
+
     const name = themeName ?? systemTheme.name
-    // 시스템 테마의 overrides(전체 테마값)를 복사 → 작가 소유 테마 생성 (보관 상태)
     return this.themeRepo.create(authorId, name, presetName, systemTheme.overrides as any, `프리셋 복사: ${presetName}`, 'user')
   }
 }

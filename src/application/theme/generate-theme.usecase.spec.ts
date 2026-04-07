@@ -97,6 +97,10 @@ describe('GenerateThemeUseCase', () => {
   })
 
   describe('createFromPreset', () => {
+    beforeEach(() => {
+      mockThemeRepo.findAllByAuthorId.mockResolvedValue([])
+    })
+
     it('시스템 테마를 복사하여 작가 테마를 생성한다 (크레딧 소모 없음)', async () => {
       await useCase.createFromPreset('author-1', 'midnight')
       expect(mockCreditRepo.adjustCredits).not.toHaveBeenCalled()
@@ -116,6 +120,21 @@ describe('GenerateThemeUseCase', () => {
       expect(mockThemeRepo.create).toHaveBeenCalledWith(
         'author-1', '나의 다크 테마', 'midnight', mockThemeData, '프리셋 복사: midnight', 'user',
       )
+    })
+
+    it('동일 프리셋 + 동일 값의 테마가 이미 있으면 기존 테마 반환 (중복 방지)', async () => {
+      const existingTheme = { ...mockTheme, id: 'existing-1', preset: 'midnight', overrides: mockThemeData }
+      mockThemeRepo.findAllByAuthorId.mockResolvedValue([existingTheme])
+      const result = await useCase.createFromPreset('author-1', 'midnight')
+      expect(result).toEqual(existingTheme)
+      expect(mockThemeRepo.create).not.toHaveBeenCalled()
+    })
+
+    it('같은 프리셋이지만 값이 수정된 테마가 있으면 새로 생성', async () => {
+      const customized = { ...mockTheme, preset: 'midnight', overrides: { ...mockThemeData, bgPrimary: '#ffffff' } }
+      mockThemeRepo.findAllByAuthorId.mockResolvedValue([customized])
+      await useCase.createFromPreset('author-1', 'midnight')
+      expect(mockThemeRepo.create).toHaveBeenCalled()
     })
   })
 })
