@@ -283,6 +283,18 @@ describe('parseHwpx', () => {
     expect(result.frontmatter.subtitle).toBe('부제')
   })
 
+  it('압축해제 크기가 50MB 초과하면 에러를 던진다 (Zip Bomb 방어)', async () => {
+    // 50MB 이상의 콘텐츠를 가진 ZIP 생성
+    const zip = new JSZip()
+    // 각 파일이 10MB씩, 6개 = 60MB > 50MB 제한
+    for (let i = 0; i < 6; i++) {
+      zip.file(`Contents/section${i}.xml`, 'x'.repeat(10 * 1024 * 1024))
+    }
+    const buffer = await zip.generateAsync({ type: 'nodebuffer' }) as Buffer
+
+    await expect(parseHwpx(buffer)).rejects.toThrow('압축해제 50MB 초과')
+  })
+
   it('여러 section 파일을 순서대로 파싱한다', async () => {
     const xml0 = `<?xml version="1.0" encoding="UTF-8"?>
       <hs:sec xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph"
