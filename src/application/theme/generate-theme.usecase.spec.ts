@@ -77,4 +77,59 @@ describe('GenerateThemeUseCase', () => {
     expect(mockCreditRepo.adjustCredits).toHaveBeenCalledTimes(2)
     expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 1, 'theme_generate_refund')
   })
+
+  // ── 시스템 프리셋 테스트 ──
+
+  describe('listPresets', () => {
+    it('시스템 프리셋 목록을 반환한다 (deerDevil, system-default 제외)', () => {
+      const presets = useCase.listPresets()
+      const names = presets.map((p) => p.name)
+      expect(names).toContain('midnight')
+      expect(names).toContain('parchment')
+      expect(names).toContain('morning')
+      expect(names).not.toContain('deerDevil')
+      expect(names).not.toContain('system-default')
+      expect(presets.length).toBeGreaterThanOrEqual(7)
+    })
+
+    it('각 프리셋에 미리보기 색상 정보가 포함된다', () => {
+      const presets = useCase.listPresets()
+      for (const p of presets) {
+        expect(p.preview).toBeDefined()
+        expect(p.preview.bgPrimary).toBeDefined()
+        expect(p.preview.accent).toBeDefined()
+        expect(p.tone).toBeDefined()
+      }
+    })
+  })
+
+  describe('createFromPreset', () => {
+    it('프리셋으로 테마를 생성한다 (크레딧 소모 없음)', async () => {
+      await useCase.createFromPreset('author-1', 'midnight')
+      expect(mockCreditRepo.adjustCredits).not.toHaveBeenCalled()
+      expect(mockThemeRepo.create).toHaveBeenCalledWith(
+        'author-1', '미드나잇', 'midnight', expect.anything(), '프리셋: midnight', 'system',
+      )
+    })
+
+    it('유효하지 않은 프리셋이면 BadRequestException', async () => {
+      await expect(useCase.createFromPreset('author-1', 'invalid')).rejects.toThrow(BadRequestException)
+    })
+
+    it('deerDevil 프리셋은 선택 불가', async () => {
+      await expect(useCase.createFromPreset('author-1', 'deerDevil')).rejects.toThrow(BadRequestException)
+    })
+
+    it('슬롯이 가득 차면 BadRequestException', async () => {
+      mockThemeRepo.countSlottedByAuthorId.mockResolvedValue(1)
+      await expect(useCase.createFromPreset('author-1', 'midnight')).rejects.toThrow(BadRequestException)
+    })
+
+    it('커스텀 이름을 지정할 수 있다', async () => {
+      await useCase.createFromPreset('author-1', 'cream', '나의 크림 테마')
+      expect(mockThemeRepo.create).toHaveBeenCalledWith(
+        'author-1', '나의 크림 테마', 'cream', expect.anything(), '프리셋: cream', 'system',
+      )
+    })
+  })
 })

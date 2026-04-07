@@ -34,6 +34,20 @@ export class ThemeController {
     private readonly themeSlot: ThemeSlotUseCase,
   ) {}
 
+  /** 시스템 프리셋 목록 조회 (인증 불요) */
+  @Get('presets')
+  listPresets() {
+    return this.generateTheme.listPresets()
+  }
+
+  /** 프리셋으로 테마 생성 (크레딧 소모 없음) */
+  @Post('from-preset')
+  @UseGuards(JwtAuthGuard)
+  async createFromPreset(@Req() req: AuthenticatedRequest, @Body() body: { preset: string; name?: string }) {
+    const theme = await this.generateTheme.createFromPreset(req.user.sub, body.preset, body.name)
+    return { themeId: theme.id, preset: theme.preset, name: theme.name }
+  }
+
   /** 테마 AI 생성 (슬롯 체크 포함) */
   @Throttle({ default: { ttl: 60000, limit: 5 } })
   @Post('generate')
