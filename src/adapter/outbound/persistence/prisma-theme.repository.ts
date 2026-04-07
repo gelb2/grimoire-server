@@ -125,11 +125,26 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
       data: { isSlotted: false },
     })
   }
+
+  async findSystemThemes(): Promise<Theme[]> {
+    const rows = await this.prisma.theme.findMany({
+      where: { authorId: { equals: null }, source: 'system' },
+      orderBy: { name: 'asc' },
+    })
+    return rows.map(toDomain)
+  }
+
+  async findSystemThemeByPreset(preset: string): Promise<Theme | null> {
+    const row = await this.prisma.theme.findFirst({
+      where: { authorId: { equals: null }, source: 'system', preset },
+    })
+    return row ? toDomain(row) : null
+  }
 }
 
 function toDomain(row: {
   id: string
-  authorId: string
+  authorId: string | null
   name: string
   preset: string
   overrides: unknown
