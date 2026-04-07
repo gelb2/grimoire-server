@@ -85,7 +85,7 @@ export interface AuthorTheme {
 /** DB에 저장되는 테마 엔티티 */
 export interface Theme {
   id: string
-  authorId: string
+  authorId: string | null
   name: string
   preset: string
   overrides: AuthorTheme | null

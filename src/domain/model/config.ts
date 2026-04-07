@@ -6,8 +6,8 @@
 /** 구독 플랜별 테마 슬롯 제한 */
 export const THEME_SLOT_LIMITS: Record<string, number> = {
   free: 1,
-  pro: 5,
-  premium: Infinity,
+  pro: 3,
+  premium: 8,
 }
 
 /** 구독 플랜별 일일 무료 생성 제한 */

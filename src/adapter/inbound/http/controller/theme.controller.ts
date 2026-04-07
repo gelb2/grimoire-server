@@ -22,7 +22,6 @@ import { BakeThemeUseCase } from '@application/theme/bake-theme.usecase'
 import { ThemeSlotUseCase } from '@application/theme/theme-slot.usecase'
 import { GenerateThemeDto } from '../dto/theme.dto'
 import { bakeThemeToCSS } from '@lib/theme-baker'
-import { resolveTheme } from '@domain/model/theme-presets'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 
 @Controller('themes')
@@ -36,7 +35,7 @@ export class ThemeController {
 
   /** 시스템 프리셋 목록 조회 (인증 불요) */
   @Get('presets')
-  listPresets() {
+  async listPresets() {
     return this.generateTheme.listPresets()
   }
 
@@ -109,8 +108,8 @@ export class ThemeController {
   @UseGuards(JwtAuthGuard)
   async getThemeById(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string) {
     const theme = await this.getTheme.findById(req.user.sub, themeId)
-    const resolved = resolveTheme(theme.preset, theme.overrides as Record<string, unknown> | null)
-    return { ...theme, authorId: undefined, theme: resolved }
+    const { authorId, ...safe } = theme as any
+    return { ...safe, theme: theme.overrides }
   }
 
   /** 테마를 CSS로 베이킹 */
@@ -147,13 +146,11 @@ export class ThemeController {
     return theme ?? {}
   }
 
-  /** 작가 기본 테마 조회 — preset + overrides merge한 완전한 theme 반환 */
+  /** 작가 기본 테마 조회 — overrides가 곧 완전한 테마 */
   @Get(':authorSlug')
   async findByAuthorSlug(@Param('authorSlug') authorSlug: string) {
     const theme = await this.getTheme.execute(authorSlug)
     const { authorId, ...safe } = theme as any
-    // preset 기반으로 완전한 테마 객체 생성 (프론트는 이 값을 그대로 사용)
-    const resolved = resolveTheme(theme.preset, theme.overrides as Record<string, unknown> | null)
-    return { ...safe, theme: resolved }
+    return { ...safe, theme: theme.overrides }
   }
 }

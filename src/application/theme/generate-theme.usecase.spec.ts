@@ -16,7 +16,8 @@ describe('GenerateThemeUseCase', () => {
     animation: 'typing' as const, tone: 'dark' as const,
     episodeListLayout: 'series' as const, decorations: { dividerIcon: 'dot' as const, dividerColor: '#c4a46c', headerIcon: 'dot' as const, headerSubtitle: 'TEST', cardAccentPosition: 'left' as const, footerText: 'test' },
   }
-  const mockTheme = { id: 'theme-1', authorId: 'author-1', name: '테마 1', preset: 'midnight', overrides: mockThemeData, rawDescription: '어둡고 묵직한', bakedCssUrl: null, isSlotted: true, source: 'ai' as const, updatedAt: new Date() }
+  const mockTheme = { id: 'theme-1', authorId: 'author-1', name: '테마 1', preset: 'custom', overrides: mockThemeData, rawDescription: '어둡고 묵직한', bakedCssUrl: null, isSlotted: false, source: 'ai' as const, updatedAt: new Date() }
+  const mockSystemTheme = { id: 'sys-midnight', authorId: null, name: '미드나잇', preset: 'midnight', overrides: mockThemeData, rawDescription: '시스템 프리셋: midnight', bakedCssUrl: null, isSlotted: false, source: 'system' as const, updatedAt: new Date() }
 
   beforeEach(() => {
     mockClaudeApi = { generateTheme: jest.fn().mockResolvedValue(mockThemeData) }
@@ -27,6 +28,8 @@ describe('GenerateThemeUseCase', () => {
       findByAuthorSlug: jest.fn(), findById: jest.fn(), findAllByAuthorId: jest.fn(),
       delete: jest.fn(), update: jest.fn(), updateBakedCssUrl: jest.fn(),
       updateSlotStatus: jest.fn(), findSlottedByAuthorId: jest.fn(), unslotAllByAuthorId: jest.fn(),
+      findSystemThemes: jest.fn().mockResolvedValue([mockSystemTheme]),
+      findSystemThemeByPreset: jest.fn().mockResolvedValue(mockSystemTheme),
     }
     mockAuthorRepo = { findById: jest.fn().mockResolvedValue(mockAuthor), findBySlug: jest.fn(), findByEmail: jest.fn(), create: jest.fn(), updateCredits: jest.fn(), updatePlan: jest.fn() }
     mockCreditRepo = { adjustCredits: jest.fn().mockResolvedValue({ credits: 2, log: {} }), findLogsByAuthorId: jest.fn() }
@@ -36,39 +39,33 @@ describe('GenerateThemeUseCase', () => {
     )
   })
 
-  it('테마를 생성하고 DB에 저장한다', async () => {
+  it('AI 테마를 생성하고 DB에 저장한다 (보관 상태)', async () => {
     const result = await useCase.execute('author-1', '어둡고 묵직한 A24 감성')
     expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -1, 'theme_generate')
     expect(mockClaudeApi.generateTheme).toHaveBeenCalledWith('어둡고 묵직한 A24 감성')
     expect(result).toEqual(mockTheme)
   })
 
-  it('슬롯이 가득 차면 BadRequestException을 던진다', async () => {
-    mockThemeRepo.countSlottedByAuthorId.mockResolvedValue(1)
-    await expect(useCase.execute('author-1', '새 테마')).rejects.toThrow(BadRequestException)
+  it('AI 생성 시 슬롯 체크를 하지 않는다 (생성은 자유)', async () => {
+    mockThemeRepo.countSlottedByAuthorId.mockResolvedValue(10)
+    await useCase.execute('author-1', '새 테마')
+    expect(mockThemeRepo.create).toHaveBeenCalled()
   })
 
-  it('작가가 없으면 NotFoundException을 던진다', async () => {
+  it('작가가 없으면 NotFoundException', async () => {
     mockAuthorRepo.findById.mockResolvedValue(null)
     await expect(useCase.execute('no-author', '테스트')).rejects.toThrow(NotFoundException)
   })
 
-  it('크레딧이 부족하면 BadRequestException을 던진다', async () => {
+  it('크레딧이 부족하면 BadRequestException', async () => {
     mockAuthorRepo.findById.mockResolvedValue({ ...mockAuthor, credits: 0 })
     await expect(useCase.execute('author-1', '테스트')).rejects.toThrow(BadRequestException)
   })
 
-  it('플랜 만기 시 ForbiddenException을 던진다', async () => {
+  it('플랜 만기 시 ForbiddenException', async () => {
     const expiredAuthor = { ...mockAuthor, plan: 'pro', planExpireAt: new Date('2020-01-01') }
     mockAuthorRepo.findById.mockResolvedValue(expiredAuthor)
     await expect(useCase.execute('author-1', '테스트')).rejects.toThrow(ForbiddenException)
-  })
-
-  it('tone이 light이면 preset을 morning으로 설정한다', async () => {
-    const lightTheme = { ...mockThemeData, tone: 'light' as const }
-    mockClaudeApi.generateTheme.mockResolvedValue(lightTheme)
-    await useCase.execute('author-1', '밝은 분위기')
-    expect(mockThemeRepo.create).toHaveBeenCalledWith('author-1', '테마 1', 'morning', lightTheme, '밝은 분위기', 'ai')
   })
 
   it('Claude API 실패 시 크레딧을 환불한다', async () => {
@@ -81,54 +78,43 @@ describe('GenerateThemeUseCase', () => {
   // ── 시스템 프리셋 테스트 ──
 
   describe('listPresets', () => {
-    it('시스템 프리셋 목록을 반환한다 (deerDevil, system-default 제외)', () => {
-      const presets = useCase.listPresets()
-      const names = presets.map((p) => p.name)
-      expect(names).toContain('midnight')
-      expect(names).toContain('parchment')
-      expect(names).toContain('morning')
-      expect(names).not.toContain('deerDevil')
-      expect(names).not.toContain('system-default')
-      expect(presets.length).toBeGreaterThanOrEqual(7)
+    it('DB에서 시스템 테마 목록을 반환한다', async () => {
+      const presets = await useCase.listPresets()
+      expect(mockThemeRepo.findSystemThemes).toHaveBeenCalled()
+      expect(presets.length).toBe(1)
+      expect(presets[0].name).toBe('midnight')
+      expect(presets[0].label).toBe('미드나잇')
     })
 
-    it('각 프리셋에 미리보기 색상 정보가 포함된다', () => {
-      const presets = useCase.listPresets()
+    it('각 프리셋에 미리보기 색상 정보가 포함된다', async () => {
+      const presets = await useCase.listPresets()
       for (const p of presets) {
         expect(p.preview).toBeDefined()
         expect(p.preview.bgPrimary).toBeDefined()
         expect(p.preview.accent).toBeDefined()
-        expect(p.tone).toBeDefined()
       }
     })
   })
 
   describe('createFromPreset', () => {
-    it('프리셋으로 테마를 생성한다 (크레딧 소모 없음)', async () => {
+    it('시스템 테마를 복사하여 작가 테마를 생성한다 (크레딧 소모 없음)', async () => {
       await useCase.createFromPreset('author-1', 'midnight')
       expect(mockCreditRepo.adjustCredits).not.toHaveBeenCalled()
+      expect(mockThemeRepo.findSystemThemeByPreset).toHaveBeenCalledWith('midnight')
       expect(mockThemeRepo.create).toHaveBeenCalledWith(
-        'author-1', '미드나잇', 'midnight', expect.anything(), '프리셋: midnight', 'system',
+        'author-1', '미드나잇', 'midnight', mockThemeData, '프리셋 복사: midnight', 'user',
       )
     })
 
     it('유효하지 않은 프리셋이면 BadRequestException', async () => {
+      mockThemeRepo.findSystemThemeByPreset.mockResolvedValue(null)
       await expect(useCase.createFromPreset('author-1', 'invalid')).rejects.toThrow(BadRequestException)
     })
 
-    it('deerDevil 프리셋은 선택 불가', async () => {
-      await expect(useCase.createFromPreset('author-1', 'deerDevil')).rejects.toThrow(BadRequestException)
-    })
-
-    it('슬롯이 가득 차면 BadRequestException', async () => {
-      mockThemeRepo.countSlottedByAuthorId.mockResolvedValue(1)
-      await expect(useCase.createFromPreset('author-1', 'midnight')).rejects.toThrow(BadRequestException)
-    })
-
     it('커스텀 이름을 지정할 수 있다', async () => {
-      await useCase.createFromPreset('author-1', 'cream', '나의 크림 테마')
+      await useCase.createFromPreset('author-1', 'midnight', '나의 다크 테마')
       expect(mockThemeRepo.create).toHaveBeenCalledWith(
-        'author-1', '나의 크림 테마', 'cream', expect.anything(), '프리셋: cream', 'system',
+        'author-1', '나의 다크 테마', 'midnight', mockThemeData, '프리셋 복사: midnight', 'user',
       )
     })
   })

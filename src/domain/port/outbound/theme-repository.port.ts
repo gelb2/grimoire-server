@@ -13,4 +13,6 @@ export interface ThemeRepositoryPort {
   updateSlotStatus(themeId: string, isSlotted: boolean): Promise<Theme>
   findSlottedByAuthorId(authorId: string): Promise<Theme[]>
   unslotAllByAuthorId(authorId: string): Promise<void>
+  findSystemThemes(): Promise<Theme[]>
+  findSystemThemeByPreset(preset: string): Promise<Theme | null>
 }
