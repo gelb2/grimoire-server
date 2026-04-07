@@ -37,7 +37,36 @@ const defaultUI = {
   subscribeButtonStyle: 'outlined',
 }
 
+// Midnight — 시스템 기본 다크 프리셋 (deerDevil과 독립적)
 const midnight = {
+  bgPrimary: '#08080e',
+  bgSecondary: '#0e0e16',
+  textPrimary: '#c8c4bc',
+  textMuted: '#7a7575',
+  textDim: '#4a4545',
+  textBright: '#e4e0d8',
+  accent: '#8a7a90',
+  accent2: '#a896b8',
+  border: '#1e1e28',
+  fontBody: 'serif',
+  fontHeading: 'serif',
+  animation: 'typing',
+  tone: 'dark',
+  episodeListLayout: 'series',
+  decorations: {
+    dividerIcon: 'book',
+    dividerColor: '#8a7a90',
+    headerIcon: 'book',
+    headerSubtitle: 'Solitary Script For Midnight',
+    cardAccentPosition: 'left',
+    footerText: 'Until 4 AM',
+  },
+  ...defaultTypography,
+  ...defaultUI,
+}
+
+// DeerDevil — 사슴악마 작가 AI 생성 전용 테마 (antler 아이콘)
+const deerDevil = {
   bgPrimary: '#07070a',
   bgSecondary: '#0d0d12',
   textPrimary: '#cdc8bc',
@@ -238,7 +267,7 @@ const systemDefault: Record<string, unknown> = {
 
 export const themePresets: Record<string, Record<string, unknown>> = {
   midnight,
-  deerDevil: midnight,
+  deerDevil,
   parchment,
   morning,
   neon,

@@ -90,6 +90,15 @@ export class ThemeController {
     return this.themeSlot.getSlotInfo(req.user.sub)
   }
 
+  /** 개별 테마 상세 조회 (인증 필수, 소유권 확인) */
+  @Get('detail/:themeId')
+  @UseGuards(JwtAuthGuard)
+  async getThemeById(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string) {
+    const theme = await this.getTheme.findById(req.user.sub, themeId)
+    const resolved = resolveTheme(theme.preset, theme.overrides as Record<string, unknown> | null)
+    return { ...theme, authorId: undefined, theme: resolved }
+  }
+
   /** 테마를 CSS로 베이킹 */
   @Post('publish/:authorSlug')
   @UseGuards(JwtAuthGuard)

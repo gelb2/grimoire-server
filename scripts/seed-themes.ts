@@ -1,7 +1,7 @@
 /**
  * 작가 테마 + 테스트 계정 시드 스크립트
  *
- * - DeerDevil: web presets.ts의 midnight 테마를 그대로 복사
+ * - DeerDevil: deerDevil 프리셋 (사슴악마 전용, midnight과 독립)
  * - 고전문학 작가: 문학 스타일에 맞는 고유 테마 생성
  * - 모든 작가에게 test1234 비밀번호 + 10 크레딧 부여
  * - 멱등성 보장: 여러 번 실행해도 안전 (upsert 사용)
@@ -67,12 +67,12 @@ interface AuthorSeed {
 }
 
 const AUTHORS: AuthorSeed[] = [
-  // DeerDevil — web presets.ts midnight 테마 + layout/decorations
+  // DeerDevil — 사슴악마 작가 AI 생성 전용 테마 (antler 아이콘, midnight과 독립)
   {
     name: '사슴악마',
     slug: 'deerdevil',
     email: 'deerdevil@grimoire.app',
-    preset: 'midnight',
+    preset: 'deerDevil',
     description: 'A24 감성 K-다크 판타지. 어둡고 묵직한 밤의 분위기. 사슴뿔 아이콘과 타이핑 애니메이션.',
     theme: {
       bgPrimary: '#07070a',
