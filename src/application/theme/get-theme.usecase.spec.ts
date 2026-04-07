@@ -1,6 +1,5 @@
 import { GetThemeUseCase } from './get-theme.usecase'
 import { NotFoundException, ForbiddenException } from '@nestjs/common'
-import { SYSTEM_DEFAULT_THEME } from '@domain/model/plan'
 
 describe('GetThemeUseCase', () => {
   let useCase: GetThemeUseCase
@@ -12,7 +11,12 @@ describe('GetThemeUseCase', () => {
   const mockTheme = {
     id: 'theme-1', authorId: 'author-1', name: '다크 테마', preset: 'midnight',
     overrides: { bgPrimary: '#0a0a0a' }, rawDescription: '어두운 분위기',
-    bakedCssUrl: null, isSlotted: true, source: 'ai', updatedAt: new Date(),
+    bakedCssUrl: null, isSlotted: true, source: 'ai' as const, updatedAt: new Date(),
+  }
+  const mockSystemTheme = {
+    id: 'sys-midnight', authorId: null, name: '미드나잇', preset: 'midnight',
+    overrides: { bgPrimary: '#08080e' }, rawDescription: '시스템 프리셋',
+    bakedCssUrl: null, isSlotted: false, source: 'system' as const, updatedAt: new Date(),
   }
 
   beforeEach(() => {
@@ -21,6 +25,8 @@ describe('GetThemeUseCase', () => {
       update: jest.fn(), delete: jest.fn(), countByAuthorId: jest.fn(), create: jest.fn(),
       updateBakedCssUrl: jest.fn(), countSlottedByAuthorId: jest.fn(),
       updateSlotStatus: jest.fn(), findSlottedByAuthorId: jest.fn(), unslotAllByAuthorId: jest.fn(),
+      findSystemThemes: jest.fn().mockResolvedValue([mockSystemTheme]),
+      findSystemThemeByPreset: jest.fn().mockResolvedValue(mockSystemTheme),
     }
     mockWorkRepo = { findByAuthorAndWorkSlug: jest.fn() }
     mockAuthorRepo = { findById: jest.fn().mockResolvedValue(mockAuthor), findBySlug: jest.fn().mockResolvedValue(mockAuthor) }
@@ -35,17 +41,18 @@ describe('GetThemeUseCase', () => {
       expect(result).toEqual(mockTheme)
     })
 
-    it('테마가 없으면 시스템 기본테마를 반환한다', async () => {
+    it('테마가 없으면 시스템 폴백 테마(midnight)를 반환한다', async () => {
       mockThemeRepo.findByAuthorSlug.mockResolvedValue(null)
       const result = await useCase.execute('deerdevil')
-      expect(result).toEqual(SYSTEM_DEFAULT_THEME)
+      expect(mockThemeRepo.findSystemThemeByPreset).toHaveBeenCalledWith('midnight')
+      expect(result).toEqual(mockSystemTheme)
     })
 
-    it('플랜 만기 시 시스템 기본테마를 반환한다', async () => {
+    it('플랜 만기 시 시스템 폴백 테마를 반환한다', async () => {
       const expiredAuthor = { ...mockAuthor, plan: 'pro', planExpireAt: new Date('2020-01-01') }
       mockAuthorRepo.findBySlug.mockResolvedValue(expiredAuthor)
       const result = await useCase.execute('deerdevil')
-      expect(result).toEqual(SYSTEM_DEFAULT_THEME)
+      expect(result).toEqual(mockSystemTheme)
     })
   })
 
@@ -69,8 +76,13 @@ describe('GetThemeUseCase', () => {
     it('본인 테마의 overrides를 수정한다', async () => {
       mockThemeRepo.findById.mockResolvedValue(mockTheme)
       mockThemeRepo.update.mockResolvedValue({ ...mockTheme, overrides: { bgPrimary: '#ffffff' } })
-      const result = await useCase.updateOverrides('author-1', 'theme-1', { bgPrimary: '#ffffff' } as any)
-      expect(mockThemeRepo.update).toHaveBeenCalledWith('theme-1', 'custom', { bgPrimary: '#ffffff' }, 'manual_edit', 'user')
+      await useCase.updateOverrides('author-1', 'theme-1', { bgPrimary: '#ffffff' } as any)
+      expect(mockThemeRepo.update).toHaveBeenCalledWith('theme-1', 'midnight', { bgPrimary: '#ffffff' }, 'manual_edit', 'user')
+    })
+
+    it('시스템 테마를 수정하면 ForbiddenException', async () => {
+      mockThemeRepo.findById.mockResolvedValue(mockSystemTheme)
+      await expect(useCase.updateOverrides('author-1', 'sys-midnight', {} as any)).rejects.toThrow(ForbiddenException)
     })
 
     it('다른 작가의 테마를 수정하면 ForbiddenException', async () => {
@@ -85,6 +97,11 @@ describe('GetThemeUseCase', () => {
       await useCase.deleteTheme('author-1', 'theme-1')
       expect(mockThemeRepo.delete).toHaveBeenCalledWith('theme-1')
     })
+
+    it('시스템 테마를 삭제하면 ForbiddenException', async () => {
+      mockThemeRepo.findById.mockResolvedValue(mockSystemTheme)
+      await expect(useCase.deleteTheme('author-1', 'sys-midnight')).rejects.toThrow(ForbiddenException)
+    })
   })
 
   describe('listByAuthor', () => {
@@ -93,6 +110,14 @@ describe('GetThemeUseCase', () => {
       mockThemeRepo.findAllByAuthorId.mockResolvedValue(themes)
       const result = await useCase.listByAuthor('author-1')
       expect(result).toHaveLength(2)
+    })
+  })
+
+  describe('listSystemThemes', () => {
+    it('시스템 테마 목록을 반환한다', async () => {
+      const result = await useCase.listSystemThemes()
+      expect(mockThemeRepo.findSystemThemes).toHaveBeenCalled()
+      expect(result).toEqual([mockSystemTheme])
     })
   })
 })
