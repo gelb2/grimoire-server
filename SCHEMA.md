@@ -40,10 +40,10 @@
 | Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
 |-------------|---------|------|------|------|
 | id | id | String (uuid) | PK | 테마 식별자 |
-| author | - | Author | 관계 | 작가 참조 |
-| authorId | author_id | String | unique, FK→authors | 작가 (1:1) |
-| preset | preset | String | default("midnight") | 프리셋명 |
-| overrides | overrides | Json? | - | AuthorTheme 커스텀 값 (`docs/theme-spec.md` 참조) |
+| author | - | Author? | 관계 | 작가 참조 (null이면 시스템 테마) |
+| authorId | author_id | String? | FK→authors, nullable | 작가. null = 시스템 테마 |
+| preset | preset | String | default("midnight") | 프리셋명 (파생 출처 기록용) |
+| overrides | overrides | Json? | - | AuthorTheme 전체 값 (`docs/theme-spec.md` 참조) |
 | rawDescription | raw_description | String? | - | 작가 원본 구술 텍스트 |
 | bakedCssUrl | baked_css_url | String? | - | Baking된 CSS 파일 URL |
 | isSlotted | is_slotted | Boolean | default(true) | 활성 슬롯 배치 여부 |

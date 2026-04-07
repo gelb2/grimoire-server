@@ -30,8 +30,8 @@ model Author {
 
 model Theme {
   id             String   @id @default(uuid())
-  author         Author   @relation(fields: [authorId], references: [id])
-  authorId       String   @map("author_id")
+  author         Author?  @relation(fields: [authorId], references: [id])
+  authorId       String?  @map("author_id")
   name           String   @default("기본 테마")
   preset         String   @default("midnight")
   overrides      Json?
