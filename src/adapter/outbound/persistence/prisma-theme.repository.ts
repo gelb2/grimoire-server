@@ -70,6 +70,7 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
     overrides: AuthorTheme,
     rawDescription: string,
     source?: string,
+    name?: string,
   ): Promise<Theme> {
     const row = await this.prisma.theme.update({
       where: { id: themeId },
@@ -78,6 +79,7 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
         overrides: overrides as object,
         rawDescription,
         ...(source && { source }),
+        ...(name && { name }),
       },
     })
     return toDomain(row)
@@ -88,6 +90,11 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
     await this.prisma.work.updateMany({
       where: { themeId },
       data: { themeId: null },
+    })
+    // defaultThemeId 고아 참조 정리
+    await this.prisma.author.updateMany({
+      where: { defaultThemeId: themeId },
+      data: { defaultThemeId: null },
     })
     await this.prisma.theme.delete({ where: { id: themeId } })
   }

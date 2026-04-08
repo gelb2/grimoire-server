@@ -67,9 +67,9 @@ export class ThemeController {
   /** 테마 커스텀 수정 (overrides 업데이트) */
   @Put(':themeId')
   @UseGuards(JwtAuthGuard)
-  async updateTheme(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string, @Body() body: { overrides: any }) {
-    const theme = await this.getTheme.updateOverrides(req.user.sub, themeId, body.overrides)
-    return { themeId: theme.id, overrides: theme.overrides }
+  async updateTheme(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string, @Body() body: { overrides?: any; name?: string }) {
+    const theme = await this.getTheme.updateOverrides(req.user.sub, themeId, body.overrides, body.name)
+    return { themeId: theme.id, name: theme.name, overrides: theme.overrides }
   }
 
   /** 테마 삭제 (슬롯 반환) */

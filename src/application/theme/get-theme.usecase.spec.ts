@@ -1,5 +1,5 @@
 import { GetThemeUseCase } from './get-theme.usecase'
-import { NotFoundException, ForbiddenException } from '@nestjs/common'
+import { NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
 
 describe('GetThemeUseCase', () => {
   let useCase: GetThemeUseCase
@@ -77,7 +77,7 @@ describe('GetThemeUseCase', () => {
       mockThemeRepo.findById.mockResolvedValue(mockTheme)
       mockThemeRepo.update.mockResolvedValue({ ...mockTheme, overrides: { bgPrimary: '#ffffff' } })
       await useCase.updateOverrides('author-1', 'theme-1', { bgPrimary: '#ffffff' } as any)
-      expect(mockThemeRepo.update).toHaveBeenCalledWith('theme-1', 'midnight', { bgPrimary: '#ffffff' }, 'manual_edit', 'user')
+      expect(mockThemeRepo.update).toHaveBeenCalledWith('theme-1', 'midnight', { bgPrimary: '#ffffff' }, 'manual_edit', 'user', undefined)
     })
 
     it('시스템 테마를 수정하면 ForbiddenException', async () => {
@@ -92,8 +92,8 @@ describe('GetThemeUseCase', () => {
   })
 
   describe('deleteTheme', () => {
-    it('본인 테마를 삭제한다', async () => {
-      mockThemeRepo.findById.mockResolvedValue(mockTheme)
+    it('본인 비활성 테마를 삭제한다', async () => {
+      mockThemeRepo.findById.mockResolvedValue({ ...mockTheme, isSlotted: false })
       await useCase.deleteTheme('author-1', 'theme-1')
       expect(mockThemeRepo.delete).toHaveBeenCalledWith('theme-1')
     })
@@ -101,6 +101,11 @@ describe('GetThemeUseCase', () => {
     it('시스템 테마를 삭제하면 ForbiddenException', async () => {
       mockThemeRepo.findById.mockResolvedValue(mockSystemTheme)
       await expect(useCase.deleteTheme('author-1', 'sys-midnight')).rejects.toThrow(ForbiddenException)
+    })
+
+    it('활성(슬롯) 테마를 삭제하면 BadRequestException', async () => {
+      mockThemeRepo.findById.mockResolvedValue({ ...mockTheme, isSlotted: true })
+      await expect(useCase.deleteTheme('author-1', 'theme-1')).rejects.toThrow(BadRequestException)
     })
   })
 
