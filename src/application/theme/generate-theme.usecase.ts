@@ -25,9 +25,13 @@ export class GenerateThemeUseCase {
       throw new ForbiddenException('구독 플랜이 만료되었습니다. 플랜을 갱신하세요.')
     }
 
-    // 크레딧 확인 + 즉시 차감
-    if (author.credits < 1) throw new BadRequestException('크레딧이 부족합니다')
-    await this.creditRepo.adjustCredits(authorId, -1, CreditReason.THEME_GENERATE)
+    // 크레딧 차감 — adjustCredits 내부 $transaction에서 원자적으로 체크+차감
+    // 메모리 값으로 선 체크하지 않음 (Race Condition 방지)
+    try {
+      await this.creditRepo.adjustCredits(authorId, -1, CreditReason.THEME_GENERATE)
+    } catch {
+      throw new BadRequestException('크레딧이 부족합니다')
+    }
 
     // Claude API로 테마 생성 — 실패 시 크레딧 환불
     let themeData: any

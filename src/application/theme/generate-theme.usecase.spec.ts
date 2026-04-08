@@ -59,6 +59,8 @@ describe('GenerateThemeUseCase', () => {
 
   it('크레딧이 부족하면 BadRequestException', async () => {
     mockAuthorRepo.findById.mockResolvedValue({ ...mockAuthor, credits: 0 })
+    // adjustCredits가 트랜잭션 내에서 음수 체크 → 에러 던짐
+    mockCreditRepo.adjustCredits.mockRejectedValueOnce(new Error('크레딧이 부족합니다'))
     await expect(useCase.execute('author-1', '테스트')).rejects.toThrow(BadRequestException)
   })
 
