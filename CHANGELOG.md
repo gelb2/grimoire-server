@@ -1,5 +1,20 @@
 # Changelog — grimoire-server
 
+## [0.20.0] - 2026-04-08
+
+### 보안 수정 — IDOR + Race Condition + DOCX 크기 제한
+
+#### Security
+- GenerateThemeDto에서 authorId 필드 제거 (IDOR 방지 완결)
+- 크레딧 차감 Race Condition 방어 — 메모리 선 체크 제거, adjustCredits의 $transaction 원자적 체크에 의존
+- DOCX 파서: mammoth 변환 결과 50MB 초과 시 거부 (Zip Bomb 방어)
+- UseCase 파서 에러를 BadRequestException(400)으로 변환 (기존 500 방지)
+
+#### Added
+- 보안 테스트 3건 추가 (DOCX 크기 초과, mammoth 에러, HWPX Zip Bomb)
+
+---
+
 ## [0.19.0] - 2026-04-08
 
 ### 테마 시스템 정합성 정리 — 데드코드 제거 + 문서 보강
