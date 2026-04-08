@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, ForbiddenException } from '@nestjs/common'
+import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
 import { ThemeRepositoryPort } from '@domain/port/outbound/theme-repository.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
@@ -70,21 +70,22 @@ export class GetThemeUseCase {
   }
 
   /** 테마 커스텀 수정 — 시스템 테마(source=system)는 수정 불가 */
-  async updateOverrides(authorId: string, themeId: string, overrides: AuthorTheme): Promise<Theme> {
+  async updateOverrides(authorId: string, themeId: string, overrides?: AuthorTheme, name?: string): Promise<Theme> {
     const theme = await this.themeRepo.findById(themeId)
     if (!theme) throw new NotFoundException('테마를 찾을 수 없습니다')
     if (theme.source === 'system') throw new ForbiddenException('시스템 테마는 수정할 수 없습니다. 복사하여 사용하세요.')
     if (theme.authorId !== authorId) throw new ForbiddenException('본인의 테마만 수정할 수 있습니다')
 
-    return this.themeRepo.update(themeId, theme.preset, overrides, 'manual_edit', 'user')
+    return this.themeRepo.update(themeId, theme.preset, overrides ?? theme.overrides!, 'manual_edit', 'user', name)
   }
 
-  /** 테마 삭제 — 시스템 테마 삭제 불가 */
+  /** 테마 삭제 — 시스템 테마 삭제 불가, 활성(슬롯) 테마 삭제 불가 */
   async deleteTheme(authorId: string, themeId: string): Promise<void> {
     const theme = await this.themeRepo.findById(themeId)
     if (!theme) throw new NotFoundException('테마를 찾을 수 없습니다')
     if (theme.source === 'system') throw new ForbiddenException('시스템 테마는 삭제할 수 없습니다')
     if (theme.authorId !== authorId) throw new NotFoundException('테마를 찾을 수 없습니다')
+    if (theme.isSlotted) throw new BadRequestException('활성 테마는 슬롯에서 제거 후 삭제하세요')
     await this.themeRepo.delete(themeId)
   }
 

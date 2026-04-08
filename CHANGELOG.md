@@ -1,5 +1,19 @@
 # Changelog — grimoire-server
 
+## [0.21.0] - 2026-04-08
+
+### 테마 시스템 로직 구멍 수정
+
+#### Security
+- 활성(슬롯) 테마 삭제 방지 — isSlotted=true면 BadRequestException
+- defaultThemeId 고아 참조 정리 — 테마 삭제 시 null 처리
+- 프리셋 복사 중복 방지 — JSON.stringify 의존 제거, preset명+source 기반 비교
+
+#### Added
+- PUT /themes/:themeId에 name 파라미터 지원 (테마 이름 변경)
+
+---
+
 ## [0.20.0] - 2026-04-08
 
 ### 보안 수정 — IDOR + Race Condition + DOCX 크기 제한
