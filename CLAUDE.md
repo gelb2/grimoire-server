@@ -202,7 +202,24 @@ docker build -t grimoire-server .
 
 ---
 
-## 11. 참고 프로젝트
+## 11. 숫자 하드코딩 금지
+
+문서에 테스트 수, 모델 수, 엔드포인트 수 등을 숫자로 적지 않는다.
+검증은 실제 코드/실행 결과로:
+
+| 항목 | 검증 방법 |
+|------|----------|
+| API 엔드포인트 | `docs/api-contract.md` 참조 |
+| Prisma 모델 | `prisma/schema.prisma` 직접 확인 |
+| 테스트 수 | `npm test` 실행 |
+| Controller 목록 | `ls src/adapter/inbound/http/controller/` |
+| UseCase 목록 | `ls src/application/` |
+| 의존성 | `package.json` 직접 확인 |
+| 워크플로우 | `ls .github/workflows/` |
+
+---
+
+## 12. 참고 프로젝트
 
 | 프로젝트 | 참고 대상 |
 |---------|----------|

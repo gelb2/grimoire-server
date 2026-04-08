@@ -7,10 +7,10 @@
 ## 단기 (Phase 1 마무리)
 
 ### 보안
-- [ ] 🔴 IDOR: 테마 생성에서 `dto.authorId` → `req.user.sub`로 변경 (`theme.controller.ts`)
-- [ ] 🟡 크레딧 차감 Race Condition: `$transaction`으로 체크+차감 원자화 (`generate-theme.usecase.ts`)
-- [ ] 🟡 HWPX Zip Bomb: 압축해제 크기 50MB 제한 추가 (`hwp-parser.ts`)
-- [ ] DOCX 파싱: mammoth 추출 콘텐츠 최대 크기 제한
+- [x] ~~IDOR: dto.authorId 제거, Controller는 req.user.sub 사용~~ (v0.20.0)
+- [x] ~~크레딧 Race Condition: adjustCredits $transaction 원자화~~ (v0.20.0)
+- [x] ~~HWPX Zip Bomb: 50MB 제한~~ (이미 구현됨 + 테스트 추가 v0.20.0)
+- [x] ~~DOCX 크기 제한: mammoth 출력 50MB 제한~~ (v0.20.0)
 - [ ] CORS_ORIGIN 누락 시 명시적 에러 또는 localhost 폴백
 
 ### 외부 연동
