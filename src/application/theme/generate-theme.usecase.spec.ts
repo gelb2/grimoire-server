@@ -124,17 +124,17 @@ describe('GenerateThemeUseCase', () => {
       )
     })
 
-    it('동일 프리셋 + 동일 값의 테마가 이미 있으면 기존 테마 반환 (중복 방지)', async () => {
-      const existingTheme = { ...mockTheme, id: 'existing-1', preset: 'midnight', overrides: mockThemeData }
+    it('동일 프리셋명+source=user 테마가 이미 있으면 기존 테마 반환 (중복 방지)', async () => {
+      const existingTheme = { ...mockTheme, id: 'existing-1', preset: 'midnight', source: 'user' as const }
       mockThemeRepo.findAllByAuthorId.mockResolvedValue([existingTheme])
       const result = await useCase.createFromPreset('author-1', 'midnight')
       expect(result).toEqual(existingTheme)
       expect(mockThemeRepo.create).not.toHaveBeenCalled()
     })
 
-    it('같은 프리셋이지만 값이 수정된 테마가 있으면 새로 생성', async () => {
-      const customized = { ...mockTheme, preset: 'midnight', overrides: { ...mockThemeData, bgPrimary: '#ffffff' } }
-      mockThemeRepo.findAllByAuthorId.mockResolvedValue([customized])
+    it('같은 프리셋이지만 source=ai면 새로 생성', async () => {
+      const aiTheme = { ...mockTheme, preset: 'midnight', source: 'ai' as const }
+      mockThemeRepo.findAllByAuthorId.mockResolvedValue([aiTheme])
       await useCase.createFromPreset('author-1', 'midnight')
       expect(mockThemeRepo.create).toHaveBeenCalled()
     })
