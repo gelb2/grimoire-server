@@ -7,7 +7,7 @@
 
 ## 1. 현재 버전
 
-**v0.19.0** — 테마 시스템 정합성 정리 + isSlotted 기본값 수정
+최신 버전은 `CHANGELOG.md` 참조.
 
 ---
 
@@ -62,7 +62,7 @@
 ### Prisma 스키마
 
 - 정본: `prisma/schema.prisma`
-- 모델 수: 13개
+- 모델 수: `prisma/schema.prisma`에서 `model` 키워드로 확인
 - 설명: `SCHEMA.md`
 - 마이그레이션: 실행 완료 (dev/inhouse/prod DB 테이블 생성)
 
@@ -77,7 +77,7 @@
 | 항목 | 상태 | 비고 |
 |------|------|------|
 | Docker | Dockerfile 작성 완료 | 멀티스테이지 빌드 + docker-entrypoint.sh |
-| CI/CD | GitHub Actions 설정 완료 (8개 워크플로우) | `.github/workflows/` |
+| CI/CD | GitHub Actions 설정 완료 | `.github/workflows/` 확인 |
 | Azure Container Apps | 3환경 배포 완료 | 서버 호스팅 |
 | Azure Database for PostgreSQL | 3환경 설정 완료 | DB |
 | Azure Container Registry | 설정 완료 | Docker 이미지 |
@@ -105,7 +105,7 @@
 
 - Prisma 마이그레이션 히스토리 정비 (squash + 정리)
 - Cloudflare DNS CNAME 레코드 설정
-- Google OAuth 실제 연동 (Client ID 필요)
+- ~~Google OAuth 실제 연동~~ (구현 완료)
 - 결제 게이트웨이 실제 연동 (API 키 필요)
 - Redis 캐시 (테마 DB 호출 캐싱)
 - 크레딧-원화-AI토큰 비용 정밀 계산식 구현
