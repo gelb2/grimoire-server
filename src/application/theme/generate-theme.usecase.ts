@@ -82,13 +82,10 @@ export class GenerateThemeUseCase {
       throw new ForbiddenException('구독 플랜이 만료되었습니다. 플랜을 갱신하세요.')
     }
 
-    // 중복 방지: 같은 프리셋 기반 + 수정되지 않은 테마가 이미 있으면 기존 것 반환
+    // 중복 방지: 같은 프리셋명 + source='user'인 미수정 테마가 있으면 기존 것 반환
+    // (JSON.stringify 순서 의존 제거 — preset명 기반 비교)
     const existing = await this.themeRepo.findAllByAuthorId(authorId)
-    const duplicate = existing.find((t) => {
-      if (t.preset !== presetName) return false
-      // overrides가 시스템 테마 원본과 동일하면 중복
-      return JSON.stringify(t.overrides) === JSON.stringify(systemTheme.overrides)
-    })
+    const duplicate = existing.find((t) => t.preset === presetName && t.source === 'user')
     if (duplicate) return duplicate
 
     const name = themeName ?? systemTheme.name
