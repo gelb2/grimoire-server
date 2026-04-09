@@ -17,11 +17,35 @@ export const DAILY_FREE_LIMITS: Record<string, number> = {
   premium: Infinity,
 }
 
-/** 크레딧 상품 목록 */
+/**
+ * 크레딧 상품 목록
+ *
+ * `price`: 내부 원화 기준 (기존 기획서). 현재 Polar는 USD 기준으로 운영 중.
+ * 실제 결제 시 `POLAR_PRODUCT_*` 환경변수에 해당하는 Polar Product로 라우팅.
+ * 결제 프로바이더별 매핑은 `providerProductIdEnv`를 참조.
+ */
 export const CREDIT_PRODUCTS = [
-  { id: 'credit-10', name: '10 크레딧', credits: 10, price: 1000 },
-  { id: 'credit-30', name: '30 크레딧', credits: 30, price: 2500 },
-  { id: 'credit-100', name: '100 크레딧', credits: 100, price: 7000 },
+  {
+    id: 'credit-10',
+    name: '10 크레딧',
+    credits: 10,
+    price: 1000,
+    providerProductIdEnv: 'POLAR_PRODUCT_BASIC',
+  },
+  {
+    id: 'credit-30',
+    name: '30 크레딧',
+    credits: 30,
+    price: 2500,
+    providerProductIdEnv: 'POLAR_PRODUCT_POPULAR',
+  },
+  {
+    id: 'credit-100',
+    name: '100 크레딧',
+    credits: 100,
+    price: 7000,
+    providerProductIdEnv: 'POLAR_PRODUCT_BEST',
+  },
 ] as const
 
 export type Product = (typeof CREDIT_PRODUCTS)[number]
