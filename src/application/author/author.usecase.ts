@@ -94,8 +94,8 @@ export class AuthorUseCase {
     }
   }
 
-  /** 작가 bio 업데이트 — 본인만 가능 */
-  async updateBio(slug: string, authorId: string, bio: string): Promise<{ bio: string }> {
+  /** 작가 프로필(name, bio) 업데이트 — 본인만 가능 */
+  async updateProfile(slug: string, authorId: string, data: { name?: string; bio?: string }): Promise<{ name: string; bio: string }> {
     const author = await this.authorRepo.findBySlug(slug)
     if (!author) {
       throw new NotFoundException('작가를 찾을 수 없습니다')
@@ -103,10 +103,13 @@ export class AuthorUseCase {
     if (author.id !== authorId) {
       throw new ForbiddenException('본인의 프로필만 수정할 수 있습니다')
     }
-    if (bio.length > 500) {
+    if (data.name !== undefined && (data.name.trim().length === 0 || data.name.length > 50)) {
+      throw new BadRequestException('작가명은 1~50자로 입력해주세요')
+    }
+    if (data.bio !== undefined && data.bio.length > 500) {
       throw new BadRequestException('소개글은 500자 이내로 작성해주세요')
     }
-    const updated = await this.authorRepo.updateBio(author.id, bio)
-    return { bio: updated.bio ?? '' }
+    const updated = await this.authorRepo.updateProfile(author.id, data)
+    return { name: updated.name, bio: updated.bio ?? '' }
   }
 }
