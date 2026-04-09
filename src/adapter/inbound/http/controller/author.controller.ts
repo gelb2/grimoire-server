@@ -19,11 +19,11 @@ export class AuthorController {
     return this.authorUseCase.getPublicProfile(slug)
   }
 
-  /** 작가 프로필(bio) 수정 — 인증 필요, 본인만 가능 */
+  /** 작가 프로필(name, bio) 수정 — 인증 필요, 본인만 가능 */
   @Throttle({ default: { ttl: 60000, limit: 10 } })
   @Patch(':slug/profile')
   @UseGuards(JwtAuthGuard)
-  async updateProfile(@Req() req: AuthenticatedRequest, @Param('slug') slug: string, @Body() body: { bio: string }) {
-    return this.authorUseCase.updateBio(slug, req.user.sub, body.bio)
+  async updateProfile(@Req() req: AuthenticatedRequest, @Param('slug') slug: string, @Body() body: { name?: string; bio?: string }) {
+    return this.authorUseCase.updateProfile(slug, req.user.sub, body)
   }
 }

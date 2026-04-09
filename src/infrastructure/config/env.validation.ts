@@ -9,13 +9,21 @@ export function validateEnv(): void {
     process.exit(1)
   }
 
-  // JWT_SECRET: 프로덕션에서 필수 — 미설정 시 서버 부팅 차단
-  if (!process.env.JWT_SECRET) {
-    if (process.env.NODE_ENV === 'production') {
-      console.error('CRITICAL: JWT_SECRET이 프로덕션에서 설정되지 않았습니다. 서버를 시작할 수 없습니다.')
-      process.exit(1)
+  // 원격 환경(development/inhouse/production)에서 필수 — 미설정 시 서버 부팅 차단
+  const isRemote = process.env.NODE_ENV && process.env.NODE_ENV !== 'localhost'
+  const remoteRequired: { key: string; label: string }[] = [
+    { key: 'JWT_SECRET', label: 'JWT_SECRET' },
+    { key: 'CORS_ORIGIN', label: 'CORS_ORIGIN' },
+  ]
+
+  for (const { key, label } of remoteRequired) {
+    if (!process.env[key]) {
+      if (isRemote) {
+        console.error(`CRITICAL: ${label}이(가) ${process.env.NODE_ENV} 환경에서 설정되지 않았습니다. 서버를 시작할 수 없습니다.`)
+        process.exit(1)
+      }
+      console.warn(`${label} 미설정 — 로컬 기본값 사용 (원격 환경에서는 반드시 설정할 것)`)
     }
-    console.warn('JWT_SECRET 미설정 — 개발용 기본값 사용 (프로덕션에서는 반드시 설정할 것)')
   }
 
   // 선택적 API 키 — 없으면 경고만, 서버는 부팅됨
