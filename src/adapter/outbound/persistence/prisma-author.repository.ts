@@ -49,10 +49,10 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
     })
   }
 
-  async updateBio(id: string, bio: string): Promise<Author> {
+  async updateProfile(id: string, data: { name?: string; bio?: string }): Promise<Author> {
     const row = await this.prisma.author.update({
       where: { id },
-      data: { bio },
+      data,
     })
     return toDomain(row)
   }

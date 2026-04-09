@@ -3,7 +3,7 @@ import { NotFoundException, ForbiddenException, BadRequestException } from '@nes
 
 describe('AuthorUseCase', () => {
   let useCase: AuthorUseCase
-  let mockAuthorRepo: { findBySlug: jest.Mock; updateBio: jest.Mock }
+  let mockAuthorRepo: { findBySlug: jest.Mock; updateProfile: jest.Mock }
   let mockThemeRepo: { findAllByAuthorId: jest.Mock }
   let mockWorkRepo: { findByAuthorSlug: jest.Mock; findEpisodes: jest.Mock }
   let mockSocialRepo: { getSubscriberCount: jest.Mock; getTotalLikesForAuthor: jest.Mock }
@@ -23,7 +23,9 @@ describe('AuthorUseCase', () => {
   beforeEach(() => {
     mockAuthorRepo = {
       findBySlug: jest.fn().mockResolvedValue(mockAuthor),
-      updateBio: jest.fn().mockResolvedValue({ ...mockAuthor, bio: '새로운 소개' }),
+      updateProfile: jest.fn().mockImplementation((id, data) =>
+        Promise.resolve({ ...mockAuthor, ...data }),
+      ),
     }
     mockThemeRepo = {
       findAllByAuthorId: jest.fn().mockResolvedValue([mockTheme]),
@@ -91,30 +93,57 @@ describe('AuthorUseCase', () => {
     })
   })
 
-  describe('updateBio', () => {
+  describe('updateProfile', () => {
     it('본인 프로필의 소개글을 업데이트한다', async () => {
-      const result = await useCase.updateBio('test-author', 'author-1', '새로운 소개')
+      const result = await useCase.updateProfile('test-author', 'author-1', { bio: '새로운 소개' })
 
-      expect(mockAuthorRepo.updateBio).toHaveBeenCalledWith('author-1', '새로운 소개')
+      expect(mockAuthorRepo.updateProfile).toHaveBeenCalledWith('author-1', { bio: '새로운 소개' })
       expect(result.bio).toBe('새로운 소개')
+    })
+
+    it('본인 프로필의 이름을 업데이트한다', async () => {
+      const result = await useCase.updateProfile('test-author', 'author-1', { name: '새 이름' })
+
+      expect(mockAuthorRepo.updateProfile).toHaveBeenCalledWith('author-1', { name: '새 이름' })
+      expect(result.name).toBe('새 이름')
+    })
+
+    it('이름과 소개글을 동시에 업데이트한다', async () => {
+      const result = await useCase.updateProfile('test-author', 'author-1', { name: '새 이름', bio: '새 소개' })
+
+      expect(mockAuthorRepo.updateProfile).toHaveBeenCalledWith('author-1', { name: '새 이름', bio: '새 소개' })
+      expect(result.name).toBe('새 이름')
+      expect(result.bio).toBe('새 소개')
     })
 
     it('작가가 없으면 NotFoundException을 던진다', async () => {
       mockAuthorRepo.findBySlug.mockResolvedValue(null)
 
-      await expect(useCase.updateBio('no-author', 'author-1', '소개')).rejects.toThrow(NotFoundException)
+      await expect(useCase.updateProfile('no-author', 'author-1', { bio: '소개' })).rejects.toThrow(NotFoundException)
     })
 
     it('본인이 아니면 ForbiddenException을 던진다', async () => {
-      await expect(useCase.updateBio('test-author', 'other-author', '소개')).rejects.toThrow(ForbiddenException)
-      await expect(useCase.updateBio('test-author', 'other-author', '소개')).rejects.toThrow('본인의 프로필만 수정할 수 있습니다')
+      await expect(useCase.updateProfile('test-author', 'other-author', { bio: '소개' })).rejects.toThrow(ForbiddenException)
+      await expect(useCase.updateProfile('test-author', 'other-author', { bio: '소개' })).rejects.toThrow('본인의 프로필만 수정할 수 있습니다')
     })
 
     it('소개글이 500자를 초과하면 BadRequestException을 던진다', async () => {
       const longBio = 'A'.repeat(501)
 
-      await expect(useCase.updateBio('test-author', 'author-1', longBio)).rejects.toThrow(BadRequestException)
-      await expect(useCase.updateBio('test-author', 'author-1', longBio)).rejects.toThrow('500자 이내')
+      await expect(useCase.updateProfile('test-author', 'author-1', { bio: longBio })).rejects.toThrow(BadRequestException)
+      await expect(useCase.updateProfile('test-author', 'author-1', { bio: longBio })).rejects.toThrow('500자 이내')
+    })
+
+    it('이름이 빈 문자열이면 BadRequestException을 던진다', async () => {
+      await expect(useCase.updateProfile('test-author', 'author-1', { name: '' })).rejects.toThrow(BadRequestException)
+      await expect(useCase.updateProfile('test-author', 'author-1', { name: '  ' })).rejects.toThrow('1~50자')
+    })
+
+    it('이름이 50자를 초과하면 BadRequestException을 던진다', async () => {
+      const longName = 'A'.repeat(51)
+
+      await expect(useCase.updateProfile('test-author', 'author-1', { name: longName })).rejects.toThrow(BadRequestException)
+      await expect(useCase.updateProfile('test-author', 'author-1', { name: longName })).rejects.toThrow('1~50자')
     })
   })
 })
