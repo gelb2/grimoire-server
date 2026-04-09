@@ -1,5 +1,6 @@
 import { PaymentUseCase, CREDIT_PRODUCTS } from './payment.usecase'
 import { BadRequestException } from '@nestjs/common'
+import type { NormalizedWebhookEvent } from '@domain/port/outbound/payment-gateway.port'
 
 describe('PaymentUseCase', () => {
   let useCase: PaymentUseCase
@@ -18,6 +19,20 @@ describe('PaymentUseCase', () => {
     createdAt: new Date(),
     completedAt: null,
   }
+
+  // 더미 웹훅 입력 — 어댑터가 파싱하므로 PaymentUseCase 테스트에서는 실제 값 불필요
+  const dummyBody = Buffer.from('{}')
+  const dummyHeaders: Record<string, string> = {}
+
+  const makeEvent = (
+    overrides: Partial<NormalizedWebhookEvent> = {},
+  ): NormalizedWebhookEvent => ({
+    type: 'order.paid',
+    tradeNo: 'TRADE-001',
+    amount: 1000,
+    status: 'success',
+    ...overrides,
+  })
 
   beforeEach(() => {
     // $transaction mock: 콜백을 받아서 동일한 mock prisma를 tx로 넘긴다
@@ -39,7 +54,6 @@ describe('PaymentUseCase', () => {
       author: authorMock,
       creditLog: creditLogMock,
       $transaction: jest.fn(async (cb: (tx: any) => Promise<any>) => {
-        // 트랜잭션 콜백에 동일한 mock을 tx로 전달
         return cb({ payment: paymentMock, author: authorMock, creditLog: creditLogMock })
       }),
     }
@@ -54,7 +68,8 @@ describe('PaymentUseCase', () => {
         paymentUrl: 'https://example.com/pay/test',
         tradeNo: 'TRADE-001',
       }),
-      verifyWebhookSignature: jest.fn().mockReturnValue(true),
+      // 기본: 성공 이벤트 반환
+      verifyAndParseWebhook: jest.fn().mockReturnValue(makeEvent()),
     }
 
     useCase = new PaymentUseCase(mockPrisma, mockCreditUseCase, mockPaymentGateway)
@@ -128,23 +143,19 @@ describe('PaymentUseCase', () => {
   })
 
   describe('processWebhook', () => {
-    const successPayload = {
-      tradeNo: 'TRADE-001',
-      amount: 1000,
-      status: 'success',
-      signature: 'valid-sig',
-    }
+    it('서명 검증/파싱 실패 시(null 반환) 무시한다', async () => {
+      mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(null)
 
-    it('서명 검증에 실패하면 예외를 던진다', async () => {
-      mockPaymentGateway.verifyWebhookSignature.mockReturnValue(false)
+      const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
-      await expect(useCase.processWebhook(successPayload)).rejects.toThrow('웹훅 서명 검증 실패')
+      expect(result.processed).toBe(false)
+      expect(result.reason).toBe('invalid_or_ignored')
     })
 
     it('tradeNo에 해당하는 결제가 없으면 무시한다 (멱등성)', async () => {
       mockPrisma.payment.findUnique.mockResolvedValue(null)
 
-      const result = await useCase.processWebhook(successPayload)
+      const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
       expect(result.processed).toBe(false)
       expect(result.reason).toBe('unknown_trade')
@@ -157,7 +168,7 @@ describe('PaymentUseCase', () => {
         externalTransactionId: 'TRADE-001',
       })
 
-      const result = await useCase.processWebhook(successPayload)
+      const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
       expect(result.processed).toBe(false)
       expect(result.reason).toBe('already_completed')
@@ -170,23 +181,19 @@ describe('PaymentUseCase', () => {
         externalTransactionId: 'TRADE-001',
       })
 
-      const result = await useCase.processWebhook(successPayload)
+      const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(10)
-      // $transaction이 호출되었는지 (원자성 보장)
       expect(mockPrisma.$transaction).toHaveBeenCalled()
-      // 트랜잭션 내에서 payment 상태 변경
       expect(mockPrisma.payment.update).toHaveBeenCalledWith({
         where: { id: 'pay-1' },
         data: { status: 'completed', completedAt: expect.any(Date) },
       })
-      // 트랜잭션 내에서 크레딧 증가
       expect(mockPrisma.author.update).toHaveBeenCalledWith({
         where: { id: 'author-1' },
         data: { credits: { increment: 10 } },
       })
-      // 트랜잭션 내에서 크레딧 로그 생성
       expect(mockPrisma.creditLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           authorId: 'author-1',
@@ -200,11 +207,9 @@ describe('PaymentUseCase', () => {
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
       })
+      mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(makeEvent({ status: 'fail' }))
 
-      const result = await useCase.processWebhook({
-        ...successPayload,
-        status: 'fail',
-      })
+      const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(0)
@@ -215,19 +220,23 @@ describe('PaymentUseCase', () => {
       expect(mockCreditUseCase.grant).not.toHaveBeenCalled()
     })
 
-    it('취소 웹훅 시 상태를 failed로 변경한다', async () => {
+    it('취소(환불) 웹훅 시 상태를 refunded로 변경한다', async () => {
       mockPrisma.payment.findUnique.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
       })
+      mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(
+        makeEvent({ type: 'order.refunded', status: 'cancel' }),
+      )
 
-      const result = await useCase.processWebhook({
-        ...successPayload,
-        status: 'cancel',
-      })
+      const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(0)
+      expect(mockPrisma.payment.update).toHaveBeenCalledWith({
+        where: { id: 'pay-1' },
+        data: { status: 'refunded' },
+      })
       expect(mockCreditUseCase.grant).not.toHaveBeenCalled()
     })
   })

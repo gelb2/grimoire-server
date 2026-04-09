@@ -16,6 +16,10 @@ async function bootstrap() {
   // HTTP 헤더 보안 (X-Frame-Options, HSTS, CSP 등)
   app.use(helmet())
 
+  // Polar 웹훅은 raw body가 필요 (HMAC 서명 검증용)
+  // setGlobalPrefix('api') 적용 전이므로 전체 경로로 지정
+  app.use('/api/payments/webhook', require('express').raw({ type: '*/*', limit: '1mb' }))
+
   // JSON body 크기 제한 확대 (장편소설 원고 업로드 대응)
   app.use(require('express').json({ limit: '2mb' }))
   app.use(require('express').urlencoded({ extended: true, limit: '2mb' }))
