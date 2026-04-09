@@ -14,8 +14,14 @@
 - [ ] CORS_ORIGIN 누락 시 명시적 에러 또는 localhost 폴백
 
 ### 외부 연동
-- [ ] 결제 게이트웨이 실제 연동 (PayApp or Polar — API 키 발급 필요)
-- [ ] 결제 웹훅 서명 검증 (키 발급 후)
+- [x] ~~결제 게이트웨이 실제 연동 (Polar, PayApp 폐기)~~ (v0.22.0)
+- [x] ~~결제 웹훅 서명 검증 (Standard Webhooks)~~ (v0.22.0)
+- [x] ~~3환경 결제 end-to-end 검증 (100% 할인 쿠폰 기반)~~ (v0.22.0)
+- [ ] Polar KYC + 한국 payout 승인 (Polar support 요청) — 실제 카드 결제 활성화 전제
+- [ ] KRW ↔ USD 가격 정합성 (기획서 ₩1,000/₩3,000/₩5,000 vs 현재 Polar $0.99/$2.99/$4.99)
+- [ ] 운영 오픈 전 테스트 쿠폰 `GRIMOIREE2ETEST` 삭제/archive
+- [ ] inhouse DB `_prisma_migrations` 전체 rebase 및 TZ 정책 정비 (현재 timestamp without tz, prod는 with tz)
+- [ ] 운영 webhook endpoint auto-disable 복구 플로우 — health check에 `GET /v1/webhooks/endpoints/{id}` enabled 상태 포함 고려
 
 ## 중기 (Phase 2)
 

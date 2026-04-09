@@ -1,5 +1,24 @@
 # Changelog — grimoire-server
 
+## [0.22.0] - 2026-04-09
+
+### Polar 결제 3환경 배포 + inhouse DB 복구
+
+#### Fixed
+- Polar SDK webhooks import 경로 버그 수정 — `@polar-sh/sdk/dist/commonjs/webhooks` → `@polar-sh/sdk/webhooks`. exports map의 `./*` → `./dist/commonjs/*.js` 패턴 때문에 컨테이너에서 `dist/commonjs/dist/commonjs/webhooks.js`로 이중 매핑되어 MODULE_NOT_FOUND로 부팅 실패했던 버그. 로컬은 fallback으로 통과해서 감지되지 않음.
+
+#### Infrastructure
+- Polar webhook endpoint 3개 환경별 분리 등록 (dev/inhouse/prod), 각 endpoint 고유 secret
+- Azure Container Apps 3환경 POLAR_* 환경변수 주입 (ACCESS_TOKEN, SERVER, ORGANIZATION_ID, PRODUCT_BASIC/POPULAR/BEST, WEBHOOK_SECRET)
+- inhouse DB Prisma P3009 묵은 장애 복구 — `20260326091237_init` 실패 기록 해소 + 스키마 diff 수동 정규화(payments/episodes/comments/likes) + 9개 pending 마이그레이션 applied 마킹
+
+#### Verified
+- dev/inhouse/prod 결제 end-to-end 검증 완료 (100% 할인 쿠폰 `GRIMOIREE2ETEST` 사용)
+  - /payments/initiate → Polar checkout URL → checkout 완료 → webhook 수신 → 트랜잭션 원자 처리 → 크레딧 +10 증가
+- 운영 curl HTTP 전수검사 25/25 통과
+
+---
+
 ## [0.21.0] - 2026-04-08
 
 ### 테마 시스템 로직 구멍 수정
