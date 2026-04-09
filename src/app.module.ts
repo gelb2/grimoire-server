@@ -62,7 +62,7 @@ import { PrismaChatRepository } from '@adapter/outbound/persistence/prisma-chat.
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
 import { OpenAIEmbeddingAdapter } from '@adapter/outbound/embedding/openai-embedding.adapter'
 import { PgVectorAdapter } from '@adapter/outbound/vector/pgvector.adapter'
-import { PayappAdapter } from '@adapter/outbound/payment/payapp.adapter'
+import { PolarAdapter } from '@adapter/outbound/payment/polar.adapter'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
 
@@ -142,7 +142,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'StatsRepositoryPort', useClass: PrismaStatsRepository },
     { provide: 'EmbeddingPort', useClass: OpenAIEmbeddingAdapter },
     { provide: 'VectorStorePort', useClass: PgVectorAdapter },
-    { provide: 'PaymentGatewayPort', useClass: PayappAdapter },
+    { provide: 'PaymentGatewayPort', useClass: PolarAdapter },
     { provide: 'ChatRepositoryPort', useClass: PrismaChatRepository },
     { provide: 'BlobStoragePort', useClass: BlobStorageService },
   ],

@@ -31,6 +31,7 @@
     "@nestjs/schedule": "^6.1.1",
     "@nestjs/throttler": "^6.5.0",
     "@ohah/hwpjs": "^0.1.0-rc.10",
+    "@polar-sh/sdk": "^0.47.0",
     "@prisma/client": "^6.5.0",
     "@types/cookie-parser": "^1.4.10",
     "bcrypt": "^6.0.0",
