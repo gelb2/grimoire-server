@@ -14,6 +14,7 @@
 | zenith-env-dev | Azure Container Apps Environment | 컨테이너 앱 환경 (ProjectZenith 공유) |
 | grimoire-server-{dev/inhouse/prod} | Azure Container Apps | API 서버 |
 | grimoire-web-{dev/inhouse/prod} | Azure Container Apps | 웹 프론트엔드 |
+| grimoire0storage | Azure Blob Storage (Standard_LRS) | 커버 이미지 + 테마 CSS CDN |
 
 > 리전: **Korea Central**
 > **리소스그룹: `zenith-rg` (유일)** — 모든 Azure 리소스가 이 그룹에 있다. 새 리소스그룹 생성 금지.

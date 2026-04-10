@@ -11,9 +11,9 @@ describe('PaymentUseCase', () => {
   const mockPayment = {
     id: 'pay-1',
     authorId: 'author-1',
-    productId: 'credit-10',
+    productId: 'credit-5',
     amount: 1000,
-    credits: 10,
+    credits: 5,
     externalTransactionId: null,
     status: 'pending',
     createdAt: new Date(),
@@ -43,7 +43,7 @@ describe('PaymentUseCase', () => {
       findMany: jest.fn().mockResolvedValue([mockPayment]),
     }
     const authorMock = {
-      update: jest.fn().mockResolvedValue({ id: 'author-1', credits: 13 }),
+      update: jest.fn().mockResolvedValue({ id: 'author-1', credits: 8 }),
     }
     const creditLogMock = {
       create: jest.fn().mockResolvedValue({ id: 'log-1' }),
@@ -59,7 +59,7 @@ describe('PaymentUseCase', () => {
     }
 
     mockCreditUseCase = {
-      grant: jest.fn().mockResolvedValue({ credits: 13, log: {} }),
+      grant: jest.fn().mockResolvedValue({ credits: 8, log: {} }),
       getBalance: jest.fn().mockResolvedValue(10),
     }
 
@@ -87,35 +87,35 @@ describe('PaymentUseCase', () => {
       expect(products[0]).toHaveProperty('pricePerCredit')
     })
 
-    it('상품 가격이 올바르다', () => {
+    it('상품 가격이 올바르다 (기획서 §8 기준)', () => {
       const products = useCase.getProducts()
-      const p10 = products.find((p) => p.id === 'credit-10')!
-      const p30 = products.find((p) => p.id === 'credit-30')!
-      const p100 = products.find((p) => p.id === 'credit-100')!
+      const p5 = products.find((p) => p.id === 'credit-5')!
+      const p20 = products.find((p) => p.id === 'credit-20')!
+      const p50 = products.find((p) => p.id === 'credit-50')!
 
-      expect(p10.price).toBe(1000)
-      expect(p30.price).toBe(2500)
-      expect(p100.price).toBe(7000)
+      expect(p5.price).toBe(1000)
+      expect(p20.price).toBe(3000)
+      expect(p50.price).toBe(5000)
     })
   })
 
   describe('initiatePayment', () => {
     it('pending 상태 Payment를 생성하고 게이트웨이를 호출한다', async () => {
-      const result = await useCase.initiatePayment('author-1', 'credit-10', 'https://example.com/return')
+      const result = await useCase.initiatePayment('author-1', 'credit-5', 'https://example.com/return')
 
       expect(mockPrisma.payment.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           authorId: 'author-1',
-          productId: 'credit-10',
+          productId: 'credit-5',
           amount: 1000,
-          credits: 10,
+          credits: 5,
           status: 'pending',
         }),
       })
       expect(mockPaymentGateway.initiatePayment).toHaveBeenCalledWith(
         expect.objectContaining({
-          productId: 'credit-10',
-          productName: '10 크레딧',
+          productId: 'credit-5',
+          productName: '5 크레딧',
           amount: 1000,
         }),
       )
@@ -124,7 +124,7 @@ describe('PaymentUseCase', () => {
     })
 
     it('externalTransactionId를 Payment 레코드에 업데이트한다', async () => {
-      await useCase.initiatePayment('author-1', 'credit-10', 'https://example.com/return')
+      await useCase.initiatePayment('author-1', 'credit-5', 'https://example.com/return')
 
       expect(mockPrisma.payment.update).toHaveBeenCalledWith({
         where: { id: 'pay-1' },
@@ -184,7 +184,7 @@ describe('PaymentUseCase', () => {
       const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
       expect(result.processed).toBe(true)
-      expect(result.credits).toBe(10)
+      expect(result.credits).toBe(5)
       expect(mockPrisma.$transaction).toHaveBeenCalled()
       expect(mockPrisma.payment.update).toHaveBeenCalledWith({
         where: { id: 'pay-1' },
@@ -192,12 +192,12 @@ describe('PaymentUseCase', () => {
       })
       expect(mockPrisma.author.update).toHaveBeenCalledWith({
         where: { id: 'author-1' },
-        data: { credits: { increment: 10 } },
+        data: { credits: { increment: 5 } },
       })
       expect(mockPrisma.creditLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           authorId: 'author-1',
-          amount: 10,
+          amount: 5,
         }),
       })
     })

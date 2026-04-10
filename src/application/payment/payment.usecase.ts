@@ -4,12 +4,10 @@ import { CreditUseCase } from '@application/credit/credit.usecase'
 import { PaymentGatewayPort } from '@domain/port/outbound/payment-gateway.port'
 
 /**
- * 크레딧 상품 카탈로그
+ * 크레딧 상품 카탈로그 — PLANNING_GRIMOIRE.md §8 기준
  *
  * 크레딧 단가 계산 (절대 원칙: AI 비용 < 크레딧 수익)
- * Claude Sonnet: ~$3/1M input, ~$15/1M output ≈ 약 4000원/1M tokens
- * 테마 생성 1회 ≈ 2000 tokens ≈ 약 12원
- * 1 크레딧 = 100원 (최소 마진 8배)
+ * 베스트 패키지 기준: 50 크레딧 / ₩5,000 → 개당 ₩100 → 마진 82.5%
  */
 import { CREDIT_PRODUCTS, Product } from '@domain/model/config'
 
