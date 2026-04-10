@@ -237,6 +237,22 @@ model ChatMessage {
   @@map("chat_messages")
 }
 
+model AccessLog {
+  id        String   @id @default(uuid())
+  action    String   // register, login_success, login_fail, password_change
+  authorId  String?  @map("author_id")
+  email     String?  // 로그인 실패 시 시도한 이메일 (작가 미식별)
+  ip        String?
+  userAgent String?  @map("user_agent")
+  detail    String?  // 실패 사유 등
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([action, createdAt])
+  @@index([ip])
+  @@index([authorId])
+  @@map("access_logs")
+}
+
 model AdminAuditLog {
   id        String   @id @default(uuid())
   adminId   String   @map("admin_id")

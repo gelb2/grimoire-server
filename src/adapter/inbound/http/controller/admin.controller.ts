@@ -1,12 +1,13 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Req, Res, UseGuards, UnauthorizedException } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
-import { Response } from 'express'
+import { Request, Response } from 'express'
 import * as bcrypt from 'bcryptjs'
 import { JwtService } from '@nestjs/jwt'
 import { AdminUseCase } from '@application/admin/admin.usecase'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
+import { AccessLogService } from '@infrastructure/security/access-log.service'
 
 interface AuthenticatedRequest {
   user: { sub: string; slug: string; role: string }
@@ -21,6 +22,7 @@ export class AdminController {
     private readonly adminUseCase: AdminUseCase,
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly accessLog: AccessLogService,
   ) {}
 
   // ─── 관리자 전용 로그인 (reCAPTCHA 없음, role=admin 검증) ───
@@ -29,22 +31,24 @@ export class AdminController {
   @Post('login')
   async adminLogin(
     @Body() body: { email: string; password: string },
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined
+    const userAgent = req.headers['user-agent'] || undefined
+
     const author = await this.prisma.author.findUnique({
       where: { email: body.email },
     })
 
-    if (!author || !author.passwordHash) {
+    if (!author || !author.passwordHash || author.role !== 'admin') {
+      await this.accessLog.log({ action: 'admin_login_fail', email: body.email, ip, userAgent, detail: !author ? 'not_found' : 'not_admin' })
       throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다')
-    }
-
-    if (author.role !== 'admin') {
-      throw new UnauthorizedException('관리자 권한이 없습니다')
     }
 
     const valid = await bcrypt.compare(body.password, author.passwordHash)
     if (!valid) {
+      await this.accessLog.log({ action: 'admin_login_fail', email: body.email, ip, userAgent, detail: 'wrong_password' })
       throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다')
     }
 
@@ -58,13 +62,12 @@ export class AdminController {
       path: '/',
     })
 
+    await this.accessLog.log({ action: 'admin_login_success', authorId: author.id, email: body.email, ip, userAgent })
+
     return {
       user: {
-        id: author.id,
-        slug: author.slug,
-        name: author.name,
-        email: author.email,
-        role: author.role,
+        id: author.id, slug: author.slug, name: author.name,
+        email: author.email, role: author.role,
       },
     }
   }

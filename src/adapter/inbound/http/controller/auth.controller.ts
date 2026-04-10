@@ -1,11 +1,12 @@
 import { AuthenticatedRequest } from '@adapter/inbound/http/dto/authenticated-request'
 import { Controller, Post, Body, Get, Req, Res, UseGuards } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
-import { Response } from 'express'
+import { Request, Response } from 'express'
 import { AuthUseCase } from '@application/auth/auth.usecase'
 import { RegisterDto, LoginDto } from '@adapter/inbound/http/dto/auth.dto'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 import { verifyRecaptcha } from '@adapter/inbound/http/util/recaptcha-verifier'
+import { AccessLogService } from '@infrastructure/security/access-log.service'
 
 /** 쿠키 옵션 상수 */
 const COOKIE_NAME = 'grimoire_token'
@@ -31,63 +32,89 @@ function clearAuthCookie(res: Response): void {
   })
 }
 
+function extractClientInfo(req: Request) {
+  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined
+  const userAgent = req.headers['user-agent'] || undefined
+  return { ip, userAgent }
+}
+
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authUseCase: AuthUseCase) {}
+  constructor(
+    private readonly authUseCase: AuthUseCase,
+    private readonly accessLog: AccessLogService,
+  ) {}
 
   @Throttle({ default: { ttl: 3600000, limit: 5 } })  // 시간당 5회
   @Post('register')
-  async register(@Body() dto: RegisterDto & { recaptchaToken?: string }, @Res({ passthrough: true }) res: Response) {
+  async register(
+    @Body() dto: RegisterDto & { recaptchaToken?: string },
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     await verifyRecaptcha(dto.recaptchaToken || '')
     const { author, token } = await this.authUseCase.register(dto)
     setAuthCookie(res, token)
+
+    const { ip, userAgent } = extractClientInfo(req)
+    await this.accessLog.log({ action: 'register', authorId: author.id, email: dto.email, ip, userAgent })
+
     return {
       user: {
-        id: author.id,
-        slug: author.slug,
-        name: author.name,
-        email: author.email,
-        credits: author.credits,
-        role: author.role,
+        id: author.id, slug: author.slug, name: author.name,
+        email: author.email, credits: author.credits, role: author.role,
       },
     }
   }
 
   @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Post('login')
-  async login(@Body() dto: LoginDto & { recaptchaToken?: string }, @Res({ passthrough: true }) res: Response) {
+  async login(
+    @Body() dto: LoginDto & { recaptchaToken?: string },
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     await verifyRecaptcha(dto.recaptchaToken || '')
-    const { author, token } = await this.authUseCase.login(dto)
-    setAuthCookie(res, token)
-    return {
-      user: {
-        id: author.id,
-        slug: author.slug,
-        name: author.name,
-        email: author.email,
-        credits: author.credits,
-        role: author.role,
-      },
+    const { ip, userAgent } = extractClientInfo(req)
+
+    try {
+      const { author, token } = await this.authUseCase.login(dto)
+      setAuthCookie(res, token)
+
+      await this.accessLog.log({ action: 'login_success', authorId: author.id, email: dto.email, ip, userAgent })
+
+      return {
+        user: {
+          id: author.id, slug: author.slug, name: author.name,
+          email: author.email, credits: author.credits, role: author.role,
+        },
+      }
+    } catch (err) {
+      await this.accessLog.log({ action: 'login_fail', email: dto.email, ip, userAgent, detail: (err as Error).message })
+      throw err
     }
   }
 
   @Post('google')
-  async googleLogin(@Body() body: { token: string }, @Res({ passthrough: true }) res: Response) {
+  async googleLogin(
+    @Body() body: { token: string },
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { ip, userAgent } = extractClientInfo(req)
     const { author, token } = await this.authUseCase.googleLogin(body.token)
     setAuthCookie(res, token)
+
+    await this.accessLog.log({ action: 'login_success', authorId: author.id, email: author.email, ip, userAgent, detail: 'google_oauth' })
+
     return {
       user: {
-        id: author.id,
-        slug: author.slug,
-        name: author.name,
-        email: author.email,
-        credits: author.credits,
-        role: author.role,
+        id: author.id, slug: author.slug, name: author.name,
+        email: author.email, credits: author.credits, role: author.role,
       },
     }
   }
 
-  /** 로그아웃 — HttpOnly 쿠키 제거 */
   @Post('logout')
   async logout(@Res({ passthrough: true }) res: Response) {
     clearAuthCookie(res)
@@ -99,20 +126,22 @@ export class AuthController {
   async profile(@Req() req: AuthenticatedRequest) {
     const author = await this.authUseCase.getProfile(req.user.sub)
     return {
-      id: author.id,
-      slug: author.slug,
-      name: author.name,
-      email: author.email,
-      credits: author.credits,
-      role: author.role,
+      id: author.id, slug: author.slug, name: author.name,
+      email: author.email, credits: author.credits, role: author.role,
     }
   }
 
-  /** 비밀번호 변경 */
   @UseGuards(JwtAuthGuard)
   @Post('change-password')
-  async changePassword(@Req() req: AuthenticatedRequest, @Body() body: { currentPassword: string; newPassword: string }) {
+  async changePassword(
+    @Req() req: AuthenticatedRequest & Request,
+    @Body() body: { currentPassword: string; newPassword: string },
+  ) {
     await this.authUseCase.changePassword(req.user.sub, body.currentPassword, body.newPassword)
+
+    const { ip, userAgent } = extractClientInfo(req as Request)
+    await this.accessLog.log({ action: 'password_change', authorId: req.user.sub, ip, userAgent })
+
     return { success: true }
   }
 }
