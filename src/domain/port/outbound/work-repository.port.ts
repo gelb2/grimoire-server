@@ -47,4 +47,6 @@ export interface WorkRepositoryPort {
   findBySharedToken(token: string): Promise<Episode | null>
   /** 특정 에피소드 목록 조회 (status 필터링 포함) */
   findEpisodesFiltered(workId: string, excludeStatuses?: EpisodeStatus[]): Promise<EpisodeSummary[]>
+  /** 에피소드 내용 업데이트 (재업로드) */
+  updateEpisodeContent(id: string, data: { title?: string; subtitle?: string; description?: string; blocks?: Block[]; rawMd?: string; sourceFormat?: string }): Promise<Episode>
 }

@@ -12,17 +12,25 @@ export class PrismaCreditRepository implements CreditRepositoryPort {
     amount: number,
     reason: string,
   ): Promise<{ credits: number; log: CreditLog }> {
-    // 트랜잭션으로 원자적 처리
+    // Serializable 트랜잭션 — 동시 크레딧 변경 시 데드락 방지
     const result = await this.prisma.$transaction(async (tx) => {
-      const author = await tx.author.update({
-        where: { id: authorId },
-        data: { credits: { increment: amount } },
-      })
+      // SELECT FOR UPDATE: 같은 작가 행을 동시 수정하는 트랜잭션을 직렬화
+      const [locked] = await tx.$queryRawUnsafe<{ credits: number }[]>(
+        'SELECT credits FROM authors WHERE id = $1 FOR UPDATE',
+        authorId,
+      )
+      if (!locked) throw new Error('작가를 찾을 수 없습니다')
 
-      // 잔액이 음수가 되지 않도록 보정
-      if (author.credits < 0) {
+      // 차감 시 잔액 검증을 UPDATE 전에 수행
+      const newBalance = locked.credits + amount
+      if (newBalance < 0) {
         throw new Error('크레딧이 부족합니다')
       }
+
+      const author = await tx.author.update({
+        where: { id: authorId },
+        data: { credits: newBalance },
+      })
 
       const log = await tx.creditLog.create({
         data: { authorId, amount, reason },
@@ -42,22 +50,32 @@ export class PrismaCreditRepository implements CreditRepositoryPort {
     receiverReason: string,
   ): Promise<{ senderCredits: number; receiverCredits: number }> {
     return this.prisma.$transaction(async (tx) => {
-      // 보내는 유저 차감
-      const sender = await tx.author.update({
-        where: { id: senderId },
-        data: { credits: { decrement: amount } },
-      })
-      if (sender.credits < 0) {
+      // 데드락 방지: ID 순서로 잠금 (항상 작은 ID를 먼저 잠금)
+      const [firstId, secondId] = senderId < receiverId
+        ? [senderId, receiverId]
+        : [receiverId, senderId]
+
+      const rows = await tx.$queryRawUnsafe<{ id: string; credits: number }[]>(
+        'SELECT id, credits FROM authors WHERE id IN ($1, $2) ORDER BY id FOR UPDATE',
+        firstId, secondId,
+      )
+      const senderRow = rows.find(r => r.id === senderId)
+      const receiverRow = rows.find(r => r.id === receiverId)
+      if (!senderRow || !receiverRow) throw new Error('유저를 찾을 수 없습니다')
+
+      if (senderRow.credits < amount) {
         throw new Error('크레딧이 부족합니다')
       }
 
-      // 받는 유저 적립
+      const sender = await tx.author.update({
+        where: { id: senderId },
+        data: { credits: senderRow.credits - amount },
+      })
       const receiver = await tx.author.update({
         where: { id: receiverId },
-        data: { credits: { increment: amount } },
+        data: { credits: receiverRow.credits + amount },
       })
 
-      // 로그 2건 기록
       await tx.creditLog.createMany({
         data: [
           { authorId: senderId, amount: -amount, reason: senderReason },

@@ -91,6 +91,16 @@ export class WorkManagementController {
 export class EpisodeManagementController {
   constructor(private readonly workManagementUseCase: WorkManagementUseCase) {}
 
+  /** 에피소드 재업로드 (파일 교체) */
+  @Patch(':episodeId/reupload')
+  async reuploadEpisode(
+    @Req() req: AuthenticatedRequest,
+    @Param('episodeId') episodeId: string,
+    @Body() body: { title?: string; rawContent: string; sourceFormat?: string },
+  ) {
+    return this.workManagementUseCase.reuploadEpisode(req.user.sub, episodeId, body)
+  }
+
   @Delete(':id')
   async deleteEpisode(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     await this.workManagementUseCase.deleteEpisode(req.user.sub, id)

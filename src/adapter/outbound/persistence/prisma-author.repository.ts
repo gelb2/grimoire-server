@@ -90,6 +90,42 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
     })
     return toDomain(row)
   }
+
+  async findAll(options: { page: number; limit: number; query?: string }): Promise<{ items: Author[]; total: number }> {
+    const where = options.query
+      ? {
+          OR: [
+            { name: { contains: options.query, mode: 'insensitive' as const } },
+            { slug: { contains: options.query, mode: 'insensitive' as const } },
+            { email: { contains: options.query, mode: 'insensitive' as const } },
+          ],
+        }
+      : {}
+
+    const [items, total] = await Promise.all([
+      this.prisma.author.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (options.page - 1) * options.limit,
+        take: options.limit,
+      }),
+      this.prisma.author.count({ where }),
+    ])
+
+    return { items: items.map(toDomain), total }
+  }
+
+  async updateRole(id: string, role: string): Promise<Author> {
+    const row = await this.prisma.author.update({
+      where: { id },
+      data: { role },
+    })
+    return toDomain(row)
+  }
+
+  async deleteById(id: string): Promise<void> {
+    await this.prisma.author.delete({ where: { id } })
+  }
 }
 
 function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; bio?: string | null; role: string; credits: number; plan: string; planExpireAt?: Date | null; createdAt: Date }): Author {
