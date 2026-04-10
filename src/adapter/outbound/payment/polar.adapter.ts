@@ -24,7 +24,7 @@ import { CREDIT_PRODUCTS } from '@domain/model/config'
  * - POLAR_WEBHOOK_SECRET: Webhook endpoint secret
  * - POLAR_PRODUCT_BASIC / POPULAR / BEST: Polar product UUID
  *
- * 내부 상품 ID(credit-10 등) → Polar product UUID 매핑은
+ * 내부 상품 ID(credit-5 등) → Polar product UUID 매핑은
  * CREDIT_PRODUCTS[i].providerProductIdEnv 환경변수로 처리.
  */
 @Injectable()
@@ -205,12 +205,15 @@ export class PolarAdapter implements PaymentGatewayPort {
   }
 
   /**
-   * Polar 금액(최소 단위, USD는 센트)을 내부 원화 기준으로 변환.
-   * 현재 sandbox는 USD 고정 — 환율 하드코딩 대신 단순 통과시킴.
-   * 프로덕션 전환 시 실제 환율 적용 또는 KRW 가격 등록으로 재검토.
+   * Polar 금액(USD 센트)을 내부 원화(KRW) 기준으로 변환.
+   * Polar 상품별 USD↔KRW 매핑은 CREDIT_PRODUCTS에 정의.
+   * 웹훅 amount는 참고용이므로 고정 환율 적용 (결제 금액 검증은 Polar MoR이 담당).
    */
-  private convertToKrw(amount: number): number {
-    // TODO: 실제 환율 반영 또는 Polar KRW 가격 지원 시 단순 통과로 변경
-    return amount
+  private convertToKrw(amountCents: number): number {
+    // 상품별 정확한 매핑 시도 (99센트 → 1000원 등)
+    const product = CREDIT_PRODUCTS.find((p) => p.priceUsd === amountCents)
+    if (product) return product.price
+    // 매핑 실패 시 고정 환율 폴백 (1 USD = 1400 KRW)
+    return Math.round((amountCents / 100) * 1400)
   }
 }

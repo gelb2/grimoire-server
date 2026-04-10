@@ -18,12 +18,12 @@ model Author {
   role            String          @default("user")
   credits         Int             @default(3)
   plan            String          @default("free")
-  planExpireAt    DateTime?       @map("plan_expire_at")
+  planExpireAt    DateTime?       @map("plan_expire_at") @db.Timestamptz(3)
   defaultThemeId  String?         @map("default_theme_id")
   themes          Theme[]
   works           Work[]
   socialAccounts  SocialAccount[]
-  createdAt       DateTime        @default(now()) @map("created_at")
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@map("authors")
 }
@@ -39,7 +39,7 @@ model Theme {
   bakedCssUrl    String?  @map("baked_css_url")
   isSlotted      Boolean  @default(false) @map("is_slotted")
   source         String   @default("user")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   works          Work[]
 
   @@index([authorId])
@@ -61,7 +61,7 @@ model Work {
   theme       Theme?    @relation(fields: [themeId], references: [id])
   viewCount   Int       @default(0) @map("view_count")
   episodes    Episode[]
-  createdAt   DateTime  @default(now()) @map("created_at")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([authorId, slug])
   @@index([authorId])
@@ -85,8 +85,8 @@ model Episode {
   status         String    @default("upload") @map("status")
   isIndexed      Boolean   @default(false) @map("is_indexed")
   sharedToken    String?   @unique @map("shared_token")
-  sharedExpireAt DateTime? @map("shared_expire_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
+  sharedExpireAt DateTime? @map("shared_expire_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([workId, slug])
   @@index([workId, orderNum])
@@ -98,7 +98,7 @@ model CreditLog {
   authorId  String   @map("author_id")
   amount    Int
   reason    String
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@map("credit_logs")
 }
@@ -110,7 +110,7 @@ model SocialAccount {
   provider      String
   providerId    String   @map("provider_id")
   providerEmail String?  @map("provider_email")
-  createdAt     DateTime @default(now()) @map("created_at")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([provider, providerId])
   @@map("social_accounts")
@@ -118,7 +118,7 @@ model SocialAccount {
 
 model SignupHistory {
   providerId    String   @id @map("provider_id")
-  firstSignupAt DateTime @default(now()) @map("first_signup_at")
+  firstSignupAt DateTime @default(now()) @map("first_signup_at") @db.Timestamptz(3)
   signupCount   Int      @default(1) @map("signup_count")
 
   @@map("signup_history")
@@ -128,7 +128,7 @@ model Bookmark {
   id        String   @id @default(uuid())
   authorId  String   @map("author_id")
   episodeId String   @map("episode_id")
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([authorId, episodeId])
   @@index([authorId])
@@ -140,7 +140,7 @@ model ReadingProgress {
   authorId   String   @map("author_id")
   episodeId  String   @map("episode_id")
   blockIndex Int      @map("block_index")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([authorId, episodeId])
   @@map("reading_progress")
@@ -152,7 +152,7 @@ model Like {
   episodeId String   @map("episode_id")
   ipAddress String?  @map("ip_address")
   cookieId  String?  @map("cookie_id")
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([authorId, episodeId])
   @@index([episodeId])
@@ -164,7 +164,7 @@ model Subscription {
   id             String   @id @default(uuid())
   subscriberId   String   @map("subscriber_id")
   targetAuthorId String   @map("target_author_id")
-  createdAt      DateTime @default(now()) @map("created_at")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([subscriberId, targetAuthorId])
   @@map("subscriptions")
@@ -181,7 +181,7 @@ model Comment {
   parentId     String?   @map("parent_id")
   parent       Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
   replies      Comment[] @relation("CommentReplies")
-  createdAt    DateTime  @default(now()) @map("created_at")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([episodeId, createdAt])
   @@index([parentId])
@@ -196,8 +196,8 @@ model Payment {
   credits       Int
   externalTransactionId String?   @unique @map("external_transaction_id")
   status        String    @default("pending")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(3)
 
   @@map("payments")
 }
@@ -217,8 +217,8 @@ model ChatSession {
   authorId  String        @map("author_id")
   workId    String        @map("work_id")
   title     String        @default("새 대화")
-  createdAt DateTime      @default(now()) @map("created_at")
-  updatedAt DateTime      @updatedAt @map("updated_at")
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
   messages  ChatMessage[]
 
   @@index([authorId, workId])
@@ -231,7 +231,7 @@ model ChatMessage {
   session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   role      String      // "user" | "assistant"
   content   String
-  createdAt DateTime    @default(now()) @map("created_at")
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([sessionId, createdAt])
   @@map("chat_messages")
