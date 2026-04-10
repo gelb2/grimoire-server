@@ -48,9 +48,9 @@ describe('PolarAdapter', () => {
       })
 
       const result = await adapter.initiatePayment({
-        productId: 'credit-10',
-        productName: '10 크레딧',
-        amount: 1000,
+        productId: 'credit-5',
+        productName: '5 크레딧',
+        amount: 1000, // ₩1,000
         userId: 'author-1',
         returnUrl: 'https://grimoire-book.com/return',
       })
@@ -60,20 +60,20 @@ describe('PolarAdapter', () => {
         successUrl: 'https://grimoire-book.com/return',
         metadata: {
           authorId: 'author-1',
-          internalProductId: 'credit-10',
+          internalProductId: 'credit-5',
         },
       })
       expect(result.paymentUrl).toBe('https://polar.sh/checkout/abc')
       expect(result.tradeNo).toBe('checkout-123')
     })
 
-    it('credit-30 → POLAR_PRODUCT_POPULAR 매핑', async () => {
+    it('credit-20 → POLAR_PRODUCT_POPULAR 매핑', async () => {
       mockCreate.mockResolvedValue({ id: 'c2', url: 'https://polar.sh/c2' })
 
       await adapter.initiatePayment({
-        productId: 'credit-30',
-        productName: '30 크레딧',
-        amount: 2500,
+        productId: 'credit-20',
+        productName: '20 크레딧',
+        amount: 3000,
         userId: 'author-1',
         returnUrl: 'https://example.com',
       })
@@ -83,13 +83,13 @@ describe('PolarAdapter', () => {
       )
     })
 
-    it('credit-100 → POLAR_PRODUCT_BEST 매핑', async () => {
+    it('credit-50 → POLAR_PRODUCT_BEST 매핑', async () => {
       mockCreate.mockResolvedValue({ id: 'c3', url: 'https://polar.sh/c3' })
 
       await adapter.initiatePayment({
-        productId: 'credit-100',
-        productName: '100 크레딧',
-        amount: 7000,
+        productId: 'credit-50',
+        productName: '50 크레딧',
+        amount: 5000,
         userId: 'author-1',
         returnUrl: 'https://example.com',
       })
@@ -117,9 +117,9 @@ describe('PolarAdapter', () => {
 
       await expect(
         badAdapter.initiatePayment({
-          productId: 'credit-10',
-          productName: '10 크레딧',
-          amount: 1000,
+          productId: 'credit-5',
+          productName: '5 크레딧',
+          amount: 1000, // ₩1,000
           userId: 'author-1',
           returnUrl: 'https://example.com',
         }),
@@ -131,9 +131,9 @@ describe('PolarAdapter', () => {
 
       await expect(
         adapter.initiatePayment({
-          productId: 'credit-10',
-          productName: '10 크레딧',
-          amount: 1000,
+          productId: 'credit-5',
+          productName: '5 크레딧',
+          amount: 1000, // ₩1,000
           userId: 'author-1',
           returnUrl: 'https://example.com',
         }),
@@ -157,7 +157,7 @@ describe('PolarAdapter', () => {
           checkoutId: 'checkout-abc',
           totalAmount: 99,
           status: 'paid',
-          metadata: { authorId: 'author-1', internalProductId: 'credit-10' },
+          metadata: { authorId: 'author-1', internalProductId: 'credit-5' },
         },
       })
 
@@ -166,7 +166,7 @@ describe('PolarAdapter', () => {
       expect(result).toEqual({
         type: 'order.paid',
         tradeNo: 'checkout-abc',
-        amount: 99,
+        amount: 1000, // 99센트 → ₩1,000 (credit-5 상품 매핑)
         status: 'success',
         userId: 'author-1',
       })
@@ -314,7 +314,7 @@ describe('PolarAdapter', () => {
 
       const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
 
-      expect(result?.amount).toBe(250)
+      expect(result?.amount).toBe(3500) // 250센트 → 고정 환율 폴백 (250/100 * 1400)
     })
 
     it('프로덕션 환경에서 webhook secret 미설정 시 null 반환', () => {

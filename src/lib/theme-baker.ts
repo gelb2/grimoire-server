@@ -38,9 +38,15 @@ export function sanitizeCssValue(value: string): string | null {
   return null
 }
 
+/** 안전한 CSS 문자열 값 (인젝션 차단, 허용된 값만 통과) */
+function safeCssString(value: string | undefined, allowed: Record<string, string>): string | null {
+  if (!value) return null
+  return allowed[value] ?? null
+}
+
 /**
  * 테마 JSON을 CSS 문자열로 변환 (Baking)
- * 작가가 테마를 퍼블리시할 때 호출되어 정적 CSS 파일을 생성한다
+ * CSS 변수명은 프론트엔드 ThemeProvider와 일치 (--g-* 접두사)
  */
 export function bakeThemeToCSS(
   theme: Record<string, any>,
@@ -48,17 +54,17 @@ export function bakeThemeToCSS(
 ): string {
   const cssVars: string[] = []
 
-  // 색상 매핑 (새니타이즈 적용)
+  // 색상 매핑 (새니타이즈 적용) — --g-* 접두사 (프론트엔드 일치)
   const colorFields: [string, string][] = [
-    ['bgPrimary', '--u-bg'],
-    ['bgSecondary', '--u-bg2'],
-    ['textPrimary', '--u-text'],
-    ['textMuted', '--u-text-muted'],
-    ['textDim', '--u-text-dim'],
-    ['textBright', '--u-text-bright'],
-    ['accent', '--u-accent'],
-    ['accent2', '--u-accent2'],
-    ['border', '--u-border'],
+    ['bgPrimary', '--g-bg'],
+    ['bgSecondary', '--g-bg2'],
+    ['textPrimary', '--g-text'],
+    ['textMuted', '--g-text-muted'],
+    ['textDim', '--g-text-dim'],
+    ['textBright', '--g-text-bright'],
+    ['accent', '--g-accent'],
+    ['accent2', '--g-accent2'],
+    ['border', '--g-border'],
   ]
 
   for (const [field, cssVar] of colorFields) {
@@ -70,27 +76,70 @@ export function bakeThemeToCSS(
     }
   }
 
-  // 폰트 매핑 (허용된 폰트맵에서만 선택, 커스텀 폰트값은 새니타이즈)
+  // accent2를 --g-text-warm으로도 매핑 (프론트엔드 호환)
+  if (theme.accent2) {
+    const safe = sanitizeCssValue(theme.accent2)
+    if (safe) cssVars.push(`  --g-text-warm: ${safe};`)
+  }
+
+  // 폰트 매핑
   const fontMap: Record<string, string> = {
-    serif: '"EB Garamond", "Noto Serif KR", serif',
-    'sans-serif': '"Noto Sans KR", sans-serif',
-    monospace: '"JetBrains Mono", monospace',
+    serif: "var(--fn-garamond), var(--fn-noto-serif-kr), Georgia, 'Batang', serif",
+    'sans-serif': 'system-ui, -apple-system, sans-serif',
+    monospace: "'JetBrains Mono', 'Fira Code', monospace",
   }
   if (theme.fontBody) {
     const mapped = fontMap[theme.fontBody]
-    if (mapped) {
-      cssVars.push(`  --u-serif: ${mapped};`)
-    }
-    // 허용된 폰트맵에 없는 값은 무시 (인젝션 방지)
+    if (mapped) cssVars.push(`  --g-serif: ${mapped};`)
   }
+  cssVars.push(`  --g-sans: ${fontMap['sans-serif']};`)
   if (theme.fontHeading) {
     const mapped = fontMap[theme.fontHeading]
-    if (mapped) {
-      cssVars.push(`  --u-sans: ${mapped};`)
-    }
+    if (mapped) cssVars.push(`  --g-heading-font: ${mapped};`)
   }
 
-  // authorSlug도 새니타이즈 (CSS 주석 인젝션 방지)
+  // Phase 1 타이포그래피 확장
+  const titleSizeMap: Record<string, string> = { sm: '2rem', md: '3rem', lg: '4rem', xl: '6rem' }
+  const titleWeightMap: Record<string, string> = { light: '300', normal: '400', bold: '700', black: '900' }
+  const letterSpacingMap: Record<string, string> = { tight: '-0.02em', normal: '0', wide: '0.1em' }
+  const lineHeightMap: Record<string, string> = { compact: '1.5', normal: '1.7', relaxed: '1.9' }
+  const contentWidthMap: Record<string, string> = { narrow: '600px', normal: '700px', wide: '860px' }
+  const bodySizeMap: Record<string, string> = { compact: '16px', normal: '19px', large: '21px' }
+
+  const titleSize = safeCssString(theme.titleSize, titleSizeMap)
+  if (titleSize) cssVars.push(`  --g-title-size: ${titleSize};`)
+
+  const titleWeight = safeCssString(theme.titleWeight, titleWeightMap)
+  if (titleWeight) cssVars.push(`  --g-title-weight: ${titleWeight};`)
+
+  const letterSpacing = safeCssString(theme.letterSpacing, letterSpacingMap)
+  if (letterSpacing) cssVars.push(`  --g-letter-spacing: ${letterSpacing};`)
+
+  const lineHeight = safeCssString(theme.bodyLineHeight, lineHeightMap)
+  if (lineHeight) cssVars.push(`  --g-line-height: ${lineHeight};`)
+
+  const contentWidth = safeCssString(theme.contentWidth, contentWidthMap)
+  if (contentWidth) cssVars.push(`  --g-content-width: ${contentWidth};`)
+
+  const bodySize = safeCssString(theme.bodySize, bodySizeMap)
+  if (bodySize) cssVars.push(`  --g-body-size: ${bodySize};`)
+
+  // 카드/네비 토큰
+  if (theme.cardRadius) cssVars.push(`  --g-card-radius: ${theme.cardRadius};`)
+  if (theme.navOpacity != null) cssVars.push(`  --g-nav-opacity: ${theme.navOpacity};`)
+  if (theme.tabPillRadius) cssVars.push(`  --g-tab-pill-radius: ${theme.tabPillRadius};`)
+  if (theme.labelLetterSpacing) cssVars.push(`  --g-label-letter-spacing: ${theme.labelLetterSpacing};`)
+  if (theme.cardWatermarkOpacity != null) cssVars.push(`  --g-card-watermark-opacity: ${theme.cardWatermarkOpacity};`)
+  if (theme.cardHoverLift) cssVars.push(`  --g-card-hover-lift: ${theme.cardHoverLift};`)
+
+  // tone → color-scheme
+  if (theme.tone === 'light') {
+    cssVars.push(`  color-scheme: light;`)
+  } else {
+    cssVars.push(`  color-scheme: dark;`)
+  }
+
+  // authorSlug 새니타이즈 (CSS 주석 인젝션 방지)
   const safeSlug = authorSlug.replace(/[^a-zA-Z0-9_-]/g, '')
   const comment = `/* Grimoire Theme: ${safeSlug} — Generated at ${new Date().toISOString()} */`
   return `${comment}\n:root {\n${cssVars.join('\n')}\n}\n`

@@ -8,16 +8,17 @@ describe('bakeThemeToCSS', () => {
       accent: '#c8a96e',
     }
     const css = bakeThemeToCSS(theme, 'deerdevil')
-    expect(css).toContain('--u-bg: #0a0a0a;')
-    expect(css).toContain('--u-text: #d4c5a0;')
-    expect(css).toContain('--u-accent: #c8a96e;')
+    expect(css).toContain('--g-bg: #0a0a0a;')
+    expect(css).toContain('--g-text: #d4c5a0;')
+    expect(css).toContain('--g-accent: #c8a96e;')
     expect(css).toContain(':root {')
   })
 
   it('폰트를 풀네임으로 매핑한다', () => {
     const theme = { fontBody: 'serif', fontHeading: 'monospace' }
     const css = bakeThemeToCSS(theme, 'test')
-    expect(css).toContain('EB Garamond')
+    expect(css).toContain('--g-serif:')
+    expect(css).toContain('--g-heading-font:')
     expect(css).toContain('JetBrains Mono')
   })
 
@@ -26,9 +27,11 @@ describe('bakeThemeToCSS', () => {
     expect(css).toContain('Grimoire Theme: my-author')
   })
 
-  it('빈 테마는 빈 :root를 생성한다', () => {
+  it('빈 테마도 기본 변수를 포함한 :root를 생성한다', () => {
     const css = bakeThemeToCSS({}, 'empty')
-    expect(css).toContain(':root {\n\n}')
+    expect(css).toContain(':root {')
+    expect(css).toContain('--g-sans:')
+    expect(css).toContain('color-scheme:')
   })
 
   it('모든 색상 속성을 매핑한다', () => {
@@ -44,15 +47,15 @@ describe('bakeThemeToCSS', () => {
       border: '#999',
     }
     const css = bakeThemeToCSS(theme, 'full')
-    expect(css).toContain('--u-bg:')
-    expect(css).toContain('--u-bg2:')
-    expect(css).toContain('--u-text:')
-    expect(css).toContain('--u-text-muted:')
-    expect(css).toContain('--u-text-dim:')
-    expect(css).toContain('--u-text-bright:')
-    expect(css).toContain('--u-accent:')
-    expect(css).toContain('--u-accent2:')
-    expect(css).toContain('--u-border:')
+    expect(css).toContain('--g-bg:')
+    expect(css).toContain('--g-bg2:')
+    expect(css).toContain('--g-text:')
+    expect(css).toContain('--g-text-muted:')
+    expect(css).toContain('--g-text-dim:')
+    expect(css).toContain('--g-text-bright:')
+    expect(css).toContain('--g-accent:')
+    expect(css).toContain('--g-accent2:')
+    expect(css).toContain('--g-border:')
   })
 
   it('허용되지 않은 폰트는 무시한다 (인젝션 방지)', () => {
