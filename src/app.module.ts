@@ -24,6 +24,7 @@ import { ReaderUseCase } from '@application/reader/reader.usecase'
 import { DiscoveryUseCase } from '@application/discovery/discovery.usecase'
 import { AdminUseCase } from '@application/admin/admin.usecase'
 import { AuditLogService } from '@application/admin/audit-log.service'
+import { AccessLogService } from '@infrastructure/security/access-log.service'
 import { ThemeSlotUseCase } from '@application/theme/theme-slot.usecase'
 import { PlanUseCase } from '@application/plan/plan.usecase'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
@@ -120,6 +121,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     DiscoveryUseCase,
     AdminUseCase,
     AuditLogService,
+    AccessLogService,
     ThemeSlotUseCase,
     PlanUseCase,
     NovelAnalysisUseCase,
