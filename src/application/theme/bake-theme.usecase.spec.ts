@@ -7,6 +7,10 @@ describe('BakeThemeUseCase', () => {
     findByAuthorSlug: jest.Mock
     updateBakedCssUrl: jest.Mock
   }
+  let mockBlobStorage: {
+    isEnabled: jest.Mock
+    uploadThemeCss: jest.Mock
+  }
 
   const mockTheme = {
     id: 'theme-1',
@@ -21,15 +25,43 @@ describe('BakeThemeUseCase', () => {
       findByAuthorSlug: jest.fn().mockResolvedValue(mockTheme),
       updateBakedCssUrl: jest.fn().mockResolvedValue(undefined),
     }
-    useCase = new BakeThemeUseCase(mockThemeRepo as any)
+    mockBlobStorage = {
+      isEnabled: jest.fn().mockReturnValue(false),
+      uploadThemeCss: jest.fn(),
+    }
+    useCase = new BakeThemeUseCase(mockThemeRepo as any, mockBlobStorage as any)
   })
 
-  it('테마를 CSS로 변환하고 URL을 반환한다', async () => {
+  it('Blob 미설정 시 API 폴백 URL을 반환한다', async () => {
     const result = await useCase.execute('deerdevil')
 
     expect(result.cssUrl).toBe('/api/themes/css/deerdevil')
     expect(result.css.length).toBeGreaterThan(0)
     expect(mockThemeRepo.updateBakedCssUrl).toHaveBeenCalledWith('theme-1', '/api/themes/css/deerdevil')
+    expect(mockBlobStorage.uploadThemeCss).not.toHaveBeenCalled()
+  })
+
+  it('Blob 활성화 시 CDN URL을 반환한다', async () => {
+    mockBlobStorage.isEnabled.mockReturnValue(true)
+    mockBlobStorage.uploadThemeCss.mockResolvedValue('https://storage.blob.core.windows.net/themes/deerdevil.css')
+
+    const result = await useCase.execute('deerdevil')
+
+    expect(result.cssUrl).toBe('https://storage.blob.core.windows.net/themes/deerdevil.css')
+    expect(mockBlobStorage.uploadThemeCss).toHaveBeenCalledWith(expect.any(String), 'deerdevil')
+    expect(mockThemeRepo.updateBakedCssUrl).toHaveBeenCalledWith(
+      'theme-1',
+      'https://storage.blob.core.windows.net/themes/deerdevil.css',
+    )
+  })
+
+  it('CDN 업로드 실패 시 API 폴백으로 처리한다', async () => {
+    mockBlobStorage.isEnabled.mockReturnValue(true)
+    mockBlobStorage.uploadThemeCss.mockRejectedValue(new Error('upload failed'))
+
+    const result = await useCase.execute('deerdevil')
+
+    expect(result.cssUrl).toBe('/api/themes/css/deerdevil')
   })
 
   it('테마가 없으면 NotFoundException을 던진다', async () => {
