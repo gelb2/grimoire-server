@@ -18,4 +18,10 @@ export interface AuthorRepositoryPort {
   updatePlan(id: string, plan: string, planExpireAt: Date | null): Promise<Author>
   /** 비밀번호 해시 업데이트 */
   updatePasswordHash(id: string, passwordHash: string): Promise<Author>
+  /** 전체 작가 목록 조회 (관리자용, 페이지네이션) */
+  findAll(options: { page: number; limit: number; query?: string }): Promise<{ items: Author[]; total: number }>
+  /** 작가 역할 변경 */
+  updateRole(id: string, role: string): Promise<Author>
+  /** 작가 삭제 */
+  deleteById(id: string): Promise<void>
 }
