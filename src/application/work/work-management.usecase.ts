@@ -101,6 +101,39 @@ export class WorkManagementUseCase {
     return episode
   }
 
+  /** 에피소드 재업로드 (파일 교체 — 소유권 검증) */
+  async reuploadEpisode(
+    authorId: string,
+    episodeId: string,
+    input: { title?: string; rawContent: string; sourceFormat?: string },
+  ): Promise<Episode> {
+    const episode = await this.workRepo.findEpisodeById(episodeId)
+    if (!episode) throw new NotFoundException('에피소드를 찾을 수 없습니다')
+
+    const work = await this.workRepo.findById(episode.workId)
+    if (!work || work.authorId !== authorId) throw new ForbiddenException('에피소드 수정 권한이 없습니다')
+
+    const { blocks, meta } = this.parseContentWithMeta(input.rawContent, input.sourceFormat)
+
+    const updated = await this.workRepo.updateEpisodeContent(episodeId, {
+      title: input.title ?? meta?.subtitle ?? episode.title,
+      subtitle: meta?.subtitle,
+      description: meta?.description,
+      blocks,
+      rawMd: input.rawContent,
+      sourceFormat: input.sourceFormat || 'markdown',
+    })
+
+    // RAG 재인덱싱
+    if (input.rawContent.length >= 100) {
+      this.novelAnalysis.indexEpisode(episode.id, work.id, input.rawContent)
+        .then(() => this.workRepo.updateEpisodeIndexed(episode.id, true))
+        .catch(() => {})
+    }
+
+    return updated
+  }
+
   /** 에피소드 삭제 (소유권 검증) */
   async deleteEpisode(authorId: string, episodeId: string): Promise<void> {
     const episode = await this.workRepo.findEpisodeById(episodeId)
