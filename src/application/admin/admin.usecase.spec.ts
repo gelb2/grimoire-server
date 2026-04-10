@@ -42,9 +42,14 @@ describe('AdminUseCase', () => {
       findAll: jest.fn().mockResolvedValue({ items: [], total: 0 }),
     }
 
+    const mockPrisma = {
+      comment: { count: jest.fn().mockResolvedValue(5) },
+      payment: { count: jest.fn().mockResolvedValue(3) },
+    }
+
     useCase = new AdminUseCase(
       mockAuthorRepo, mockWorkRepo, mockCreditRepo,
-      mockCreditUseCase, mockAuditLog,
+      mockCreditUseCase, mockAuditLog, mockPrisma as any,
     )
   })
 
@@ -56,6 +61,8 @@ describe('AdminUseCase', () => {
       expect(result.totalWorks).toBe(25)
       expect(result.totalEpisodes).toBe(120)
       expect(result.totalCreditsConsumed).toBe(50)
+      expect(result.totalComments).toBe(5)
+      expect(result.totalPaymentsCompleted).toBe(3)
     })
 
     it('크레딧 소비가 없으면 0을 반환한다', async () => {
