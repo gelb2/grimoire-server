@@ -7,7 +7,7 @@
 
 ## 1. 현재 버전
 
-최신 버전은 `CHANGELOG.md` 참조. (현재 v0.23.0)
+최신 버전은 `CHANGELOG.md` 참조. (현재 v0.24.0)
 
 ---
 
@@ -62,12 +62,12 @@
 ### Prisma 스키마
 
 - 정본: `prisma/schema.prisma`
-- 모델 수: 21개 (schema.prisma에서 `model` 키워드로 확인)
+- 모델 수: 23개 (schema.prisma에서 `model` 키워드로 확인)
 - 설명: `SCHEMA.md`, `docs/data-model.md`
 
 ### 테스트
 
-- 테스트 수: `npm test` 실행으로 확인 (현재 377개)
+- 테스트 수: `npm test` 실행으로 확인 (현재 403개, 33 suites)
 - 커버리지: `npx jest --coverage` 실행으로 확인 (목표 60%)
 
 ### 인프라
@@ -100,9 +100,9 @@
 
 ## 4. 다음 단계
 
-- UseCase 테스트 3건 미작성 (chat, plan, theme-slot)
 - Polar KYC + 한국 payout 승인 (사용자 액션)
 - Redis 캐시 (테마 DB 호출 캐싱)
+- AI 채팅 스트리밍 (SSE)
 - HTML 파서 (최후순위)
 
 ---

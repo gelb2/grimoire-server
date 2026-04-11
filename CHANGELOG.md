@@ -1,5 +1,21 @@
 # Changelog — grimoire-server
 
+## [0.24.0] - 2026-04-12
+
+### 테스트 완성 + P1/P2 관리자 + 통계 시드 + 정비
+
+#### Added
+- UseCase 테스트 3건 추가 (chat, plan, theme-slot) — 총 403 tests, 33 suites
+- 관리자 P1: 시계열 통계 차트, 공지사항 CRUD, 추천 작품 큐레이션
+- 관리자 P2: 수익 대시보드, 시스템 테마 프리셋 관리
+- 통계 시드 스크립트 (scripts/seed-stats.ts) — 3환경 실행 완료
+
+#### Fixed
+- inhouse DB _prisma_migrations 중복 레코드 정리
+
+#### DB Migration
+- 20260411400000_add_announcements_featured — 공지사항 + 추천 작품 테이블
+
 ## [0.23.0] - 2026-04-11
 
 ### 관리자 패널 + 보안 인프라 + 운영 정비
