@@ -1,5 +1,5 @@
 import { AuthenticatedRequest } from '@adapter/inbound/http/dto/authenticated-request'
-import { Controller, Post, Body, Get, Req, Res, UseGuards } from '@nestjs/common'
+import { Controller, Post, Body, Get, Req, Res, UseGuards, ForbiddenException } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import { Request, Response } from 'express'
 import { AuthUseCase } from '@application/auth/auth.usecase'
@@ -7,6 +7,7 @@ import { RegisterDto, LoginDto } from '@adapter/inbound/http/dto/auth.dto'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 import { verifyRecaptcha } from '@adapter/inbound/http/util/recaptcha-verifier'
 import { AccessLogService } from '@infrastructure/security/access-log.service'
+import { PrismaService } from '@infrastructure/prisma/prisma.service'
 
 /** 쿠키 옵션 상수 */
 const COOKIE_NAME = 'grimoire_token'
@@ -43,6 +44,7 @@ export class AuthController {
   constructor(
     private readonly authUseCase: AuthUseCase,
     private readonly accessLog: AccessLogService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Throttle({ default: { ttl: 3600000, limit: 5 } })  // 시간당 5회
@@ -79,8 +81,21 @@ export class AuthController {
 
     try {
       const { author, token } = await this.authUseCase.login(dto)
-      setAuthCookie(res, token)
 
+      // 제재 확인 — 만료된 제재 자동 해제 후 활성 제재 확인
+      await this.prisma.userSanction.updateMany({
+        where: { authorId: author.id, isActive: true, endAt: { not: null, lt: new Date() } },
+        data: { isActive: false },
+      })
+      const sanction = await this.prisma.userSanction.findFirst({
+        where: { authorId: author.id, isActive: true },
+      })
+      if (sanction) {
+        await this.accessLog.log({ action: 'login_blocked', authorId: author.id, email: dto.email, ip, userAgent, detail: `sanction:${sanction.type}` })
+        throw new ForbiddenException(`계정이 정지되었습니다. 사유: ${sanction.reason}${sanction.endAt ? ` (해제: ${sanction.endAt.toISOString().split('T')[0]})` : ' (영구)'}`)
+      }
+
+      setAuthCookie(res, token)
       await this.accessLog.log({ action: 'login_success', authorId: author.id, email: dto.email, ip, userAgent })
 
       return {
