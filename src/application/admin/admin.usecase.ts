@@ -378,6 +378,144 @@ export class AdminUseCase {
     return { key, value }
   }
 
+  // ─── 시계열 통계 (P1) ───
+
+  async getTimeseries(metric: string, days: number = 30) {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+
+    if (metric === 'signups') {
+      const rows = await this.prisma.$queryRaw<{ date: string; count: bigint }[]>`
+        SELECT DATE(created_at) as date, COUNT(*)::int as count
+        FROM authors WHERE created_at >= ${since}
+        GROUP BY DATE(created_at) ORDER BY date`
+      return rows.map(r => ({ date: String(r.date).split('T')[0], count: Number(r.count) }))
+    }
+
+    if (metric === 'views') {
+      const rows = await this.prisma.dailyView.groupBy({
+        by: ['date'],
+        _sum: { count: true },
+        where: { date: { gte: since } },
+        orderBy: { date: 'asc' },
+      })
+      return rows.map(r => ({ date: r.date.toISOString().split('T')[0], count: r._sum.count ?? 0 }))
+    }
+
+    if (metric === 'payments') {
+      const rows = await this.prisma.$queryRaw<{ date: string; count: bigint }[]>`
+        SELECT DATE(created_at) as date, COUNT(*)::int as count
+        FROM payments WHERE status = 'completed' AND created_at >= ${since}
+        GROUP BY DATE(created_at) ORDER BY date`
+      return rows.map(r => ({ date: String(r.date).split('T')[0], count: Number(r.count) }))
+    }
+
+    return []
+  }
+
+  // ─── 공지사항 (P1) ───
+
+  async listAnnouncements(page: number = 1, limit: number = 20) {
+    const [items, total] = await Promise.all([
+      this.prisma.announcement.findMany({ orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }),
+      this.prisma.announcement.count(),
+    ])
+    return { items, total }
+  }
+
+  async createAnnouncement(adminId: string, data: { title: string; content: string; isPinned?: boolean; target?: string }) {
+    const item = await this.prisma.announcement.create({
+      data: { title: data.title, content: data.content, isPinned: data.isPinned ?? false, target: data.target ?? 'all', adminId },
+    })
+    await this.auditLog.log(adminId, 'announcement_create', item.id, { title: data.title })
+    return item
+  }
+
+  async deleteAnnouncement(adminId: string, id: string) {
+    await this.prisma.announcement.delete({ where: { id } })
+    await this.auditLog.log(adminId, 'announcement_delete', id)
+    return { deleted: true }
+  }
+
+  // ─── 추천 작품 큐레이션 (P1) ───
+
+  async listFeatured(section?: string) {
+    const where = section ? { section } : {}
+    return this.prisma.featuredWork.findMany({ where, orderBy: { position: 'asc' } })
+  }
+
+  async addFeatured(adminId: string, data: { workId: string; section?: string; position?: number }) {
+    const item = await this.prisma.featuredWork.create({
+      data: { workId: data.workId, section: data.section ?? 'main', position: data.position ?? 0, adminId },
+    })
+    await this.auditLog.log(adminId, 'featured_add', data.workId, { section: data.section })
+    return item
+  }
+
+  async removeFeatured(adminId: string, id: string) {
+    await this.prisma.featuredWork.delete({ where: { id } })
+    await this.auditLog.log(adminId, 'featured_remove', id)
+    return { deleted: true }
+  }
+
+  // ─── 수익 대시보드 (P2) ───
+
+  async getRevenueSummary() {
+    const [totalRevenue, monthlyRevenue, productBreakdown] = await Promise.all([
+      this.prisma.payment.aggregate({ _sum: { amount: true }, where: { status: 'completed' } }),
+      this.prisma.payment.aggregate({
+        _sum: { amount: true },
+        where: { status: 'completed', createdAt: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) } },
+      }),
+      this.prisma.payment.groupBy({
+        by: ['productId'],
+        _sum: { amount: true },
+        _count: true,
+        where: { status: 'completed' },
+      }),
+    ])
+
+    return {
+      totalRevenue: totalRevenue._sum.amount ?? 0,
+      monthlyRevenue: monthlyRevenue._sum.amount ?? 0,
+      products: productBreakdown.map(p => ({ productId: p.productId, total: p._sum.amount ?? 0, count: p._count })),
+    }
+  }
+
+  // ─── 테마 프리셋 관리 (P2) ───
+
+  async listSystemThemes() {
+    return this.prisma.theme.findMany({
+      where: { source: 'system', authorId: null },
+      orderBy: { updatedAt: 'desc' },
+    })
+  }
+
+  async updateSystemTheme(adminId: string, themeId: string, data: { name?: string; overrides?: any }) {
+    const theme = await this.prisma.theme.findUnique({ where: { id: themeId } })
+    if (!theme || theme.source !== 'system') throw new NotFoundException('시스템 테마를 찾을 수 없습니다')
+
+    const updated = await this.prisma.theme.update({ where: { id: themeId }, data })
+    await this.auditLog.log(adminId, 'system_theme_update', themeId, { name: data.name })
+    return updated
+  }
+
+  async createSystemTheme(adminId: string, data: { name: string; preset: string; overrides: any }) {
+    const theme = await this.prisma.theme.create({
+      data: { name: data.name, preset: data.preset, overrides: data.overrides, source: 'system', authorId: null },
+    })
+    await this.auditLog.log(adminId, 'system_theme_create', theme.id, { name: data.name, preset: data.preset })
+    return theme
+  }
+
+  async deleteSystemTheme(adminId: string, themeId: string) {
+    const theme = await this.prisma.theme.findUnique({ where: { id: themeId } })
+    if (!theme || theme.source !== 'system') throw new NotFoundException('시스템 테마를 찾을 수 없습니다')
+
+    await this.prisma.theme.delete({ where: { id: themeId } })
+    await this.auditLog.log(adminId, 'system_theme_delete', themeId, { name: theme.name })
+    return { deleted: true }
+  }
+
   // ─── 감사 로그 ───
 
   async getAuditLogs(options: { page?: number; limit?: number; action?: string }) {
