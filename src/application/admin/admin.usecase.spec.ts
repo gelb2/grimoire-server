@@ -43,8 +43,14 @@ describe('AdminUseCase', () => {
     }
 
     const mockPrisma = {
-      comment: { count: jest.fn().mockResolvedValue(5) },
-      payment: { count: jest.fn().mockResolvedValue(3) },
+      comment: { count: jest.fn().mockResolvedValue(5), findMany: jest.fn().mockResolvedValue([]), delete: jest.fn(), findUnique: jest.fn().mockResolvedValue({ id: 'c1', episodeId: 'ep1', content: 'test' }) },
+      payment: { count: jest.fn().mockResolvedValue(3), findMany: jest.fn().mockResolvedValue([]) },
+      work: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0), findUnique: jest.fn().mockResolvedValue({ id: 'w1', title: 'Test', author: { name: 'A', slug: 'a' }, episodes: [] }) },
+      episode: { findUnique: jest.fn().mockResolvedValue({ id: 'ep1', status: 'public' }), update: jest.fn().mockResolvedValue({}) },
+      accessLog: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
+      userSanction: { create: jest.fn().mockResolvedValue({ id: 's1', type: 'warning' }), findUnique: jest.fn().mockResolvedValue({ id: 's1', authorId: 'author-1', type: 'warning' }), update: jest.fn(), findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn(), findFirst: jest.fn().mockResolvedValue(null) },
+      report: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0), findUnique: jest.fn().mockResolvedValue({ id: 'r1', targetType: 'episode', targetId: 'ep1', status: 'pending' }), update: jest.fn() },
+      systemSetting: { findMany: jest.fn().mockResolvedValue([{ key: 'maintenance_mode', value: 'false' }]), upsert: jest.fn() },
     }
 
     useCase = new AdminUseCase(
@@ -138,6 +144,82 @@ describe('AdminUseCase', () => {
     it('감사 로그를 조회한다', async () => {
       await useCase.getAuditLogs({ page: 1 })
       expect(mockAuditLog.findAll).toHaveBeenCalledWith({ page: 1 })
+    })
+  })
+
+  describe('콘텐츠 관리', () => {
+    it('작품 목록을 조회한다', async () => {
+      const result = await useCase.listWorks({ page: 1, limit: 20 })
+      expect(result).toHaveProperty('total')
+    })
+
+    it('에피소드 상태를 변경하고 감사 로그를 기록한다', async () => {
+      await useCase.changeEpisodeStatus('admin-1', 'ep1', 'nonPublic' as any)
+      expect(mockAuditLog.log).toHaveBeenCalledWith('admin-1', 'episode_status_change', 'ep1', expect.any(Object))
+    })
+  })
+
+  describe('댓글 관리', () => {
+    it('댓글을 삭제하고 감사 로그를 기록한다', async () => {
+      await useCase.deleteComment('admin-1', 'c1')
+      expect(mockAuditLog.log).toHaveBeenCalledWith('admin-1', 'comment_delete_admin', 'c1', expect.any(Object))
+    })
+  })
+
+  describe('결제 내역', () => {
+    it('결제 목록을 조회한다', async () => {
+      const result = await useCase.listPayments({ page: 1 })
+      expect(result).toHaveProperty('total')
+    })
+  })
+
+  describe('접근 로그', () => {
+    it('접근 로그를 조회한다', async () => {
+      const result = await useCase.listAccessLogs({ page: 1 })
+      expect(result).toHaveProperty('total')
+    })
+  })
+
+  describe('제재 관리', () => {
+    it('사용자를 제재하고 감사 로그를 기록한다', async () => {
+      const result = await useCase.sanctionUser('admin-1', 'author-1', 'warning', '욕설')
+      expect(result).toHaveProperty('id')
+      expect(mockAuditLog.log).toHaveBeenCalledWith('admin-1', 'user_sanction', 'author-1', expect.any(Object))
+    })
+
+    it('관리자는 제재할 수 없다', async () => {
+      mockAuthorRepo.findById.mockResolvedValue({ id: 'admin-1', role: 'admin' })
+      await expect(useCase.sanctionUser('admin-1', 'admin-1', 'warning', 'test')).rejects.toThrow(BadRequestException)
+    })
+
+    it('제재를 해제하고 감사 로그를 기록한다', async () => {
+      const result = await useCase.liftSanction('admin-1', 's1')
+      expect(result.lifted).toBe(true)
+      expect(mockAuditLog.log).toHaveBeenCalledWith('admin-1', 'user_sanction_lift', 'author-1', expect.any(Object))
+    })
+  })
+
+  describe('신고 관리', () => {
+    it('신고 목록을 조회한다', async () => {
+      const result = await useCase.listReports({ page: 1, status: 'pending' })
+      expect(result).toHaveProperty('total')
+    })
+
+    it('신고를 승인하고 감사 로그를 기록한다', async () => {
+      await useCase.resolveReport('admin-1', 'r1', 'approved')
+      expect(mockAuditLog.log).toHaveBeenCalledWith('admin-1', 'report_resolve', 'r1', expect.any(Object))
+    })
+  })
+
+  describe('시스템 설정', () => {
+    it('설정을 조회한다', async () => {
+      const result = await useCase.getSettings()
+      expect(result).toHaveProperty('maintenance_mode')
+    })
+
+    it('설정을 변경하고 감사 로그를 기록한다', async () => {
+      await useCase.updateSetting('admin-1', 'maintenance_mode', 'true')
+      expect(mockAuditLog.log).toHaveBeenCalledWith('admin-1', 'setting_change', 'maintenance_mode', { value: 'true' })
     })
   })
 })
