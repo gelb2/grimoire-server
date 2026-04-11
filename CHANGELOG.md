@@ -1,5 +1,44 @@
 # Changelog — grimoire-server
 
+## [0.23.0] - 2026-04-11
+
+### 관리자 패널 + 보안 인프라 + 운영 정비
+
+#### Added
+- 관리자 패널 10탭 (통계/사용자/콘텐츠/제재/신고/댓글/결제/접근로그/설정/감사로그)
+- 관리자 전용 로그인 (POST /admin/login, reCAPTCHA 없음, role=admin 검증)
+- 사용자 제재 시스템 (경고~영구정지, 로그인 차단, 만료 자동 해제)
+- 콘텐츠 신고 시스템 (접수→승인/기각, 승인 시 자동 비공개)
+- 시스템 설정 패널 (점검모드, reCAPTCHA, 레이트리밋 — 재배포 없이 변경)
+- 보안 접근 로그 (access_logs — 회원가입/로그인/관리자 IP·UA 기록)
+- 감사 로그 (admin_audit_logs — 모든 관리자 행위 자동 기록)
+- 데드락 방지 (크레딧 트랜잭션 SELECT FOR UPDATE 패턴)
+- 에피소드 재업로드 API (PATCH /episodes/:id/reupload)
+- 관리자 계정 시드 스크립트 (scripts/seed-admin.ts)
+
+#### Changed
+- 크레딧 상품 기획서 기준 정렬 (10/30/100 → 5/20/50)
+- convertToKrw() 구현 (상품 매핑 + 고정환율 폴백)
+- theme-baker CSS 변수 --u-* → --g-* 통일 (프론트엔드 매칭)
+- BakeThemeUseCase: Blob Storage CDN 업로드 + API 폴백
+- 업로드 페이지 textarea 제거 (원칙 위반 수정)
+
+#### Infrastructure
+- Azure Blob Storage (grimoire0storage) 생성 + 3환경 환경변수 주입
+- Polar 상품 API 업데이트 (5/20/50)
+- 테스트 쿠폰 삭제 (GRIMOIREDEV3545F21975)
+- 의심 계정 "으어어어" 추적 + 삭제
+
+#### DB Migration
+- 20260411000000_unify_timestamp_to_timestamptz — 전 테이블 TIMESTAMPTZ 통일
+- 20260411100000_add_admin_audit_log — 감사 로그 테이블
+- 20260411200000_add_access_log — 접근 로그 테이블
+- 20260411300000_add_sanctions_reports_settings — 제재/신고/설정 테이블
+
+#### Tests
+- 관리자 UseCase 유닛테스트 12건 추가 (총 377)
+- 관리자 E2E 테스트 (Playwright) 4건
+
 ## [0.22.0] - 2026-04-09
 
 ### Polar 결제 3환경 배포 + inhouse DB 복구
