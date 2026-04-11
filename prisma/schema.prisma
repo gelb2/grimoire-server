@@ -237,6 +237,33 @@ model ChatMessage {
   @@map("chat_messages")
 }
 
+model Announcement {
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  isPinned  Boolean  @default(false) @map("is_pinned")
+  target    String   @default("all") // all, authors, readers
+  adminId   String   @map("admin_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([createdAt])
+  @@map("announcements")
+}
+
+model FeaturedWork {
+  id        String    @id @default(uuid())
+  workId    String    @map("work_id")
+  section   String    @default("main") // main, genre, new
+  position  Int       @default(0)
+  startAt   DateTime? @map("start_at") @db.Timestamptz(3)
+  endAt     DateTime? @map("end_at") @db.Timestamptz(3)
+  adminId   String    @map("admin_id")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([section, position])
+  @@map("featured_works")
+}
+
 model UserSanction {
   id        String    @id @default(uuid())
   authorId  String    @map("author_id")

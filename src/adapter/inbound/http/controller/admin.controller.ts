@@ -296,6 +296,84 @@ export class AdminController {
     return this.adminUseCase.updateSetting(req.user.sub, key, body.value)
   }
 
+  // ─── 시계열 통계 ───
+
+  @Get('stats/timeseries')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async getTimeseries(@Query('metric') metric: string, @Query('days') days?: string) {
+    return this.adminUseCase.getTimeseries(metric, days ? parseInt(days) : 30)
+  }
+
+  // ─── 공지사항 ───
+
+  @Get('announcements')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async listAnnouncements(@Query('page') page?: string) {
+    return this.adminUseCase.listAnnouncements(page ? parseInt(page) : 1)
+  }
+
+  @Post('announcements')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async createAnnouncement(@Req() req: AuthenticatedRequest, @Body() body: { title: string; content: string; isPinned?: boolean; target?: string }) {
+    return this.adminUseCase.createAnnouncement(req.user.sub, body)
+  }
+
+  @Delete('announcements/:id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async deleteAnnouncement(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.adminUseCase.deleteAnnouncement(req.user.sub, id)
+  }
+
+  // ─── 추천 작품 ───
+
+  @Get('featured')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async listFeatured(@Query('section') section?: string) {
+    return this.adminUseCase.listFeatured(section)
+  }
+
+  @Post('featured')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async addFeatured(@Req() req: AuthenticatedRequest, @Body() body: { workId: string; section?: string; position?: number }) {
+    return this.adminUseCase.addFeatured(req.user.sub, body)
+  }
+
+  @Delete('featured/:id')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async removeFeatured(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.adminUseCase.removeFeatured(req.user.sub, id)
+  }
+
+  // ─── 수익 대시보드 ───
+
+  @Get('revenue')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async getRevenue() { return this.adminUseCase.getRevenueSummary() }
+
+  // ─── 테마 프리셋 관리 ───
+
+  @Get('themes')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async listSystemThemes() { return this.adminUseCase.listSystemThemes() }
+
+  @Post('themes')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async createSystemTheme(@Req() req: AuthenticatedRequest, @Body() body: { name: string; preset: string; overrides: any }) {
+    return this.adminUseCase.createSystemTheme(req.user.sub, body)
+  }
+
+  @Patch('themes/:themeId')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async updateSystemTheme(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string, @Body() body: { name?: string; overrides?: any }) {
+    return this.adminUseCase.updateSystemTheme(req.user.sub, themeId, body)
+  }
+
+  @Delete('themes/:themeId')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async deleteSystemTheme(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string) {
+    return this.adminUseCase.deleteSystemTheme(req.user.sub, themeId)
+  }
+
   // ─── 감사 로그 ───
 
   @Get('audit-logs')
