@@ -273,6 +273,111 @@ export class AdminUseCase {
     return { items, total }
   }
 
+  // ─── 사용자 제재 ───
+
+  async sanctionUser(adminId: string, authorId: string, type: string, reason: string, detail?: string) {
+    const author = await this.authorRepo.findById(authorId)
+    if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
+    if (author.role === 'admin') throw new BadRequestException('관리자는 제재할 수 없습니다')
+
+    const durationMap: Record<string, number> = {
+      suspend_1d: 1, suspend_7d: 7, suspend_30d: 30,
+    }
+    const days = durationMap[type]
+    const endAt = days ? new Date(Date.now() + days * 24 * 60 * 60 * 1000) : (type === 'permanent' ? null : null)
+
+    const sanction = await this.prisma.userSanction.create({
+      data: { authorId, type, reason, detail, adminId, endAt, isActive: true },
+    })
+
+    await this.auditLog.log(adminId, 'user_sanction', authorId, { type, reason, detail })
+    return sanction
+  }
+
+  async liftSanction(adminId: string, sanctionId: string) {
+    const sanction = await this.prisma.userSanction.findUnique({ where: { id: sanctionId } })
+    if (!sanction) throw new NotFoundException('제재 기록을 찾을 수 없습니다')
+
+    await this.prisma.userSanction.update({ where: { id: sanctionId }, data: { isActive: false } })
+    await this.auditLog.log(adminId, 'user_sanction_lift', sanction.authorId, { sanctionId, type: sanction.type })
+    return { lifted: true }
+  }
+
+  async listSanctions(authorId?: string) {
+    const where: any = {}
+    if (authorId) where.authorId = authorId
+    return this.prisma.userSanction.findMany({ where, orderBy: { createdAt: 'desc' }, take: 100 })
+  }
+
+  /** 로그인 시 활성 제재 확인 */
+  async getActiveSanction(authorId: string) {
+    // 만료된 제재 자동 비활성화
+    await this.prisma.userSanction.updateMany({
+      where: { authorId, isActive: true, endAt: { not: null, lt: new Date() } },
+      data: { isActive: false },
+    })
+    return this.prisma.userSanction.findFirst({
+      where: { authorId, isActive: true },
+      orderBy: { createdAt: 'desc' },
+    })
+  }
+
+  // ─── 콘텐츠 신고 ───
+
+  async listReports(options: { page?: number; limit?: number; status?: string }) {
+    const page = options.page ?? 1
+    const limit = options.limit ?? 20
+    const where: any = {}
+    if (options.status) where.status = options.status
+
+    const [items, total] = await Promise.all([
+      this.prisma.report.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }),
+      this.prisma.report.count({ where }),
+    ])
+    return { items, total }
+  }
+
+  async resolveReport(adminId: string, reportId: string, action: 'approved' | 'rejected') {
+    const report = await this.prisma.report.findUnique({ where: { id: reportId } })
+    if (!report) throw new NotFoundException('신고를 찾을 수 없습니다')
+
+    await this.prisma.report.update({
+      where: { id: reportId },
+      data: { status: action, resolvedBy: adminId, resolvedAt: new Date() },
+    })
+
+    // 승인 시 대상 콘텐츠 비공개 처리
+    if (action === 'approved') {
+      if (report.targetType === 'episode') {
+        await this.prisma.episode.update({ where: { id: report.targetId }, data: { status: 'nonPublic' } }).catch(() => {})
+      } else if (report.targetType === 'comment') {
+        await this.prisma.comment.delete({ where: { id: report.targetId } }).catch(() => {})
+      }
+    }
+
+    await this.auditLog.log(adminId, 'report_resolve', reportId, { action, targetType: report.targetType, targetId: report.targetId })
+    return { resolved: true }
+  }
+
+  // ─── 시스템 설정 ───
+
+  async getSettings() {
+    const rows = await this.prisma.systemSetting.findMany()
+    const settings: Record<string, string> = {}
+    for (const r of rows) settings[r.key] = r.value
+    return settings
+  }
+
+  async updateSetting(adminId: string, key: string, value: string) {
+    await this.prisma.systemSetting.upsert({
+      where: { key },
+      create: { key, value, updatedBy: adminId },
+      update: { value, updatedBy: adminId },
+    })
+    await this.auditLog.log(adminId, 'setting_change', key, { value })
+    return { key, value }
+  }
+
   // ─── 감사 로그 ───
 
   async getAuditLogs(options: { page?: number; limit?: number; action?: string }) {

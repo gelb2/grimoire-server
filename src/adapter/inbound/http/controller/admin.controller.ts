@@ -248,14 +248,59 @@ export class AdminController {
     return this.adminUseCase.listAccessLogs({ page: page ? parseInt(page) : 1, limit: limit ? parseInt(limit) : 50, action, ip, authorId })
   }
 
+  // ─── 사용자 제재 ───
+
+  @Post('sanctions')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async sanctionUser(@Req() req: AuthenticatedRequest, @Body() body: { authorId: string; type: string; reason: string; detail?: string }) {
+    return this.adminUseCase.sanctionUser(req.user.sub, body.authorId, body.type, body.reason, body.detail)
+  }
+
+  @Delete('sanctions/:sanctionId')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async liftSanction(@Req() req: AuthenticatedRequest, @Param('sanctionId') sanctionId: string) {
+    return this.adminUseCase.liftSanction(req.user.sub, sanctionId)
+  }
+
+  @Get('sanctions')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async listSanctions(@Query('authorId') authorId?: string) {
+    return this.adminUseCase.listSanctions(authorId)
+  }
+
+  // ─── 콘텐츠 신고 ───
+
+  @Get('reports')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async listReports(@Query('page') page?: string, @Query('limit') limit?: string, @Query('status') status?: string) {
+    return this.adminUseCase.listReports({ page: page ? parseInt(page) : 1, limit: limit ? parseInt(limit) : 20, status })
+  }
+
+  @Patch('reports/:reportId')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async resolveReport(@Req() req: AuthenticatedRequest, @Param('reportId') reportId: string, @Body() body: { action: 'approved' | 'rejected' }) {
+    return this.adminUseCase.resolveReport(req.user.sub, reportId, body.action)
+  }
+
+  // ─── 시스템 설정 ───
+
+  @Get('settings')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async getSettings() {
+    return this.adminUseCase.getSettings()
+  }
+
+  @Patch('settings/:key')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async updateSetting(@Req() req: AuthenticatedRequest, @Param('key') key: string, @Body() body: { value: string }) {
+    return this.adminUseCase.updateSetting(req.user.sub, key, body.value)
+  }
+
   // ─── 감사 로그 ───
 
   @Get('audit-logs')
   @UseGuards(JwtAuthGuard, AdminGuard)
-  async getAuditLogs(
-    @Query('page') page?: string, @Query('limit') limit?: string,
-    @Query('action') action?: string,
-  ) {
+  async getAuditLogs(@Query('page') page?: string, @Query('limit') limit?: string, @Query('action') action?: string) {
     return this.adminUseCase.getAuditLogs({ page: page ? parseInt(page) : 1, limit: limit ? parseInt(limit) : 50, action })
   }
 }
