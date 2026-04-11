@@ -259,7 +259,84 @@ Like (authorId + episodeId — FK 없음, 독자 행위 기록)
 Subscription (subscriberId + targetAuthorId — FK 없음, 구독 관계)
 Comment (authorId + episodeId — FK 없음, 소셜 기록)
 Payment (authorId — FK 없음, 결제 기록)
+UserSanction (authorId + adminId — 제재/정지 이력)
+Report (targetType + targetId — 신고 큐)
+SystemSetting (key-value — 동적 설정)
+AccessLog (action + authorId — 보안 접근 로그)
+AdminAuditLog (adminId + action — 관리자 감사 로그)
 ```
+
+### user_sanctions
+
+사용자 제재/정지 이력. 경고 ~ 영구 정지 5단계.
+
+| Prisma 필드 | DB 컬럼 | 설명 |
+|-------------|---------|------|
+| id | id | uuid PK |
+| authorId | author_id | 대상 작가 |
+| type | type | warning / suspend_1d / suspend_7d / suspend_30d / permanent |
+| reason | reason | 욕설 / 스팸 / 저작권 / 기타 |
+| detail | detail | 관리자 메모 (nullable) |
+| adminId | admin_id | 제재를 건 관리자 |
+| startAt | start_at | 시작 시각 (default now) |
+| endAt | end_at | 해제 시각 (null = 영구) |
+| isActive | is_active | 활성 여부 (default true) |
+| createdAt | created_at | timestamptz |
+
+### reports
+
+콘텐츠 신고. pending → approved/rejected 처리.
+
+| Prisma 필드 | DB 컬럼 | 설명 |
+|-------------|---------|------|
+| id | id | uuid PK |
+| targetType | target_type | work / episode / comment |
+| targetId | target_id | 신고 대상 ID |
+| reporterId | reporter_id | 신고자 (nullable) |
+| reason | reason | obscene / violence / copyright / spam / other |
+| status | status | pending / approved / rejected |
+| resolvedBy | resolved_by | 처리 관리자 (nullable) |
+| resolvedAt | resolved_at | 처리 시각 (nullable) |
+| createdAt | created_at | timestamptz |
+
+### system_settings
+
+동적 시스템 설정. 재배포 없이 변경 가능.
+
+| Prisma 필드 | DB 컬럼 | 설명 |
+|-------------|---------|------|
+| key | key | PK — maintenance_mode, recaptcha_enabled, rate_limit_* |
+| value | value | 설정 값 (text) |
+| updatedBy | updated_by | 마지막 변경 관리자 |
+| updatedAt | updated_at | timestamptz (@updatedAt) |
+
+### access_logs
+
+보안 접근 로그. 회원가입/로그인/관리자 활동 기록.
+
+| Prisma 필드 | DB 컬럼 | 설명 |
+|-------------|---------|------|
+| id | id | uuid PK |
+| action | action | register / login_success / login_fail / login_blocked / password_change / admin_login_* |
+| authorId | author_id | 사용자 (nullable) |
+| email | email | 시도한 이메일 (nullable) |
+| ip | ip | 클라이언트 IP |
+| userAgent | user_agent | 브라우저/봇 UA |
+| detail | detail | 실패 사유 등 |
+| createdAt | created_at | timestamptz |
+
+### admin_audit_logs
+
+관리자 행위 감사 로그. INSERT ONLY.
+
+| Prisma 필드 | DB 컬럼 | 설명 |
+|-------------|---------|------|
+| id | id | uuid PK |
+| adminId | admin_id | 행위 관리자 |
+| action | action | author_create / credit_grant / episode_status_change / user_sanction / report_resolve / setting_change 등 |
+| targetId | target_id | 대상 리소스 ID (nullable) |
+| detail | detail | jsonb — 변경 전/후 값, 사유 |
+| createdAt | created_at | timestamptz |
 
 ---
 
