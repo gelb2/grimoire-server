@@ -1,9 +1,13 @@
 import { Injectable, Inject, BadRequestException, UnauthorizedException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import * as bcrypt from 'bcryptjs'
+import * as crypto from 'crypto'
 import { OAuth2Client } from 'google-auth-library'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { CreditUseCase } from '@application/credit/credit.usecase'
+import { PrismaService } from '@infrastructure/prisma/prisma.service'
+
+const REFRESH_TOKEN_EXPIRY_DAYS = 7
 
 @Injectable()
 export class AuthUseCase {
@@ -11,6 +15,7 @@ export class AuthUseCase {
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
     private readonly jwtService: JwtService,
     private readonly creditUseCase: CreditUseCase,
+    private readonly prisma: PrismaService,
   ) {}
 
   /** 새 작가 등록 */
@@ -41,10 +46,11 @@ export class AuthUseCase {
     // 가입 보너스 크레딧 (이미 기본값 3이지만 로그 기록)
     await this.creditUseCase.grant(author.id, 3, 'signup_bonus')
 
-    // JWT 발급
-    const token = this.jwtService.sign({ sub: author.id, slug: author.slug, role: author.role })
+    // 토큰 발급
+    const accessToken = this.generateAccessToken(author)
+    const refreshToken = await this.createRefreshToken(author.id)
 
-    return { author, token }
+    return { author, accessToken, refreshToken }
   }
 
   /** 이메일 + 비밀번호 로그인 */
@@ -59,8 +65,9 @@ export class AuthUseCase {
       throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다')
     }
 
-    const token = this.jwtService.sign({ sub: author.id, slug: author.slug, role: author.role })
-    return { author, token }
+    const accessToken = this.generateAccessToken(author)
+    const refreshToken = await this.createRefreshToken(author.id)
+    return { author, accessToken, refreshToken }
   }
 
   /** Google OAuth 로그인 */
@@ -100,8 +107,52 @@ export class AuthUseCase {
       await this.authorRepo.linkSocialAccount(author.id, 'google', payload.sub!, payload.email)
     }
 
-    const token = this.jwtService.sign({ sub: author.id, slug: author.slug, role: author.role })
-    return { author, token }
+    const accessToken = this.generateAccessToken(author)
+    const refreshToken = await this.createRefreshToken(author.id)
+    return { author, accessToken, refreshToken }
+  }
+
+  /** Refresh Token으로 새 Access Token 발급 */
+  async refreshAccessToken(refreshTokenValue: string) {
+    const tokenHash = this.hashToken(refreshTokenValue)
+    const stored = await this.prisma.refreshToken.findUnique({ where: { tokenHash } })
+
+    if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+      throw new UnauthorizedException('유효하지 않은 리프레시 토큰입니다')
+    }
+
+    const author = await this.authorRepo.findById(stored.authorId)
+    if (!author) throw new UnauthorizedException('작가를 찾을 수 없습니다')
+
+    // 기존 refresh token 무효화 (rotation)
+    await this.prisma.refreshToken.update({
+      where: { id: stored.id },
+      data: { revokedAt: new Date() },
+    })
+
+    // 새 토큰 쌍 발급
+    const accessToken = this.generateAccessToken(author)
+    const newRefreshToken = await this.createRefreshToken(author.id)
+
+    return { author, accessToken, refreshToken: newRefreshToken }
+  }
+
+  /** 로그아웃 — Refresh Token 무효화 */
+  async revokeRefreshToken(refreshTokenValue?: string, authorId?: string) {
+    if (refreshTokenValue) {
+      const tokenHash = this.hashToken(refreshTokenValue)
+      await this.prisma.refreshToken.updateMany({
+        where: { tokenHash, revokedAt: null },
+        data: { revokedAt: new Date() },
+      })
+    }
+    if (authorId) {
+      // 해당 사용자의 모든 refresh token 무효화
+      await this.prisma.refreshToken.updateMany({
+        where: { authorId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      })
+    }
   }
 
   /** 프로필 조회 */
@@ -126,5 +177,28 @@ export class AuthUseCase {
 
     const newHash = await bcrypt.hash(newPassword, 10)
     await this.authorRepo.updatePasswordHash(authorId, newHash)
+  }
+
+  /** Access Token 생성 (15분) */
+  private generateAccessToken(author: { id: string; slug: string; role: string }): string {
+    return this.jwtService.sign({ sub: author.id, slug: author.slug, role: author.role })
+  }
+
+  /** Refresh Token 생성 + DB 저장 (7일) */
+  private async createRefreshToken(authorId: string): Promise<string> {
+    const rawToken = crypto.randomBytes(32).toString('hex')
+    const tokenHash = this.hashToken(rawToken)
+    const expiresAt = new Date(Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000)
+
+    await this.prisma.refreshToken.create({
+      data: { authorId, tokenHash, expiresAt },
+    })
+
+    return rawToken
+  }
+
+  /** 토큰 SHA-256 해시 */
+  private hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex')
   }
 }

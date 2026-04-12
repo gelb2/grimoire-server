@@ -73,7 +73,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     ScheduleModule.forRoot(),
     JwtModule.register({
       secret: process.env.JWT_SECRET,
-      signOptions: { expiresIn: '7d' },
+      signOptions: { expiresIn: '15m' },
     }),
     ThrottlerModule.forRoot([{
       ttl: 60000,   // 기본: 1분
