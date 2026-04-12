@@ -72,7 +72,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
   imports: [
     ScheduleModule.forRoot(),
     JwtModule.register({
-      secret: process.env.JWT_SECRET || 'grimoire-dev-secret',
+      secret: process.env.JWT_SECRET,
       signOptions: { expiresIn: '7d' },
     }),
     ThrottlerModule.forRoot([{
