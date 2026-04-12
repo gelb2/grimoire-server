@@ -9,10 +9,6 @@
 ### 외부 연동
 - [ ] Polar KYC + 한국 payout 승인 (사용자 액션)
 
-### 보안
-- [ ] 🟡 Refresh Token 구현 — 현재 7일짜리 Access Token만 운용
-- [ ] npm audit --force (NestJS 10→11 메이저 업그레이드 필요, 21건 잔존)
-
 ## 중기 (Phase 2)
 
 - [ ] A24식 Artifacts 데이터 모델
