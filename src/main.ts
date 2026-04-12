@@ -1,6 +1,7 @@
 // [2026-04-08 Remote Test] 이 주석은 클로드 리모트 기능 세팅 및 아이패드 업무지시 가능성 확인 목적으로 작성됨. 업무와 무관한 테스트.
 import { NestFactory } from '@nestjs/core'
 import { ValidationPipe } from '@nestjs/common'
+import { GlobalExceptionFilter } from '@adapter/inbound/http/filter/global-exception.filter'
 import * as cookieParser from 'cookie-parser'
 import helmet from 'helmet'
 import { AppModule } from './app.module'
@@ -26,6 +27,8 @@ async function bootstrap() {
 
   app.use(cookieParser())
   app.setGlobalPrefix('api')
+
+  app.useGlobalFilters(new GlobalExceptionFilter())
 
   app.useGlobalPipes(
     new ValidationPipe({
