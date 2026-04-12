@@ -13,8 +13,8 @@ interface AuthenticatedRequest {
   user: { sub: string; slug: string; role: string }
 }
 
-const COOKIE_NAME = 'grimoire_token'
-const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000
+const ACCESS_COOKIE = 'grimoire_token'
+const ACCESS_MAX_AGE = 15 * 60 * 1000  // 15분
 
 @Controller('admin')
 export class AdminController {
@@ -54,11 +54,11 @@ export class AdminController {
 
     const token = this.jwtService.sign({ sub: author.id, slug: author.slug, role: author.role })
 
-    res.cookie(COOKIE_NAME, token, {
+    res.cookie(ACCESS_COOKIE, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: COOKIE_MAX_AGE,
+      maxAge: ACCESS_MAX_AGE,
       path: '/',
     })
 

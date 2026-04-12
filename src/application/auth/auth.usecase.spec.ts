@@ -7,6 +7,7 @@ describe('AuthUseCase', () => {
   let mockAuthorRepo: any
   let mockJwtService: any
   let mockCreditUseCase: any
+  let mockPrisma: any
 
   beforeEach(() => {
     mockAuthorRepo = {
@@ -21,7 +22,15 @@ describe('AuthUseCase', () => {
     mockCreditUseCase = {
       grant: jest.fn().mockResolvedValue({ credits: 3, log: {} }),
     }
-    authUseCase = new AuthUseCase(mockAuthorRepo, mockJwtService, mockCreditUseCase)
+    mockPrisma = {
+      refreshToken: {
+        create: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn(),
+        update: jest.fn(),
+        updateMany: jest.fn(),
+      },
+    }
+    authUseCase = new AuthUseCase(mockAuthorRepo, mockJwtService, mockCreditUseCase, mockPrisma)
   })
 
   describe('register', () => {
@@ -45,7 +54,7 @@ describe('AuthUseCase', () => {
       })
 
       expect(result.author.email).toBe('test@test.com')
-      expect(result.token).toBe('test-token')
+      expect(result.accessToken).toBe('test-token')
       expect(mockAuthorRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ email: 'test@test.com', name: '테스트', slug: 'test' }),
       )
@@ -83,7 +92,7 @@ describe('AuthUseCase', () => {
       })
 
       const result = await authUseCase.login({ email: 'test@test.com', password: 'password123' })
-      expect(result.token).toBe('test-token')
+      expect(result.accessToken).toBe('test-token')
     })
 
     it('잘못된 비밀번호면 예외를 던진다', async () => {

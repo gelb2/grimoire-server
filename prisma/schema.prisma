@@ -323,6 +323,21 @@ model AccessLog {
   @@map("access_logs")
 }
 
+model RefreshToken {
+  id        String    @id @default(uuid())
+  authorId  String    @map("author_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  ipAddress String?   @map("ip_address")
+  userAgent String?   @map("user_agent")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([authorId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
 model AdminAuditLog {
   id        String   @id @default(uuid())
   adminId   String   @map("admin_id")
