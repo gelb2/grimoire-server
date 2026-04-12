@@ -9,34 +9,40 @@ import { verifyRecaptcha } from '@adapter/inbound/http/util/recaptcha-verifier'
 import { AccessLogService } from '@infrastructure/security/access-log.service'
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
 
-/** 쿠키 옵션 상수 */
-const COOKIE_NAME = 'grimoire_token'
-const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000 // 7일 (ms)
+/** 쿠키 상수 */
+const ACCESS_COOKIE = 'grimoire_token'
+const REFRESH_COOKIE = 'grimoire_refresh'
+const ACCESS_MAX_AGE = 15 * 60 * 1000         // 15분
+const REFRESH_MAX_AGE = 7 * 24 * 60 * 60 * 1000  // 7일
 
-function setAuthCookie(res: Response, token: string): void {
-  res.cookie(COOKIE_NAME, token, {
+function cookieOptions(maxAge: number) {
+  return {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: 'strict' as const,
     path: '/',
-    maxAge: COOKIE_MAX_AGE,
-  })
+    maxAge,
+  }
 }
 
-function clearAuthCookie(res: Response): void {
-  res.cookie(COOKIE_NAME, '', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    path: '/',
-    maxAge: 0,
-  })
+function setTokenCookies(res: Response, accessToken: string, refreshToken: string) {
+  res.cookie(ACCESS_COOKIE, accessToken, cookieOptions(ACCESS_MAX_AGE))
+  res.cookie(REFRESH_COOKIE, refreshToken, cookieOptions(REFRESH_MAX_AGE))
+}
+
+function clearTokenCookies(res: Response) {
+  res.cookie(ACCESS_COOKIE, '', cookieOptions(0))
+  res.cookie(REFRESH_COOKIE, '', cookieOptions(0))
 }
 
 function extractClientInfo(req: Request) {
   const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || undefined
   const userAgent = req.headers['user-agent'] || undefined
   return { ip, userAgent }
+}
+
+function userResponse(author: { id: string; slug: string; name: string; email: string; credits: number; role: string }) {
+  return { id: author.id, slug: author.slug, name: author.name, email: author.email, credits: author.credits, role: author.role }
 }
 
 @Controller('auth')
@@ -55,18 +61,13 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     await verifyRecaptcha(dto.recaptchaToken || '')
-    const { author, token } = await this.authUseCase.register(dto)
-    setAuthCookie(res, token)
+    const { author, accessToken, refreshToken } = await this.authUseCase.register(dto)
+    setTokenCookies(res, accessToken, refreshToken)
 
     const { ip, userAgent } = extractClientInfo(req)
     await this.accessLog.log({ action: 'register', authorId: author.id, email: dto.email, ip, userAgent })
 
-    return {
-      user: {
-        id: author.id, slug: author.slug, name: author.name,
-        email: author.email, credits: author.credits, role: author.role,
-      },
-    }
+    return { user: userResponse(author) }
   }
 
   @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
@@ -80,7 +81,7 @@ export class AuthController {
     const { ip, userAgent } = extractClientInfo(req)
 
     try {
-      const { author, token } = await this.authUseCase.login(dto)
+      const { author, accessToken, refreshToken } = await this.authUseCase.login(dto)
 
       // 제재 확인 — 만료된 제재 자동 해제 후 활성 제재 확인
       await this.prisma.userSanction.updateMany({
@@ -95,15 +96,10 @@ export class AuthController {
         throw new ForbiddenException(`계정이 정지되었습니다. 사유: ${sanction.reason}${sanction.endAt ? ` (해제: ${sanction.endAt.toISOString().split('T')[0]})` : ' (영구)'}`)
       }
 
-      setAuthCookie(res, token)
+      setTokenCookies(res, accessToken, refreshToken)
       await this.accessLog.log({ action: 'login_success', authorId: author.id, email: dto.email, ip, userAgent })
 
-      return {
-        user: {
-          id: author.id, slug: author.slug, name: author.name,
-          email: author.email, credits: author.credits, role: author.role,
-        },
-      }
+      return { user: userResponse(author) }
     } catch (err) {
       await this.accessLog.log({ action: 'login_fail', email: dto.email, ip, userAgent, detail: (err as Error).message })
       throw err
@@ -118,23 +114,40 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const { ip, userAgent } = extractClientInfo(req)
-    const { author, token } = await this.authUseCase.googleLogin(body.token)
-    setAuthCookie(res, token)
+    const { author, accessToken, refreshToken } = await this.authUseCase.googleLogin(body.token)
+    setTokenCookies(res, accessToken, refreshToken)
 
     await this.accessLog.log({ action: 'login_success', authorId: author.id, email: author.email, ip, userAgent, detail: 'google_oauth' })
 
-    return {
-      user: {
-        id: author.id, slug: author.slug, name: author.name,
-        email: author.email, credits: author.credits, role: author.role,
-      },
+    return { user: userResponse(author) }
+  }
+
+  @Throttle({ default: { ttl: 60000, limit: 30 } })  // 분당 30회 (자동 갱신 고려)
+  @Post('refresh')
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const refreshTokenValue = req.cookies?.[REFRESH_COOKIE]
+    if (!refreshTokenValue) {
+      throw new ForbiddenException('리프레시 토큰이 없습니다')
     }
+
+    const { author, accessToken, refreshToken } = await this.authUseCase.refreshAccessToken(refreshTokenValue)
+    setTokenCookies(res, accessToken, refreshToken)
+
+    return { user: userResponse(author) }
   }
 
   @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Post('logout')
-  async logout(@Res({ passthrough: true }) res: Response) {
-    clearAuthCookie(res)
+  async logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const refreshTokenValue = req.cookies?.[REFRESH_COOKIE]
+    await this.authUseCase.revokeRefreshToken(refreshTokenValue)
+    clearTokenCookies(res)
     return { loggedOut: true }
   }
 
@@ -142,10 +155,7 @@ export class AuthController {
   @Get('profile')
   async profile(@Req() req: AuthenticatedRequest) {
     const author = await this.authUseCase.getProfile(req.user.sub)
-    return {
-      id: author.id, slug: author.slug, name: author.name,
-      email: author.email, credits: author.credits, role: author.role,
-    }
+    return userResponse(author)
   }
 
   @Throttle({ default: { ttl: 3600000, limit: 5 } })  // 시간당 5회
