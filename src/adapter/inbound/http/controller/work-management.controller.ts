@@ -22,22 +22,26 @@ export class WorkManagementController {
     private readonly blobStorage: BlobStorageService,
   ) {}
 
+  @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Post()
   async createWork(@Req() req: AuthenticatedRequest, @Body() dto: CreateWorkDto) {
     return this.workManagementUseCase.createWork(req.user.sub, dto)
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Patch(':id')
   async updateWork(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: UpdateWorkDto) {
     return this.workManagementUseCase.updateWork(req.user.sub, id, dto)
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 5 } })  // 분당 5회
   @Delete(':id')
   async deleteWork(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     await this.workManagementUseCase.deleteWork(req.user.sub, id)
     return { deleted: true }
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 20 } })  // 분당 20회
   @Post(':workId/episodes')
   async createEpisode(@Req() req: AuthenticatedRequest, @Param('workId') workId: string, @Body() dto: CreateEpisodeDto) {
     return this.workManagementUseCase.createEpisode(req.user.sub, workId, dto)
@@ -92,6 +96,7 @@ export class EpisodeManagementController {
   constructor(private readonly workManagementUseCase: WorkManagementUseCase) {}
 
   /** 에피소드 재업로드 (파일 교체) */
+  @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Patch(':episodeId/reupload')
   async reuploadEpisode(
     @Req() req: AuthenticatedRequest,
@@ -101,6 +106,7 @@ export class EpisodeManagementController {
     return this.workManagementUseCase.reuploadEpisode(req.user.sub, episodeId, body)
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 5 } })  // 분당 5회
   @Delete(':id')
   async deleteEpisode(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     await this.workManagementUseCase.deleteEpisode(req.user.sub, id)

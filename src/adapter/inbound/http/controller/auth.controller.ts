@@ -110,6 +110,7 @@ export class AuthController {
     }
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Post('google')
   async googleLogin(
     @Body() body: { token: string },
@@ -130,6 +131,7 @@ export class AuthController {
     }
   }
 
+  @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
   @Post('logout')
   async logout(@Res({ passthrough: true }) res: Response) {
     clearAuthCookie(res)
@@ -146,6 +148,7 @@ export class AuthController {
     }
   }
 
+  @Throttle({ default: { ttl: 3600000, limit: 5 } })  // 시간당 5회
   @UseGuards(JwtAuthGuard)
   @Post('change-password')
   async changePassword(
