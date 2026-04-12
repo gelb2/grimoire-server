@@ -2,7 +2,7 @@
 export function validateEnv(): void {
   // 필수 — 없으면 서버 부팅 차단
   // ANTHROPIC_API_KEY는 로컬 개발 시 없어도 서버 부팅 가능 (AI 기능만 비활성)
-  const required = ['DATABASE_URL']
+  const required = ['DATABASE_URL', 'JWT_SECRET', 'CORS_ORIGIN']
   const missing = required.filter((key) => !process.env[key])
   if (missing.length > 0) {
     console.error(`필수 환경 변수 누락: ${missing.join(', ')}`)
@@ -11,10 +11,7 @@ export function validateEnv(): void {
 
   // 원격 환경(development/inhouse/production)에서 필수 — 미설정 시 서버 부팅 차단
   const isRemote = process.env.NODE_ENV && process.env.NODE_ENV !== 'localhost'
-  const remoteRequired: { key: string; label: string }[] = [
-    { key: 'JWT_SECRET', label: 'JWT_SECRET' },
-    { key: 'CORS_ORIGIN', label: 'CORS_ORIGIN' },
-  ]
+  const remoteRequired: { key: string; label: string }[] = []
 
   for (const { key, label } of remoteRequired) {
     if (!process.env[key]) {
