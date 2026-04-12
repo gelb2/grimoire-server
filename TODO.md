@@ -9,8 +9,11 @@
 ### 외부 연동
 - [ ] Polar KYC + 한국 payout 승인 (사용자 액션)
 
-### 보안
-- [ ] CORS_ORIGIN 누락 시 명시적 에러 또는 localhost 폴백
+### 보안 (2026-04-12 전수검사 → 수정 완료)
+- [ ] 🟡 Refresh Token 구현 — 현재 7일짜리 Access Token만 운용
+- [ ] npm audit fix (11건: 3 moderate, 8 high — multer DoS, path-to-regexp ReDoS)
+- [ ] ExceptionFilter 구현 — prod 환경 스택 트레이스 노출 방지 확인
+- [ ] 📄 SECURITY.md가 개발 사이클에서 실제 참조되는지 CLAUDE.md 참조 관계 확인
 
 ## 중기 (Phase 2)
 

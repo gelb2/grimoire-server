@@ -37,7 +37,7 @@ async function bootstrap() {
 
   // CORS: 원격 환경에서는 validateEnv()에서 이미 검증됨. localhost만 폴백.
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3001',
+    origin: process.env.CORS_ORIGIN,
     credentials: true,
   })
 
