@@ -49,7 +49,7 @@ export class GenerateThemeUseCase {
   }
 
   /** 시스템 프리셋 목록 — DB에서 조회 */
-  async listPresets(): Promise<{ name: string; label: string; tone: string; genre: string; preview: Record<string, unknown> }[]> {
+  async listPresets(): Promise<{ name: string; label: string; tone: string; genre: string; preview: Record<string, unknown>; overrides: Record<string, unknown> }[]> {
     const themes = await this.themeRepo.findSystemThemes()
     return themes.map((t) => {
       const ov = (t.overrides ?? {}) as Record<string, unknown>
@@ -65,6 +65,7 @@ export class GenerateThemeUseCase {
           textPrimary: ov.textPrimary,
           textBright: ov.textBright,
         },
+        overrides: ov,
       }
     })
   }
