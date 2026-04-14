@@ -1,55 +1,21 @@
-import { Injectable } from '@nestjs/common'
-import { PrismaService } from '@infrastructure/prisma/prisma.service'
+import { Injectable, Inject } from '@nestjs/common'
+import { AuditLogRepositoryPort, AuditEntry } from '@domain/port/outbound/audit-log-repository.port'
 
-export interface AuditEntry {
-  id: string
-  adminId: string
-  action: string
-  targetId: string | null
-  detail: Record<string, unknown> | null
-  createdAt: Date
-}
+// AuditEntry를 re-export (기존 import 호환)
+export type { AuditEntry }
 
 /** 관리자 행위 감사 로그 기록/조회 */
 @Injectable()
 export class AuditLogService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject('AuditLogRepositoryPort') private readonly auditLogRepo: AuditLogRepositoryPort,
+  ) {}
 
-  /** 감사 로그 기록 */
-  async log(
-    adminId: string,
-    action: string,
-    targetId?: string,
-    detail?: Record<string, unknown>,
-  ): Promise<void> {
-    await this.prisma.adminAuditLog.create({
-      data: {
-        adminId,
-        action,
-        targetId: targetId ?? null,
-        detail: detail ? JSON.parse(JSON.stringify(detail)) : undefined,
-      },
-    })
+  async log(adminId: string, action: string, targetId?: string, detail?: Record<string, unknown>): Promise<void> {
+    await this.auditLogRepo.create(adminId, action, targetId, detail)
   }
 
-  /** 감사 로그 조회 (최신순, 페이지네이션) */
-  async findAll(
-    options: { page?: number; limit?: number; action?: string } = {},
-  ): Promise<{ items: AuditEntry[]; total: number }> {
-    const page = options.page ?? 1
-    const limit = options.limit ?? 50
-    const where = options.action ? { action: options.action } : {}
-
-    const [items, total] = await Promise.all([
-      this.prisma.adminAuditLog.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.adminAuditLog.count({ where }),
-    ])
-
-    return { items: items as AuditEntry[], total }
+  async findAll(options: { page?: number; limit?: number; action?: string } = {}): Promise<{ items: AuditEntry[]; total: number }> {
+    return this.auditLogRepo.findAll(options)
   }
 }

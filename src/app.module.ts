@@ -61,6 +61,7 @@ import { PrismaReaderRepository } from '@adapter/outbound/persistence/prisma-rea
 import { PrismaSocialRepository } from '@adapter/outbound/persistence/prisma-social.repository'
 import { PrismaStatsRepository } from '@adapter/outbound/persistence/prisma-stats.repository'
 import { PrismaChatRepository } from '@adapter/outbound/persistence/prisma-chat.repository'
+import { PrismaAuditLogRepository } from '@adapter/outbound/persistence/prisma-audit-log.repository'
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
 import { OpenAIEmbeddingAdapter } from '@adapter/outbound/embedding/openai-embedding.adapter'
 import { PgVectorAdapter } from '@adapter/outbound/vector/pgvector.adapter'
@@ -149,6 +150,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'PaymentGatewayPort', useClass: PolarAdapter },
     { provide: 'ChatRepositoryPort', useClass: PrismaChatRepository },
     { provide: 'BlobStoragePort', useClass: BlobStorageService },
+    { provide: 'AuditLogRepositoryPort', useClass: PrismaAuditLogRepository },
   ],
 })
 export class AppModule {}
