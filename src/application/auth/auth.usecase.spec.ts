@@ -29,6 +29,10 @@ describe('AuthUseCase', () => {
         update: jest.fn(),
         updateMany: jest.fn(),
       },
+      signupHistory: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({}),
+      },
     }
     authUseCase = new AuthUseCase(mockAuthorRepo, mockJwtService, mockCreditUseCase, mockPrisma)
   })

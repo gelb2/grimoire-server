@@ -6,6 +6,8 @@ import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.po
 import { CreditReason } from '@domain/model/credit'
 import { Theme } from '@domain/model/theme'
 import { isPlanExpired } from '@domain/model/plan'
+import { DAILY_FREE_LIMITS } from '@domain/model/config'
+import { PrismaService } from '@infrastructure/prisma/prisma.service'
 
 @Injectable()
 export class GenerateThemeUseCase {
@@ -14,6 +16,7 @@ export class GenerateThemeUseCase {
     @Inject('ThemeRepositoryPort') private readonly themeRepo: ThemeRepositoryPort,
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
     @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
+    private readonly prisma: PrismaService,
   ) {}
 
   /** AI 테마 생성 — 슬롯 체크 없음 (생성은 자유, 활성화가 슬롯 제한) */
@@ -25,20 +28,32 @@ export class GenerateThemeUseCase {
       throw new ForbiddenException('구독 플랜이 만료되었습니다. 플랜을 갱신하세요.')
     }
 
-    // 크레딧 차감 — adjustCredits 내부 $transaction에서 원자적으로 체크+차감
-    // 메모리 값으로 선 체크하지 않음 (Race Condition 방지)
-    try {
-      await this.creditRepo.adjustCredits(authorId, -1, CreditReason.THEME_GENERATE)
-    } catch {
-      throw new BadRequestException('크레딧이 부족합니다')
+    // 일일 무료 생성 제한 체크 — 오늘 생성한 테마 수 vs 플랜별 한도
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+    const todayCount = await this.prisma.theme.count({
+      where: { authorId, source: { in: ['ai', 'user'] }, updatedAt: { gte: todayStart } },
+    })
+    const dailyLimit = DAILY_FREE_LIMITS[author.plan] ?? DAILY_FREE_LIMITS.free
+    const isFree = todayCount < dailyLimit
+
+    // 무료 한도 초과 시 크레딧 차감
+    if (!isFree) {
+      try {
+        await this.creditRepo.adjustCredits(authorId, -1, CreditReason.THEME_GENERATE)
+      } catch {
+        throw new BadRequestException(`오늘 무료 생성 한도(${dailyLimit}회)를 초과했습니다. 크레딧이 부족합니다.`)
+      }
     }
 
-    // Claude API로 테마 생성 — 실패 시 크레딧 환불
+    // Claude API로 테마 생성 — 실패 시 크레딧 환불 (유료 생성인 경우만)
     let themeData: any
     try {
       themeData = await this.claudeApi.generateTheme(description)
     } catch (error) {
-      await this.creditRepo.adjustCredits(authorId, 1, 'theme_generate_refund')
+      if (!isFree) {
+        await this.creditRepo.adjustCredits(authorId, 1, 'theme_generate_refund')
+      }
       throw error
     }
 

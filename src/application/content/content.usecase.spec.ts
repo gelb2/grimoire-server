@@ -36,7 +36,8 @@ describe('ContentUseCase', () => {
       incrementDailyView: jest.fn().mockResolvedValue(undefined),
     }
 
-    useCase = new ContentUseCase(mockWorkRepo as any, mockStatsRepo as any)
+    const mockAuthorRepo = { findById: jest.fn().mockResolvedValue({ name: '테스트작가' }) } as any
+    useCase = new ContentUseCase(mockWorkRepo as any, mockStatsRepo as any, mockAuthorRepo)
   })
 
   describe('getWorkDetail', () => {
@@ -66,7 +67,7 @@ describe('ContentUseCase', () => {
     it('public 에피소드 — 누구나 조회 가능', async () => {
       const result = await useCase.getEpisode('test-author', 'my-novel', 'chapter-1')
 
-      expect(result).toEqual(mockEpisode)
+      expect(result).toMatchObject(mockEpisode)
       expect(mockStatsRepo.incrementDailyView).toHaveBeenCalledWith('work-1', expect.any(Date))
     })
 
@@ -106,7 +107,7 @@ describe('ContentUseCase', () => {
       mockStatsRepo.incrementDailyView.mockRejectedValue(new Error('DB 에러'))
 
       const result = await useCase.getEpisode('test-author', 'my-novel', 'chapter-1')
-      expect(result).toEqual(mockEpisode)
+      expect(result).toMatchObject(mockEpisode)
     })
   })
 })
