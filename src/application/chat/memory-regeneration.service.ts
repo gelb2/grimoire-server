@@ -3,7 +3,6 @@ import { Cron } from '@nestjs/schedule'
 import { ChatRepositoryPort } from '@domain/port/outbound/chat-repository.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
-import { PrismaService } from '@infrastructure/prisma/prisma.service'
 
 const MEMORY_PROMPT = `다음은 소설 작가와 AI 어시스턴트 사이의 대화 기록입니다.
 이 대화에서 **작품에 대해 확인된 사실**만 정리하세요.
@@ -27,7 +26,6 @@ export class MemoryRegenerationService {
     @Inject('ChatRepositoryPort') private readonly chatRepo: ChatRepositoryPort,
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
     @Inject('ClaudeApiPort') private readonly claude: ClaudeApiPort,
-    private readonly prisma: PrismaService,
   ) {}
 
   /** 매일 자정 (KST 00:00 = UTC 15:00) 실행 */
@@ -36,14 +34,9 @@ export class MemoryRegenerationService {
     this.logger.log('프로젝트 메모리 재생성 시작')
 
     try {
-      // 오늘 대화가 있었던 세션 조회 (최근 24시간)
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
-      const activeSessions = await this.prisma.chatSession.findMany({
-        where: { updatedAt: { gte: since } },
-        select: { id: true, workId: true },
-      })
+      const activeSessions = await this.chatRepo.findActiveSessionsSince(since)
 
-      // workId 기준 중복 제거
       const workIds = [...new Set(activeSessions.map(s => s.workId))]
       this.logger.log(`대화가 있었던 작품 수: ${workIds.length}`)
 
@@ -59,15 +52,11 @@ export class MemoryRegenerationService {
 
   /** 특정 작품의 메모리 재생성 */
   async regenerateWorkMemory(workId: string): Promise<void> {
-    // 해당 작품의 전체 채팅 세션에서 최근 100개 메시지 수집
-    const sessions = await this.prisma.chatSession.findMany({
-      where: { workId },
-      select: { id: true },
-    })
+    const sessionIds = await this.chatRepo.findSessionIdsByWorkId(workId)
 
     const allMessages: string[] = []
-    for (const session of sessions) {
-      const messages = await this.chatRepo.getRecentMessages(session.id, 50)
+    for (const sessionId of sessionIds) {
+      const messages = await this.chatRepo.getRecentMessages(sessionId, 50)
       for (const msg of messages) {
         allMessages.push(`${msg.role === 'user' ? '작가' : 'AI'}: ${msg.content}`)
       }
@@ -75,21 +64,16 @@ export class MemoryRegenerationService {
 
     if (allMessages.length === 0) return
 
-    // 기존 context 로드
     const work = await this.workRepo.findById(workId)
     if (!work) return
 
     const existingContext = work.context || ''
-
-    // Claude에게 메모리 재생성 요청
-    const conversationText = allMessages.slice(-100).join('\n\n') // 최근 100개
+    const conversationText = allMessages.slice(-100).join('\n\n')
     const prompt = existingContext
       ? `기존 프로젝트 메모리:\n${existingContext}\n\n---\n\n최근 대화:\n${conversationText}`
       : `최근 대화:\n${conversationText}`
 
     const newMemory = await this.claude.ask(MEMORY_PROMPT, prompt, { maxTokens: 2048 })
-
-    // context 업데이트
     await this.workRepo.updateWork(workId, { context: newMemory })
     this.logger.log(`작품 ${workId} 메모리 업데이트 완료`)
   }

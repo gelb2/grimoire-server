@@ -15,4 +15,6 @@ export interface ThemeRepositoryPort {
   unslotAllByAuthorId(authorId: string): Promise<void>
   findSystemThemes(): Promise<Theme[]>
   findSystemThemeByPreset(preset: string): Promise<Theme | null>
+  /** 일일 생성 한도 체크용: 특정 시각 이후 생성된 테마 수 */
+  countByAuthorIdSince(authorId: string, sources: string[], since: Date): Promise<number>
 }

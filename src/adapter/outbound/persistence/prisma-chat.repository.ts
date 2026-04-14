@@ -70,6 +70,20 @@ export class PrismaChatRepository implements ChatRepositoryPort {
     })
     return rows.reverse().map(toMessage)
   }
+  async findActiveSessionsSince(since: Date): Promise<{ id: string; workId: string }[]> {
+    return this.prisma.chatSession.findMany({
+      where: { updatedAt: { gte: since } },
+      select: { id: true, workId: true },
+    })
+  }
+
+  async findSessionIdsByWorkId(workId: string): Promise<string[]> {
+    const rows = await this.prisma.chatSession.findMany({
+      where: { workId },
+      select: { id: true },
+    })
+    return rows.map(r => r.id)
+  }
 }
 
 function toSession(row: any): ChatSession {
