@@ -49,14 +49,15 @@ describe('PaymentUseCase', () => {
       create: jest.fn().mockResolvedValue({ id: 'log-1' }),
     }
 
-    mockPrisma = {
-      payment: paymentMock,
-      author: authorMock,
-      creditLog: creditLogMock,
-      $transaction: jest.fn(async (cb: (tx: any) => Promise<any>) => {
-        return cb({ payment: paymentMock, author: authorMock, creditLog: creditLogMock })
-      }),
+    const mockPaymentRepo = {
+      create: paymentMock.create,
+      findByExternalTransactionId: paymentMock.findUnique,
+      updateExternalTransactionId: jest.fn().mockResolvedValue(undefined),
+      findByAuthorId: paymentMock.findMany,
+      completePaymentAtomically: jest.fn().mockResolvedValue(undefined),
+      updateStatus: jest.fn().mockResolvedValue(undefined),
     }
+    mockPrisma = mockPaymentRepo // alias for backward test compatibility
 
     mockCreditUseCase = {
       grant: jest.fn().mockResolvedValue({ credits: 8, log: {} }),
@@ -68,11 +69,10 @@ describe('PaymentUseCase', () => {
         paymentUrl: 'https://example.com/pay/test',
         tradeNo: 'TRADE-001',
       }),
-      // 기본: 성공 이벤트 반환
       verifyAndParseWebhook: jest.fn().mockReturnValue(makeEvent()),
     }
 
-    useCase = new PaymentUseCase(mockPrisma, mockCreditUseCase, mockPaymentGateway)
+    useCase = new PaymentUseCase(mockPaymentRepo as any, mockPaymentGateway)
   })
 
   describe('getProducts', () => {
@@ -103,15 +103,14 @@ describe('PaymentUseCase', () => {
     it('pending 상태 Payment를 생성하고 게이트웨이를 호출한다', async () => {
       const result = await useCase.initiatePayment('author-1', 'credit-5', 'https://example.com/return')
 
-      expect(mockPrisma.payment.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
+      expect(mockPrisma.create).toHaveBeenCalledWith(
+        expect.objectContaining({
           authorId: 'author-1',
           productId: 'credit-5',
           amount: 1000,
           credits: 5,
-          status: 'pending',
         }),
-      })
+      )
       expect(mockPaymentGateway.initiatePayment).toHaveBeenCalledWith(
         expect.objectContaining({
           productId: 'credit-5',
@@ -126,10 +125,7 @@ describe('PaymentUseCase', () => {
     it('externalTransactionId를 Payment 레코드에 업데이트한다', async () => {
       await useCase.initiatePayment('author-1', 'credit-5', 'https://example.com/return')
 
-      expect(mockPrisma.payment.update).toHaveBeenCalledWith({
-        where: { id: 'pay-1' },
-        data: { externalTransactionId: 'TRADE-001' },
-      })
+      expect(mockPrisma.updateExternalTransactionId).toHaveBeenCalledWith('pay-1', 'TRADE-001')
     })
 
     it('존재하지 않는 productId면 예외를 던진다', async () => {
@@ -137,7 +133,7 @@ describe('PaymentUseCase', () => {
         useCase.initiatePayment('author-1', 'credit-999', 'https://example.com/return'),
       ).rejects.toThrow(BadRequestException)
 
-      expect(mockPrisma.payment.create).not.toHaveBeenCalled()
+      expect(mockPrisma.create).not.toHaveBeenCalled()
       expect(mockPaymentGateway.initiatePayment).not.toHaveBeenCalled()
     })
   })
@@ -153,7 +149,7 @@ describe('PaymentUseCase', () => {
     })
 
     it('tradeNo에 해당하는 결제가 없으면 무시한다 (멱등성)', async () => {
-      mockPrisma.payment.findUnique.mockResolvedValue(null)
+      mockPrisma.findByExternalTransactionId.mockResolvedValue(null)
 
       const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
@@ -162,7 +158,7 @@ describe('PaymentUseCase', () => {
     })
 
     it('이미 completed인 결제는 무시한다 (중복 웹훅 방지)', async () => {
-      mockPrisma.payment.findUnique.mockResolvedValue({
+      mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         status: 'completed',
         externalTransactionId: 'TRADE-001',
@@ -176,7 +172,7 @@ describe('PaymentUseCase', () => {
     })
 
     it('성공 웹훅 시 원자적 트랜잭션으로 크레딧 부여 + 상태 변경한다', async () => {
-      mockPrisma.payment.findUnique.mockResolvedValue({
+      mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
       })
@@ -185,25 +181,11 @@ describe('PaymentUseCase', () => {
 
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(5)
-      expect(mockPrisma.$transaction).toHaveBeenCalled()
-      expect(mockPrisma.payment.update).toHaveBeenCalledWith({
-        where: { id: 'pay-1' },
-        data: { status: 'completed', completedAt: expect.any(Date) },
-      })
-      expect(mockPrisma.author.update).toHaveBeenCalledWith({
-        where: { id: 'author-1' },
-        data: { credits: { increment: 5 } },
-      })
-      expect(mockPrisma.creditLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          authorId: 'author-1',
-          amount: 5,
-        }),
-      })
+      expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledWith('pay-1', 'author-1', 5, 'credit-5')
     })
 
     it('실패 웹훅 시 상태를 failed로 변경하고 크레딧을 부여하지 않는다', async () => {
-      mockPrisma.payment.findUnique.mockResolvedValue({
+      mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
       })
@@ -213,15 +195,11 @@ describe('PaymentUseCase', () => {
 
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(0)
-      expect(mockPrisma.payment.update).toHaveBeenCalledWith({
-        where: { id: 'pay-1' },
-        data: { status: 'failed' },
-      })
-      expect(mockCreditUseCase.grant).not.toHaveBeenCalled()
+      expect(mockPrisma.updateStatus).toHaveBeenCalledWith('pay-1', 'failed')
     })
 
     it('취소(환불) 웹훅 시 상태를 refunded로 변경한다', async () => {
-      mockPrisma.payment.findUnique.mockResolvedValue({
+      mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
       })
@@ -233,11 +211,7 @@ describe('PaymentUseCase', () => {
 
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(0)
-      expect(mockPrisma.payment.update).toHaveBeenCalledWith({
-        where: { id: 'pay-1' },
-        data: { status: 'refunded' },
-      })
-      expect(mockCreditUseCase.grant).not.toHaveBeenCalled()
+      expect(mockPrisma.updateStatus).toHaveBeenCalledWith('pay-1', 'refunded')
     })
   })
 
@@ -246,10 +220,7 @@ describe('PaymentUseCase', () => {
       const result = await useCase.getPaymentHistory('author-1')
 
       expect(result).toHaveLength(1)
-      expect(mockPrisma.payment.findMany).toHaveBeenCalledWith({
-        where: { authorId: 'author-1' },
-        orderBy: { createdAt: 'desc' },
-      })
+      expect(mockPrisma.findByAuthorId).toHaveBeenCalledWith('author-1')
     })
   })
 
