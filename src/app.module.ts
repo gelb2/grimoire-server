@@ -64,6 +64,7 @@ import { PrismaChatRepository } from '@adapter/outbound/persistence/prisma-chat.
 import { PrismaAuditLogRepository } from '@adapter/outbound/persistence/prisma-audit-log.repository'
 import { PrismaAuthTokenRepository } from '@adapter/outbound/persistence/prisma-auth-token.repository'
 import { PrismaSignupHistoryRepository } from '@adapter/outbound/persistence/prisma-signup-history.repository'
+import { PrismaAdminRepository } from '@adapter/outbound/persistence/prisma-admin.repository'
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
 import { OpenAIEmbeddingAdapter } from '@adapter/outbound/embedding/openai-embedding.adapter'
 import { PgVectorAdapter } from '@adapter/outbound/vector/pgvector.adapter'
@@ -155,6 +156,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'AuditLogRepositoryPort', useClass: PrismaAuditLogRepository },
     { provide: 'AuthTokenRepositoryPort', useClass: PrismaAuthTokenRepository },
     { provide: 'SignupHistoryRepositoryPort', useClass: PrismaSignupHistoryRepository },
+    { provide: 'AdminRepositoryPort', useClass: PrismaAdminRepository },
   ],
 })
 export class AppModule {}

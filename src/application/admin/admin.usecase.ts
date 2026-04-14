@@ -3,9 +3,9 @@ import * as bcrypt from 'bcryptjs'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
+import { AdminRepositoryPort } from '@domain/port/outbound/admin-repository.port'
 import { CreditUseCase } from '@application/credit/credit.usecase'
 import { AuditLogService } from './audit-log.service'
-import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import { CreditLog } from '@domain/model/credit'
 import { Author } from '@domain/model/author'
 import { EpisodeStatus } from '@domain/model/work'
@@ -16,12 +16,12 @@ export class AdminUseCase {
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
     @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
+    @Inject('AdminRepositoryPort') private readonly adminRepo: AdminRepositoryPort,
     private readonly creditUseCase: CreditUseCase,
     private readonly auditLog: AuditLogService,
-    private readonly prisma: PrismaService,
   ) {}
 
-  // ─── 통계 (강화) ───
+  // ─── 통계 ───
 
   async getStats() {
     const [totalAuthors, totalWorks, totalEpisodes, totalCreditsConsumed, totalComments, totalPaymentsCompleted] = await Promise.all([
@@ -29,27 +29,20 @@ export class AdminUseCase {
       this.workRepo.countAll(),
       this.workRepo.countAllEpisodes(),
       this.creditRepo.sumNegativeAmounts(),
-      this.prisma.comment.count(),
-      this.prisma.payment.count({ where: { status: 'completed' } }),
+      this.adminRepo.countComments(),
+      this.adminRepo.countCompletedPayments(),
     ])
     return {
-      totalAuthors,
-      totalWorks,
-      totalEpisodes,
+      totalAuthors, totalWorks, totalEpisodes,
       totalCreditsConsumed: Math.abs(totalCreditsConsumed),
-      totalComments,
-      totalPaymentsCompleted,
+      totalComments, totalPaymentsCompleted,
     }
   }
 
   // ─── 사용자 관리 ───
 
   async listAuthors(options: { page?: number; limit?: number; query?: string }) {
-    return this.authorRepo.findAll({
-      page: options.page ?? 1,
-      limit: options.limit ?? 20,
-      query: options.query,
-    })
+    return this.authorRepo.findAll({ page: options.page ?? 1, limit: options.limit ?? 20, query: options.query })
   }
 
   async getAuthor(authorId: string): Promise<Author> {
@@ -58,28 +51,15 @@ export class AdminUseCase {
     return author
   }
 
-  async createAuthor(
-    adminId: string,
-    input: { email: string; name: string; slug: string; password: string; plan?: string },
-  ): Promise<Author> {
+  async createAuthor(adminId: string, input: { email: string; name: string; slug: string; password: string; plan?: string }): Promise<Author> {
     const existingEmail = await this.authorRepo.findByEmail(input.email)
     if (existingEmail) throw new BadRequestException('이미 가입된 이메일입니다')
-
     const existingSlug = await this.authorRepo.findBySlug(input.slug)
     if (existingSlug) throw new BadRequestException('이미 사용 중인 슬러그입니다')
-
     const passwordHash = await bcrypt.hash(input.password, 10)
-    const author = await this.authorRepo.create({
-      slug: input.slug, name: input.name, email: input.email, passwordHash,
-    })
-
-    if (input.plan && input.plan !== 'free') {
-      await this.authorRepo.updatePlan(author.id, input.plan, null)
-    }
-
-    await this.auditLog.log(adminId, 'author_create', author.id, {
-      slug: input.slug, email: input.email, plan: input.plan ?? 'free',
-    })
+    const author = await this.authorRepo.create({ slug: input.slug, name: input.name, email: input.email, passwordHash })
+    if (input.plan && input.plan !== 'free') await this.authorRepo.updatePlan(author.id, input.plan, null)
+    await this.auditLog.log(adminId, 'author_create', author.id, { slug: input.slug, email: input.email, plan: input.plan ?? 'free' })
     return author
   }
 
@@ -134,143 +114,59 @@ export class AdminUseCase {
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
     const planExpireAt = durationDays > 0 ? new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000) : null
     await this.authorRepo.updatePlan(authorId, plan, planExpireAt)
-    await this.auditLog.log(adminId, 'plan_change', authorId, {
-      before: { plan: author.plan, planExpireAt: author.planExpireAt },
-      after: { plan, durationDays },
-    })
+    await this.auditLog.log(adminId, 'plan_change', authorId, { before: { plan: author.plan, planExpireAt: author.planExpireAt }, after: { plan, durationDays } })
   }
 
-  // ─── 콘텐츠 관리 (신규) ───
+  // ─── 콘텐츠 관리 ───
 
   async listWorks(options: { page?: number; limit?: number; query?: string; authorId?: string }) {
-    const page = options.page ?? 1
-    const limit = options.limit ?? 20
-    const where: any = {}
-    if (options.query) where.title = { contains: options.query, mode: 'insensitive' }
-    if (options.authorId) where.authorId = options.authorId
-
-    const [items, total] = await Promise.all([
-      this.prisma.work.findMany({
-        where,
-        include: { author: { select: { name: true, slug: true } }, _count: { select: { episodes: true } } },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.work.count({ where }),
-    ])
-
-    return {
-      items: items.map(w => ({
-        id: w.id, slug: w.slug, title: w.title, subtitle: w.subtitle,
-        authorName: w.author.name, authorSlug: w.author.slug,
-        episodeCount: w._count.episodes, viewCount: w.viewCount,
-        createdAt: w.createdAt,
-      })),
-      total,
-    }
+    return this.adminRepo.listWorks({ page: options.page ?? 1, limit: options.limit ?? 20, query: options.query, authorId: options.authorId })
   }
 
   async getWorkDetail(workId: string) {
-    const work = await this.prisma.work.findUnique({
-      where: { id: workId },
-      include: {
-        author: { select: { name: true, slug: true } },
-        episodes: { orderBy: { orderNum: 'asc' }, select: { id: true, slug: true, title: true, status: true, viewCount: true, orderNum: true, createdAt: true } },
-      },
-    })
+    const work = await this.adminRepo.getWorkDetail(workId)
     if (!work) throw new NotFoundException('작품을 찾을 수 없습니다')
     return work
   }
 
   async getEpisodeDetail(episodeId: string) {
-    const episode = await this.prisma.episode.findUnique({ where: { id: episodeId } })
+    const episode = await this.adminRepo.getEpisodeDetail(episodeId)
     if (!episode) throw new NotFoundException('에피소드를 찾을 수 없습니다')
     return episode
   }
 
   async changeEpisodeStatus(adminId: string, episodeId: string, status: EpisodeStatus) {
-    const episode = await this.prisma.episode.findUnique({ where: { id: episodeId } })
+    const episode = await this.adminRepo.getEpisodeDetail(episodeId)
     if (!episode) throw new NotFoundException('에피소드를 찾을 수 없습니다')
-
-    await this.prisma.episode.update({ where: { id: episodeId }, data: { status } })
+    await this.adminRepo.changeEpisodeStatus(episodeId, status)
     await this.auditLog.log(adminId, 'episode_status_change', episodeId, { before: episode.status, after: status })
     return { success: true }
   }
 
-  // ─── 댓글 관리 (신규) ───
+  // ─── 댓글 관리 ───
 
   async listComments(options: { page?: number; limit?: number; episodeId?: string; query?: string }) {
-    const page = options.page ?? 1
-    const limit = options.limit ?? 20
-    const where: any = {}
-    if (options.episodeId) where.episodeId = options.episodeId
-    if (options.query) where.content = { contains: options.query, mode: 'insensitive' }
-
-    const [items, total] = await Promise.all([
-      this.prisma.comment.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.comment.count({ where }),
-    ])
-    return { items, total }
+    return this.adminRepo.listComments({ page: options.page ?? 1, limit: options.limit ?? 20, episodeId: options.episodeId, query: options.query })
   }
 
   async deleteComment(adminId: string, commentId: string) {
-    const comment = await this.prisma.comment.findUnique({ where: { id: commentId } })
+    const comment = await this.adminRepo.findComment(commentId)
     if (!comment) throw new NotFoundException('댓글을 찾을 수 없습니다')
-
-    await this.prisma.comment.delete({ where: { id: commentId } })
-    await this.auditLog.log(adminId, 'comment_delete_admin', commentId, {
-      episodeId: comment.episodeId, content: comment.content?.slice(0, 100),
-    })
+    await this.adminRepo.deleteComment(commentId)
+    await this.auditLog.log(adminId, 'comment_delete_admin', commentId, { episodeId: comment.episodeId, content: comment.content?.slice(0, 100) })
     return { deleted: true }
   }
 
-  // ─── 결제 내역 (신규 — 기존 빈 구현 교체) ───
+  // ─── 결제 내역 ───
 
   async listPayments(options: { page?: number; limit?: number; authorId?: string; status?: string }) {
-    const page = options.page ?? 1
-    const limit = options.limit ?? 20
-    const where: any = {}
-    if (options.authorId) where.authorId = options.authorId
-    if (options.status) where.status = options.status
-
-    const [items, total] = await Promise.all([
-      this.prisma.payment.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.payment.count({ where }),
-    ])
-    return { items, total }
+    return this.adminRepo.listPayments({ page: options.page ?? 1, limit: options.limit ?? 20, authorId: options.authorId, status: options.status })
   }
 
-  // ─── 접근 로그 (신규) ───
+  // ─── 접근 로그 ───
 
   async listAccessLogs(options: { page?: number; limit?: number; action?: string; ip?: string; authorId?: string }) {
-    const page = options.page ?? 1
-    const limit = options.limit ?? 50
-    const where: any = {}
-    if (options.action) where.action = options.action
-    if (options.ip) where.ip = options.ip
-    if (options.authorId) where.authorId = options.authorId
-
-    const [items, total] = await Promise.all([
-      this.prisma.accessLog.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.accessLog.count({ where }),
-    ])
-    return { items, total }
+    return this.adminRepo.listAccessLogs({ page: options.page ?? 1, limit: options.limit ?? 50, action: options.action, ip: options.ip, authorId: options.authorId })
   }
 
   // ─── 사용자 제재 ───
@@ -279,239 +175,118 @@ export class AdminUseCase {
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
     if (author.role === 'admin') throw new BadRequestException('관리자는 제재할 수 없습니다')
-
-    const durationMap: Record<string, number> = {
-      suspend_1d: 1, suspend_7d: 7, suspend_30d: 30,
-    }
+    const durationMap: Record<string, number> = { suspend_1d: 1, suspend_7d: 7, suspend_30d: 30 }
     const days = durationMap[type]
-    const endAt = days ? new Date(Date.now() + days * 24 * 60 * 60 * 1000) : (type === 'permanent' ? null : null)
-
-    const sanction = await this.prisma.userSanction.create({
-      data: { authorId, type, reason, detail, adminId, endAt, isActive: true },
-    })
-
+    const endAt = days ? new Date(Date.now() + days * 24 * 60 * 60 * 1000) : null
+    const sanction = await this.adminRepo.createSanction({ authorId, type, reason, detail, adminId, endAt })
     await this.auditLog.log(adminId, 'user_sanction', authorId, { type, reason, detail })
     return sanction
   }
 
   async liftSanction(adminId: string, sanctionId: string) {
-    const sanction = await this.prisma.userSanction.findUnique({ where: { id: sanctionId } })
+    const sanction = await this.adminRepo.findSanction(sanctionId)
     if (!sanction) throw new NotFoundException('제재 기록을 찾을 수 없습니다')
-
-    await this.prisma.userSanction.update({ where: { id: sanctionId }, data: { isActive: false } })
+    await this.adminRepo.liftSanction(sanctionId)
     await this.auditLog.log(adminId, 'user_sanction_lift', sanction.authorId, { sanctionId, type: sanction.type })
     return { lifted: true }
   }
 
-  async listSanctions(authorId?: string) {
-    const where: any = {}
-    if (authorId) where.authorId = authorId
-    return this.prisma.userSanction.findMany({ where, orderBy: { createdAt: 'desc' }, take: 100 })
-  }
-
-  /** 로그인 시 활성 제재 확인 */
-  async getActiveSanction(authorId: string) {
-    // 만료된 제재 자동 비활성화
-    await this.prisma.userSanction.updateMany({
-      where: { authorId, isActive: true, endAt: { not: null, lt: new Date() } },
-      data: { isActive: false },
-    })
-    return this.prisma.userSanction.findFirst({
-      where: { authorId, isActive: true },
-      orderBy: { createdAt: 'desc' },
-    })
-  }
+  async listSanctions(authorId?: string) { return this.adminRepo.listSanctions(authorId) }
+  async getActiveSanction(authorId: string) { return this.adminRepo.expireAndFindActiveSanction(authorId) }
 
   // ─── 콘텐츠 신고 ───
 
   async listReports(options: { page?: number; limit?: number; status?: string }) {
-    const page = options.page ?? 1
-    const limit = options.limit ?? 20
-    const where: any = {}
-    if (options.status) where.status = options.status
-
-    const [items, total] = await Promise.all([
-      this.prisma.report.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }),
-      this.prisma.report.count({ where }),
-    ])
-    return { items, total }
+    return this.adminRepo.listReports({ page: options.page ?? 1, limit: options.limit ?? 20, status: options.status })
   }
 
   async resolveReport(adminId: string, reportId: string, action: 'approved' | 'rejected') {
-    const report = await this.prisma.report.findUnique({ where: { id: reportId } })
+    const report = await this.adminRepo.findReport(reportId)
     if (!report) throw new NotFoundException('신고를 찾을 수 없습니다')
-
-    await this.prisma.report.update({
-      where: { id: reportId },
-      data: { status: action, resolvedBy: adminId, resolvedAt: new Date() },
-    })
-
-    // 승인 시 대상 콘텐츠 비공개 처리
+    await this.adminRepo.resolveReport(reportId, action, adminId)
     if (action === 'approved') {
-      if (report.targetType === 'episode') {
-        await this.prisma.episode.update({ where: { id: report.targetId }, data: { status: 'nonPublic' } }).catch(() => {})
-      } else if (report.targetType === 'comment') {
-        await this.prisma.comment.delete({ where: { id: report.targetId } }).catch(() => {})
-      }
+      if (report.targetType === 'episode') await this.adminRepo.hideEpisode(report.targetId)
+      else if (report.targetType === 'comment') await this.adminRepo.deleteCommentById(report.targetId)
     }
-
     await this.auditLog.log(adminId, 'report_resolve', reportId, { action, targetType: report.targetType, targetId: report.targetId })
     return { resolved: true }
   }
 
   // ─── 시스템 설정 ───
 
-  async getSettings() {
-    const rows = await this.prisma.systemSetting.findMany()
-    const settings: Record<string, string> = {}
-    for (const r of rows) settings[r.key] = r.value
-    return settings
-  }
+  async getSettings() { return this.adminRepo.getSettings() }
 
   async updateSetting(adminId: string, key: string, value: string) {
-    await this.prisma.systemSetting.upsert({
-      where: { key },
-      create: { key, value, updatedBy: adminId },
-      update: { value, updatedBy: adminId },
-    })
+    await this.adminRepo.updateSetting(key, value, adminId)
     await this.auditLog.log(adminId, 'setting_change', key, { value })
     return { key, value }
   }
 
-  // ─── 시계열 통계 (P1) ───
+  // ─── 시계열 통계 ───
 
   async getTimeseries(metric: string, days: number = 30) {
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-
-    if (metric === 'signups') {
-      const rows = await this.prisma.$queryRaw<{ date: string; count: bigint }[]>`
-        SELECT DATE(created_at) as date, COUNT(*)::int as count
-        FROM authors WHERE created_at >= ${since}
-        GROUP BY DATE(created_at) ORDER BY date`
-      return rows.map(r => ({ date: String(r.date).split('T')[0], count: Number(r.count) }))
-    }
-
-    if (metric === 'views') {
-      const rows = await this.prisma.dailyView.groupBy({
-        by: ['date'],
-        _sum: { count: true },
-        where: { date: { gte: since } },
-        orderBy: { date: 'asc' },
-      })
-      return rows.map(r => ({ date: r.date.toISOString().split('T')[0], count: r._sum.count ?? 0 }))
-    }
-
-    if (metric === 'payments') {
-      const rows = await this.prisma.$queryRaw<{ date: string; count: bigint }[]>`
-        SELECT DATE(created_at) as date, COUNT(*)::int as count
-        FROM payments WHERE status = 'completed' AND created_at >= ${since}
-        GROUP BY DATE(created_at) ORDER BY date`
-      return rows.map(r => ({ date: String(r.date).split('T')[0], count: Number(r.count) }))
-    }
-
-    return []
+    return this.adminRepo.getTimeseries(metric, since)
   }
 
-  // ─── 공지사항 (P1) ───
+  // ─── 공지사항 ───
 
-  async listAnnouncements(page: number = 1, limit: number = 20) {
-    const [items, total] = await Promise.all([
-      this.prisma.announcement.findMany({ orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }),
-      this.prisma.announcement.count(),
-    ])
-    return { items, total }
-  }
+  async listAnnouncements(page: number = 1, limit: number = 20) { return this.adminRepo.listAnnouncements(page, limit) }
 
   async createAnnouncement(adminId: string, data: { title: string; content: string; isPinned?: boolean; target?: string }) {
-    const item = await this.prisma.announcement.create({
-      data: { title: data.title, content: data.content, isPinned: data.isPinned ?? false, target: data.target ?? 'all', adminId },
-    })
+    const item = await this.adminRepo.createAnnouncement(adminId, data)
     await this.auditLog.log(adminId, 'announcement_create', item.id, { title: data.title })
     return item
   }
 
   async deleteAnnouncement(adminId: string, id: string) {
-    await this.prisma.announcement.delete({ where: { id } })
+    await this.adminRepo.deleteAnnouncement(id)
     await this.auditLog.log(adminId, 'announcement_delete', id)
     return { deleted: true }
   }
 
-  // ─── 추천 작품 큐레이션 (P1) ───
+  // ─── 추천 작품 큐레이션 ───
 
-  async listFeatured(section?: string) {
-    const where = section ? { section } : {}
-    return this.prisma.featuredWork.findMany({ where, orderBy: { position: 'asc' } })
-  }
+  async listFeatured(section?: string) { return this.adminRepo.listFeatured(section) }
 
   async addFeatured(adminId: string, data: { workId: string; section?: string; position?: number }) {
-    const item = await this.prisma.featuredWork.create({
-      data: { workId: data.workId, section: data.section ?? 'main', position: data.position ?? 0, adminId },
-    })
+    const item = await this.adminRepo.addFeatured(adminId, data)
     await this.auditLog.log(adminId, 'featured_add', data.workId, { section: data.section })
     return item
   }
 
   async removeFeatured(adminId: string, id: string) {
-    await this.prisma.featuredWork.delete({ where: { id } })
+    await this.adminRepo.removeFeatured(id)
     await this.auditLog.log(adminId, 'featured_remove', id)
     return { deleted: true }
   }
 
-  // ─── 수익 대시보드 (P2) ───
+  // ─── 수익 대시보드 ───
 
-  async getRevenueSummary() {
-    const [totalRevenue, monthlyRevenue, productBreakdown] = await Promise.all([
-      this.prisma.payment.aggregate({ _sum: { amount: true }, where: { status: 'completed' } }),
-      this.prisma.payment.aggregate({
-        _sum: { amount: true },
-        where: { status: 'completed', createdAt: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) } },
-      }),
-      this.prisma.payment.groupBy({
-        by: ['productId'],
-        _sum: { amount: true },
-        _count: true,
-        where: { status: 'completed' },
-      }),
-    ])
+  async getRevenueSummary() { return this.adminRepo.getRevenueSummary() }
 
-    return {
-      totalRevenue: totalRevenue._sum.amount ?? 0,
-      monthlyRevenue: monthlyRevenue._sum.amount ?? 0,
-      products: productBreakdown.map(p => ({ productId: p.productId, total: p._sum.amount ?? 0, count: p._count })),
-    }
-  }
+  // ─── 테마 프리셋 관리 ───
 
-  // ─── 테마 프리셋 관리 (P2) ───
-
-  async listSystemThemes() {
-    return this.prisma.theme.findMany({
-      where: { source: 'system', authorId: null },
-      orderBy: { updatedAt: 'desc' },
-    })
-  }
+  async listSystemThemes() { return this.adminRepo.listSystemThemes() }
 
   async updateSystemTheme(adminId: string, themeId: string, data: { name?: string; overrides?: any }) {
-    const theme = await this.prisma.theme.findUnique({ where: { id: themeId } })
+    const theme = await this.adminRepo.findSystemTheme(themeId)
     if (!theme || theme.source !== 'system') throw new NotFoundException('시스템 테마를 찾을 수 없습니다')
-
-    const updated = await this.prisma.theme.update({ where: { id: themeId }, data })
+    const updated = await this.adminRepo.updateSystemTheme(themeId, data)
     await this.auditLog.log(adminId, 'system_theme_update', themeId, { name: data.name })
     return updated
   }
 
   async createSystemTheme(adminId: string, data: { name: string; preset: string; overrides: any }) {
-    const theme = await this.prisma.theme.create({
-      data: { name: data.name, preset: data.preset, overrides: data.overrides, source: 'system', authorId: null },
-    })
+    const theme = await this.adminRepo.createSystemTheme(data)
     await this.auditLog.log(adminId, 'system_theme_create', theme.id, { name: data.name, preset: data.preset })
     return theme
   }
 
   async deleteSystemTheme(adminId: string, themeId: string) {
-    const theme = await this.prisma.theme.findUnique({ where: { id: themeId } })
+    const theme = await this.adminRepo.findSystemTheme(themeId)
     if (!theme || theme.source !== 'system') throw new NotFoundException('시스템 테마를 찾을 수 없습니다')
-
-    await this.prisma.theme.delete({ where: { id: themeId } })
+    await this.adminRepo.deleteSystemTheme(themeId)
     await this.auditLog.log(adminId, 'system_theme_delete', themeId, { name: theme.name })
     return { deleted: true }
   }
