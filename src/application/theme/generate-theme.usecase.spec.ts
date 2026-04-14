@@ -34,8 +34,9 @@ describe('GenerateThemeUseCase', () => {
     mockAuthorRepo = { findById: jest.fn().mockResolvedValue(mockAuthor), findBySlug: jest.fn(), findByEmail: jest.fn(), create: jest.fn(), updateCredits: jest.fn(), updatePlan: jest.fn() }
     mockCreditRepo = { adjustCredits: jest.fn().mockResolvedValue({ credits: 2, log: {} }), findLogsByAuthorId: jest.fn() }
 
+    const mockPrisma = { theme: { count: jest.fn().mockResolvedValue(100) } }  // 일일 무료 한도 초과 → 크레딧 차감
     useCase = new GenerateThemeUseCase(
-      mockClaudeApi as any, mockThemeRepo as any, mockAuthorRepo as any, mockCreditRepo as any,
+      mockClaudeApi as any, mockThemeRepo as any, mockAuthorRepo as any, mockCreditRepo as any, mockPrisma as any,
     )
   })
 

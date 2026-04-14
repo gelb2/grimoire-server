@@ -32,6 +32,12 @@ export class AuthUseCase {
       throw new BadRequestException('이미 사용 중인 슬러그입니다')
     }
 
+    // 재가입 방지 — 이전 가입 이력이 있으면 차단
+    const signupHistory = await this.prisma.signupHistory.findUnique({ where: { providerId: input.email } })
+    if (signupHistory && signupHistory.signupCount >= 2) {
+      throw new BadRequestException('이 이메일로는 더 이상 가입할 수 없습니다')
+    }
+
     // 비밀번호 해싱
     const passwordHash = await bcrypt.hash(input.password, 10)
 
@@ -43,8 +49,15 @@ export class AuthUseCase {
       passwordHash,
     })
 
-    // 가입 보너스 크레딧 (이미 기본값 3이지만 로그 기록)
+    // 가입 보너스 크레딧 (DB 기본값 0 + grant 3 = 총 3)
     await this.creditUseCase.grant(author.id, 3, 'signup_bonus')
+
+    // 가입 이력 기록 (재가입 방지용)
+    await this.prisma.signupHistory.upsert({
+      where: { providerId: input.email },
+      create: { providerId: input.email, signupCount: 1 },
+      update: { signupCount: { increment: 1 } },
+    })
 
     // 토큰 발급
     const accessToken = this.generateAccessToken(author)
@@ -89,6 +102,12 @@ export class AuthUseCase {
       author = await this.authorRepo.findByEmail(payload.email)
 
       if (!author) {
+        // 재가입 방지
+        const googleHistory = await this.prisma.signupHistory.findUnique({ where: { providerId: payload.sub! } })
+        if (googleHistory && googleHistory.signupCount >= 2) {
+          throw new BadRequestException('이 계정으로는 더 이상 가입할 수 없습니다')
+        }
+
         // 신규 가입 — 슬러그 충돌 시 랜덤 4자리 접미사 추가
         let slug = payload.email.split('@')[0].toLowerCase().replace(/[^a-z0-9-]/g, '-')
         const existingSlug = await this.authorRepo.findBySlug(slug)
@@ -101,6 +120,13 @@ export class AuthUseCase {
           slug,
         })
         await this.creditUseCase.grant(author.id, 3, 'signup_bonus')
+
+        // 가입 이력 기록
+        await this.prisma.signupHistory.upsert({
+          where: { providerId: payload.sub! },
+          create: { providerId: payload.sub!, signupCount: 1 },
+          update: { signupCount: { increment: 1 } },
+        })
       }
 
       // 소셜 계정 연결

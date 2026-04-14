@@ -5,6 +5,8 @@ import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
 import { Work, Episode, EpisodeStatus } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
+import { CreditUseCase } from '@application/credit/credit.usecase'
+import { CreditReason } from '@domain/model/credit'
 
 @Injectable()
 export class WorkManagementUseCase {
@@ -12,6 +14,7 @@ export class WorkManagementUseCase {
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
     @Inject('BlobStoragePort') private readonly blobStorage: BlobStoragePort,
     private readonly novelAnalysis: NovelAnalysisUseCase,
+    private readonly creditUseCase: CreditUseCase,
   ) {}
 
   /** 작품 생성 */
@@ -155,6 +158,15 @@ export class WorkManagementUseCase {
 
     // shared 상태로 직접 변경 불가 — createShareLink 사용
     if (status === 'shared') throw new BadRequestException('공유 링크 생성은 별도 API를 사용하세요')
+
+    // 첫 퍼블리시 보너스 — upload→public 최초 전환 시 2크레딧
+    if (episode.status === 'upload' && status === 'public') {
+      const allEpisodes = await this.workRepo.findEpisodesFiltered(work.id, [])
+      const hasPublished = allEpisodes.some(ep => ep.status === 'public')
+      if (!hasPublished) {
+        await this.creditUseCase.grant(authorId, 2, CreditReason.FIRST_WORK_BONUS)
+      }
+    }
 
     // shared → 다른 상태로 변경 시 토큰 초기화
     const clearToken = episode.status === 'shared'

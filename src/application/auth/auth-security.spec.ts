@@ -163,7 +163,8 @@ describe('보안 테스트', () => {
       }
       const mockBlobStorage = { isEnabled: false, uploadImage: jest.fn(), deleteImage: jest.fn() } as any
       const mockNovelAnalysis = { indexEpisode: jest.fn().mockResolvedValue({ chunkCount: 0, tokensUsed: 0 }) } as any
-      useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage, mockNovelAnalysis)
+      const mockCreditUseCase = { grant: jest.fn() } as any
+      useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage, mockNovelAnalysis, mockCreditUseCase)
     })
 
     it('다른 사용자의 작품 수정 시 ForbiddenException을 던진다', async () => {

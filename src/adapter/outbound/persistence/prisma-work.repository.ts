@@ -270,7 +270,8 @@ function toWorkDomain(row: {
 function toEpisodeDomain(row: {
   id: string; workId: string; slug: string; title: string;
   subtitle: string | null; description: string | null; type: string; orderNum: number; blocks: unknown; rawMd: string;
+  viewCount: number; sourceFormat: string; isIndexed: boolean;
   status: string; sharedToken: string | null; sharedExpireAt: Date | null; createdAt: Date
 }): Episode {
-  return { id: row.id, workId: row.workId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, type: row.type, orderNum: row.orderNum, blocks: row.blocks as Block[], rawMd: row.rawMd, status: row.status as EpisodeStatus, sharedToken: row.sharedToken, sharedExpireAt: row.sharedExpireAt, createdAt: row.createdAt }
+  return { id: row.id, workId: row.workId, slug: row.slug, title: row.title, subtitle: row.subtitle, description: row.description, type: row.type, orderNum: row.orderNum, blocks: row.blocks as Block[], rawMd: row.rawMd, viewCount: row.viewCount, sourceFormat: row.sourceFormat, isIndexed: row.isIndexed, status: row.status as EpisodeStatus, sharedToken: row.sharedToken, sharedExpireAt: row.sharedExpireAt, createdAt: row.createdAt }
 }

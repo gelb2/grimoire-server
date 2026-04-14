@@ -36,10 +36,21 @@ export interface Episode {
   orderNum: number
   blocks: Block[]
   rawMd: string
+  viewCount: number
+  sourceFormat: string
+  isIndexed: boolean
   status: EpisodeStatus
   sharedToken: string | null
   sharedExpireAt: Date | null
   createdAt: Date
+}
+
+/** 에피소드 + 네비게이션 정보 (API 응답용) */
+export interface EpisodeWithNav extends Episode {
+  prevSlug: string | null
+  nextSlug: string | null
+  authorName: string
+  workTitle: string
 }
 
 export interface EpisodeSummary {
