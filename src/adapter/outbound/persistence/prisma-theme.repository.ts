@@ -141,6 +141,12 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
     return rows.map(toDomain)
   }
 
+  async countByAuthorIdSince(authorId: string, sources: string[], since: Date): Promise<number> {
+    return this.prisma.theme.count({
+      where: { authorId, source: { in: sources }, updatedAt: { gte: since } },
+    })
+  }
+
   async findSystemThemeByPreset(preset: string): Promise<Theme | null> {
     const row = await this.prisma.theme.findFirst({
       where: { authorId: { equals: null }, source: 'system', preset },

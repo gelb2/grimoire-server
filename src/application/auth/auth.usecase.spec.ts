@@ -22,19 +22,18 @@ describe('AuthUseCase', () => {
     mockCreditUseCase = {
       grant: jest.fn().mockResolvedValue({ credits: 3, log: {} }),
     }
-    mockPrisma = {
-      refreshToken: {
-        create: jest.fn().mockResolvedValue({}),
-        findUnique: jest.fn(),
-        update: jest.fn(),
-        updateMany: jest.fn(),
-      },
-      signupHistory: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        upsert: jest.fn().mockResolvedValue({}),
-      },
+    const mockAuthTokenRepo = {
+      create: jest.fn().mockResolvedValue(undefined),
+      findByHash: jest.fn(),
+      revoke: jest.fn(),
+      revokeByHash: jest.fn(),
+      revokeAllByAuthorId: jest.fn(),
     }
-    authUseCase = new AuthUseCase(mockAuthorRepo, mockJwtService, mockCreditUseCase, mockPrisma)
+    const mockSignupHistoryRepo = {
+      findByProviderId: jest.fn().mockResolvedValue(null),
+      upsert: jest.fn().mockResolvedValue(undefined),
+    }
+    authUseCase = new AuthUseCase(mockAuthorRepo, mockJwtService, mockCreditUseCase, mockAuthTokenRepo, mockSignupHistoryRepo)
   })
 
   describe('register', () => {
