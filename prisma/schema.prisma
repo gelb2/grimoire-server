@@ -16,7 +16,7 @@ model Author {
   passwordHash    String?         @map("password_hash")
   bio             String?
   role            String          @default("user")
-  credits         Int             @default(3)
+  credits         Int             @default(0)
   plan            String          @default("free")
   planExpireAt    DateTime?       @map("plan_expire_at") @db.Timestamptz(3)
   defaultThemeId  String?         @map("default_theme_id")

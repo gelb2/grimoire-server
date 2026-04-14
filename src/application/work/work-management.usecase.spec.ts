@@ -55,7 +55,8 @@ describe('WorkManagementUseCase', () => {
     }
     const mockBlobStorage = { isEnabled: false, uploadImage: jest.fn(), deleteImage: jest.fn() } as any
     const mockNovelAnalysis = { indexEpisode: jest.fn().mockResolvedValue({ chunkCount: 0, tokensUsed: 0 }) } as any
-    useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage, mockNovelAnalysis)
+    const mockCreditUseCase = { grant: jest.fn().mockResolvedValue({ credits: 2, log: {} }) } as any
+    useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage, mockNovelAnalysis, mockCreditUseCase)
   })
 
   describe('createWork', () => {
@@ -241,6 +242,7 @@ title: "테스트"
     it('작가가 에피소드 상태를 변경한다', async () => {
       mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
       mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.findEpisodesFiltered.mockResolvedValue([mockEpisode])
       mockWorkRepo.updateEpisodeStatus.mockResolvedValue({ ...mockEpisode, status: 'public' })
 
       const result = await useCase.updateEpisodeStatus('author-1', 'ep-1', 'public')

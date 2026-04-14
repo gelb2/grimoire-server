@@ -1,13 +1,15 @@
 import { Injectable, Inject, NotFoundException, ForbiddenException } from '@nestjs/common'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { StatsRepositoryPort } from '@domain/port/outbound/stats-repository.port'
-import { WorkDetail, Episode } from '@domain/model/work'
+import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
+import { WorkDetail, Episode, EpisodeWithNav } from '@domain/model/work'
 
 @Injectable()
 export class ContentUseCase {
   constructor(
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
     @Inject('StatsRepositoryPort') private readonly statsRepo: StatsRepositoryPort,
+    @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
   ) {}
 
   /** 작품 상세 조회 — authorId가 있으면 작가 본인(upload 포함), 없으면 public만 */
@@ -28,7 +30,7 @@ export class ContentUseCase {
   }
 
   /** 에피소드 조회 — status별 접근 제어 */
-  async getEpisode(authorSlug: string, workSlug: string, episodeSlug: string, requestAuthorId?: string): Promise<Episode> {
+  async getEpisode(authorSlug: string, workSlug: string, episodeSlug: string, requestAuthorId?: string): Promise<EpisodeWithNav> {
     const episode = await this.workRepo.findEpisode(authorSlug, workSlug, episodeSlug)
     if (!episode) {
       throw new NotFoundException('에피소드를 찾을 수 없습니다')
@@ -56,10 +58,25 @@ export class ContentUseCase {
     }
 
     // 비동기로 조회수 기록 (에피소드 응답에 영향 없음)
-    this.statsRepo.incrementDailyView(episode.workId, new Date()).catch(() => {
-      // 조회수 기록 실패해도 에피소드 조회는 정상 동작
-    })
+    this.statsRepo.incrementDailyView(episode.workId, new Date()).catch(() => {})
 
-    return episode
+    // prev/next 에피소드 slug 계산
+    const allEpisodes = isOwner
+      ? await this.workRepo.findEpisodes(work!.id)
+      : await this.workRepo.findEpisodesFiltered(work!.id, ['upload'])
+    const currentIdx = allEpisodes.findIndex(ep => ep.slug === episodeSlug)
+    const prevSlug = currentIdx > 0 ? allEpisodes[currentIdx - 1].slug : null
+    const nextSlug = currentIdx < allEpisodes.length - 1 ? allEpisodes[currentIdx + 1].slug : null
+
+    // 작가 이름, 작품 제목 추가
+    const authorEntity = work ? await this.authorRepo.findById(work.authorId).catch(() => null) : null
+
+    return {
+      ...episode,
+      prevSlug,
+      nextSlug,
+      authorName: authorEntity?.name ?? authorSlug,
+      workTitle: work?.title ?? workSlug,
+    }
   }
 }
