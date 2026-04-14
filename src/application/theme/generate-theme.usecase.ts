@@ -7,7 +7,6 @@ import { CreditReason } from '@domain/model/credit'
 import { Theme } from '@domain/model/theme'
 import { isPlanExpired } from '@domain/model/plan'
 import { DAILY_FREE_LIMITS } from '@domain/model/config'
-import { PrismaService } from '@infrastructure/prisma/prisma.service'
 
 @Injectable()
 export class GenerateThemeUseCase {
@@ -16,7 +15,6 @@ export class GenerateThemeUseCase {
     @Inject('ThemeRepositoryPort') private readonly themeRepo: ThemeRepositoryPort,
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
     @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
-    private readonly prisma: PrismaService,
   ) {}
 
   /** AI 테마 생성 — 슬롯 체크 없음 (생성은 자유, 활성화가 슬롯 제한) */
@@ -31,9 +29,7 @@ export class GenerateThemeUseCase {
     // 일일 무료 생성 제한 체크 — 오늘 생성한 테마 수 vs 플랜별 한도
     const todayStart = new Date()
     todayStart.setHours(0, 0, 0, 0)
-    const todayCount = await this.prisma.theme.count({
-      where: { authorId, source: { in: ['ai', 'user'] }, updatedAt: { gte: todayStart } },
-    })
+    const todayCount = await this.themeRepo.countByAuthorIdSince(authorId, ['ai', 'user'], todayStart)
     const dailyLimit = DAILY_FREE_LIMITS[author.plan] ?? DAILY_FREE_LIMITS.free
     const isFree = todayCount < dailyLimit
 
