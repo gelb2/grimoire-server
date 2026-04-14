@@ -10,11 +10,11 @@ export const THEME_SLOT_LIMITS: Record<string, number> = {
   premium: 8,
 }
 
-/** 구독 플랜별 일일 무료 생성 제한 */
+/** 구독 플랜별 일일 무료 생성 제한 — PLANNING_GRIMOIRE.md §8 기준 */
 export const DAILY_FREE_LIMITS: Record<string, number> = {
   free: 3,
-  pro: 20,
-  premium: Infinity,
+  pro: 7,
+  premium: 12,
 }
 
 /**

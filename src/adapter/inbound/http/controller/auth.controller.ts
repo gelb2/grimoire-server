@@ -41,8 +41,8 @@ function extractClientInfo(req: Request) {
   return { ip, userAgent }
 }
 
-function userResponse(author: { id: string; slug: string; name: string; email: string; credits: number; role: string }) {
-  return { id: author.id, slug: author.slug, name: author.name, email: author.email, credits: author.credits, role: author.role }
+function userResponse(author: { id: string; slug: string; name: string; email: string; credits: number; role: string; bio?: string | null }) {
+  return { id: author.id, slug: author.slug, name: author.name, email: author.email, credits: author.credits, role: author.role, bio: author.bio ?? undefined }
 }
 
 @Controller('auth')
