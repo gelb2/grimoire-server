@@ -5,7 +5,8 @@ import * as crypto from 'crypto'
 import { OAuth2Client } from 'google-auth-library'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { CreditUseCase } from '@application/credit/credit.usecase'
-import { PrismaService } from '@infrastructure/prisma/prisma.service'
+import { AuthTokenRepositoryPort } from '@domain/port/outbound/auth-token-repository.port'
+import { SignupHistoryRepositoryPort } from '@domain/port/outbound/signup-history-repository.port'
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 7
 
@@ -15,7 +16,8 @@ export class AuthUseCase {
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
     private readonly jwtService: JwtService,
     private readonly creditUseCase: CreditUseCase,
-    private readonly prisma: PrismaService,
+    @Inject('AuthTokenRepositoryPort') private readonly authTokenRepo: AuthTokenRepositoryPort,
+    @Inject('SignupHistoryRepositoryPort') private readonly signupHistoryRepo: SignupHistoryRepositoryPort,
   ) {}
 
   /** 새 작가 등록 */
@@ -33,7 +35,7 @@ export class AuthUseCase {
     }
 
     // 재가입 방지 — 이전 가입 이력이 있으면 차단
-    const signupHistory = await this.prisma.signupHistory.findUnique({ where: { providerId: input.email } })
+    const signupHistory = await this.signupHistoryRepo.findByProviderId(input.email)
     if (signupHistory && signupHistory.signupCount >= 2) {
       throw new BadRequestException('이 이메일로는 더 이상 가입할 수 없습니다')
     }
@@ -53,11 +55,7 @@ export class AuthUseCase {
     await this.creditUseCase.grant(author.id, 3, 'signup_bonus')
 
     // 가입 이력 기록 (재가입 방지용)
-    await this.prisma.signupHistory.upsert({
-      where: { providerId: input.email },
-      create: { providerId: input.email, signupCount: 1 },
-      update: { signupCount: { increment: 1 } },
-    })
+    await this.signupHistoryRepo.upsert(input.email)
 
     // 토큰 발급
     const accessToken = this.generateAccessToken(author)
@@ -103,7 +101,7 @@ export class AuthUseCase {
 
       if (!author) {
         // 재가입 방지
-        const googleHistory = await this.prisma.signupHistory.findUnique({ where: { providerId: payload.sub! } })
+        const googleHistory = await this.signupHistoryRepo.findByProviderId(payload.sub!)
         if (googleHistory && googleHistory.signupCount >= 2) {
           throw new BadRequestException('이 계정으로는 더 이상 가입할 수 없습니다')
         }
@@ -122,11 +120,7 @@ export class AuthUseCase {
         await this.creditUseCase.grant(author.id, 3, 'signup_bonus')
 
         // 가입 이력 기록
-        await this.prisma.signupHistory.upsert({
-          where: { providerId: payload.sub! },
-          create: { providerId: payload.sub!, signupCount: 1 },
-          update: { signupCount: { increment: 1 } },
-        })
+        await this.signupHistoryRepo.upsert(payload.sub!)
       }
 
       // 소셜 계정 연결
@@ -141,7 +135,7 @@ export class AuthUseCase {
   /** Refresh Token으로 새 Access Token 발급 */
   async refreshAccessToken(refreshTokenValue: string) {
     const tokenHash = this.hashToken(refreshTokenValue)
-    const stored = await this.prisma.refreshToken.findUnique({ where: { tokenHash } })
+    const stored = await this.authTokenRepo.findByHash(tokenHash)
 
     if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
       throw new UnauthorizedException('유효하지 않은 리프레시 토큰입니다')
@@ -151,10 +145,7 @@ export class AuthUseCase {
     if (!author) throw new UnauthorizedException('작가를 찾을 수 없습니다')
 
     // 기존 refresh token 무효화 (rotation)
-    await this.prisma.refreshToken.update({
-      where: { id: stored.id },
-      data: { revokedAt: new Date() },
-    })
+    await this.authTokenRepo.revoke(stored.id)
 
     // 새 토큰 쌍 발급
     const accessToken = this.generateAccessToken(author)
@@ -167,17 +158,10 @@ export class AuthUseCase {
   async revokeRefreshToken(refreshTokenValue?: string, authorId?: string) {
     if (refreshTokenValue) {
       const tokenHash = this.hashToken(refreshTokenValue)
-      await this.prisma.refreshToken.updateMany({
-        where: { tokenHash, revokedAt: null },
-        data: { revokedAt: new Date() },
-      })
+      await this.authTokenRepo.revokeByHash(tokenHash)
     }
     if (authorId) {
-      // 해당 사용자의 모든 refresh token 무효화
-      await this.prisma.refreshToken.updateMany({
-        where: { authorId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      })
+      await this.authTokenRepo.revokeAllByAuthorId(authorId)
     }
   }
 
@@ -216,9 +200,7 @@ export class AuthUseCase {
     const tokenHash = this.hashToken(rawToken)
     const expiresAt = new Date(Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000)
 
-    await this.prisma.refreshToken.create({
-      data: { authorId, tokenHash, expiresAt },
-    })
+    await this.authTokenRepo.create(authorId, tokenHash, expiresAt)
 
     return rawToken
   }
