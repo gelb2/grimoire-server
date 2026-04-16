@@ -123,6 +123,14 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     return toEpisodeDomain(row)
   }
 
+  async updateWorkThemeId(workId: string, themeId: string | null): Promise<Work> {
+    const row = await this.prisma.work.update({
+      where: { id: workId },
+      data: { themeId },
+    })
+    return toWorkDomain(row)
+  }
+
   async countByAuthorId(authorId: string): Promise<number> {
     return this.prisma.work.count({ where: { authorId } })
   }

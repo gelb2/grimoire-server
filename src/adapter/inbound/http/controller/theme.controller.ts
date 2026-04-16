@@ -5,6 +5,7 @@ import {
   Post,
   Delete,
   Put,
+  Patch,
   Body,
   Param,
   Query,
@@ -103,6 +104,26 @@ export class ThemeController {
     return this.themeSlot.getSlotInfo(req.user.sub)
   }
 
+  /** 테마를 작가 공간의 기본 테마로 활성화 — 슬롯 자동 배정 포함 */
+  @Post(':themeId/activate')
+  @UseGuards(JwtAuthGuard)
+  async activateTheme(@Req() req: AuthenticatedRequest, @Param('themeId') themeId: string) {
+    const theme = await this.themeSlot.activateTheme(req.user.sub, themeId)
+    return { themeId: theme.id, name: theme.name, activated: true }
+  }
+
+  /** 작품에 테마 배정 (null로 해제 가능) */
+  @Patch('works/:workId/theme')
+  @UseGuards(JwtAuthGuard)
+  async assignThemeToWork(
+    @Req() req: AuthenticatedRequest,
+    @Param('workId') workId: string,
+    @Body() body: { themeId: string | null },
+  ) {
+    await this.getTheme.assignThemeToWork(req.user.sub, workId, body.themeId)
+    return { workId, themeId: body.themeId, assigned: true }
+  }
+
   /** 개별 테마 상세 조회 (인증 필수, 소유권 확인) */
   @Get('detail/:themeId')
   @UseGuards(JwtAuthGuard)
@@ -123,6 +144,7 @@ export class ThemeController {
   }
 
   /** 테마 CSS 반환 */
+  @Throttle({ default: { ttl: 60000, limit: 30 } })
   @Get('css/:authorSlug')
   async getThemeCSS(
     @Param('authorSlug') authorSlug: string,

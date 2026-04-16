@@ -6,7 +6,7 @@ describe('ThemeSlotUseCase', () => {
   let mockThemeRepo: any
   let mockAuthorRepo: any
 
-  const mockAuthor = { id: 'author-1', plan: 'free', planExpireAt: null }
+  const mockAuthor = { id: 'author-1', plan: 'free', planExpireAt: null, defaultThemeId: null }
   const mockTheme = { id: 'theme-1', authorId: 'author-1', isSlotted: false }
 
   beforeEach(() => {
@@ -15,9 +15,11 @@ describe('ThemeSlotUseCase', () => {
       countSlottedByAuthorId: jest.fn().mockResolvedValue(0),
       updateSlotStatus: jest.fn().mockResolvedValue({ ...mockTheme, isSlotted: true }),
       findAllByAuthorId: jest.fn().mockResolvedValue([mockTheme]),
+      findSlottedByAuthorId: jest.fn().mockResolvedValue([]),
     }
     mockAuthorRepo = {
       findById: jest.fn().mockResolvedValue(mockAuthor),
+      updateDefaultThemeId: jest.fn().mockResolvedValue(mockAuthor),
     }
     useCase = new ThemeSlotUseCase(mockThemeRepo, mockAuthorRepo)
   })
@@ -61,6 +63,30 @@ describe('ThemeSlotUseCase', () => {
 
     it('슬롯에 없는 테마면 BadRequestException', async () => {
       await expect(useCase.removeFromSlot('author-1', 'theme-1')).rejects.toThrow(BadRequestException)
+    })
+  })
+
+  describe('activateTheme', () => {
+    it('슬롯된 테마를 활성화한다', async () => {
+      mockThemeRepo.findById.mockResolvedValue({ ...mockTheme, isSlotted: true })
+      const result = await useCase.activateTheme('author-1', 'theme-1')
+      expect(mockAuthorRepo.updateDefaultThemeId).toHaveBeenCalledWith('author-1', 'theme-1')
+    })
+
+    it('비슬롯 테마는 자동 슬롯 후 활성화한다', async () => {
+      const result = await useCase.activateTheme('author-1', 'theme-1')
+      expect(mockThemeRepo.updateSlotStatus).toHaveBeenCalledWith('theme-1', true)
+      expect(mockAuthorRepo.updateDefaultThemeId).toHaveBeenCalledWith('author-1', 'theme-1')
+    })
+
+    it('슬롯 가득 차면 BadRequestException', async () => {
+      mockThemeRepo.countSlottedByAuthorId.mockResolvedValue(1)
+      await expect(useCase.activateTheme('author-1', 'theme-1')).rejects.toThrow(BadRequestException)
+    })
+
+    it('시스템 테마는 ForbiddenException', async () => {
+      mockThemeRepo.findById.mockResolvedValue({ ...mockTheme, source: 'system' })
+      await expect(useCase.activateTheme('author-1', 'theme-1')).rejects.toThrow(ForbiddenException)
     })
   })
 
