@@ -14,8 +14,31 @@ async function bootstrap() {
     bodyParser: true,
   })
 
-  // HTTP 헤더 보안 (X-Frame-Options, HSTS, CSP 등)
-  app.use(helmet())
+  // HTTP 헤더 보안 — 웹(next.config.ts)과 통일된 값 사용
+  app.use(helmet({
+    // X-Frame-Options: DENY (helmet 기본 SAMEORIGIN → DENY로 강화)
+    frameguard: { action: 'deny' },
+    // Referrer-Policy: strict-origin-when-cross-origin (helmet 기본 no-referrer → 웹과 통일)
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    // HSTS: 2년 + preload (helmet 기본 180일 → 웹과 통일)
+    hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
+    // X-DNS-Prefetch-Control: on (helmet 기본 off → 웹과 통일)
+    dnsPrefetchControl: { allow: true },
+    // CSP: API 서버이므로 script/style 불필요, default-src 'self'만
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'none'"],
+        styleSrc: ["'none'"],
+        imgSrc: ["'none'"],
+        connectSrc: ["'self'"],
+        frameSrc: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+      },
+    },
+  }))
 
   // Polar 웹훅은 raw body가 필요 (HMAC 서명 검증용)
   // setGlobalPrefix('api') 적용 전이므로 전체 경로로 지정
