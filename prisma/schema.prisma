@@ -32,7 +32,7 @@ model Theme {
   id             String   @id @default(uuid())
   author         Author?  @relation(fields: [authorId], references: [id])
   authorId       String?  @map("author_id")
-  name           String   @default("기본 테마")
+  name           String   @default("내 테마")
   preset         String   @default("midnight")
   overrides      Json?
   rawDescription String?  @map("raw_description")
