@@ -179,16 +179,25 @@ async function step1CreateAuthorsAndThemes(): Promise<void> {
       where: { authorId: upserted.id },
     })
 
+    let themeId: string
     if (existingTheme) {
       await prisma.theme.update({
         where: { id: existingTheme.id },
-        data: { preset: a.preset, overrides: a.theme as object, rawDescription: a.description },
+        data: { preset: a.preset, overrides: a.theme as object, rawDescription: a.description, isSlotted: true },
       })
+      themeId = existingTheme.id
     } else {
-      await prisma.theme.create({
-        data: { authorId: upserted.id, preset: a.preset, overrides: a.theme as object, rawDescription: a.description },
+      const created = await prisma.theme.create({
+        data: { authorId: upserted.id, preset: a.preset, overrides: a.theme as object, rawDescription: a.description, isSlotted: true },
       })
+      themeId = created.id
     }
+
+    // 기본 테마로 활성화
+    await prisma.author.update({
+      where: { id: upserted.id },
+      data: { defaultThemeId: themeId },
+    })
 
     success++
     console.log(`  [OK] ${a.name} (${a.slug})`)
