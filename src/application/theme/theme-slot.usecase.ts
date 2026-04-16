@@ -101,13 +101,14 @@ export class ThemeSlotUseCase {
     return theme
   }
 
-  /** 슬롯 현황 조회 — 전체 테마 + 슬롯 상태 + 플랜 정보 */
+  /** 슬롯 현황 조회 — 전체 테마 + 슬롯 상태 + 플랜 정보 + 기본 테마 */
   async getSlotInfo(authorId: string): Promise<{
     plan: string
     planExpireAt: Date | null
     isExpired: boolean
     slotLimit: number
     slottedCount: number
+    defaultThemeId: string | null
     themes: Theme[]
   }> {
     const author = await this.authorRepo.findById(authorId)
@@ -123,6 +124,7 @@ export class ThemeSlotUseCase {
       isExpired: isPlanExpired(author.plan, author.planExpireAt),
       slotLimit,
       slottedCount,
+      defaultThemeId: author.defaultThemeId ?? null,
       themes,
     }
   }
