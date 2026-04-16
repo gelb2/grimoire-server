@@ -57,7 +57,7 @@ export class AdminController {
     res.cookie(ACCESS_COOKIE, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: 'strict',
       maxAge: ACCESS_MAX_AGE,
       path: '/',
     })
