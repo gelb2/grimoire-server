@@ -54,8 +54,10 @@ export class GenerateThemeUseCase {
     }
 
     // 보관 상태로 생성 (isSlotted=false). 활성화는 작가가 직접.
+    // AI가 생성한 tagline 또는 headerSubtitle을 이름으로 활용
+    const autoName = themeData.tagline || themeData.decorations?.headerSubtitle || null
     const themeCount = await this.themeRepo.countByAuthorId(authorId)
-    const name = themeName ?? `테마 ${themeCount + 1}`
+    const name = themeName ?? autoName ?? `테마 ${themeCount + 1}`
     return this.themeRepo.create(authorId, name, 'custom', themeData, description, 'ai')
   }
 
