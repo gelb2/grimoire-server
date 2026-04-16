@@ -49,4 +49,6 @@ export interface WorkRepositoryPort {
   findEpisodesFiltered(workId: string, excludeStatuses?: EpisodeStatus[]): Promise<EpisodeSummary[]>
   /** 에피소드 내용 업데이트 (재업로드) */
   updateEpisodeContent(id: string, data: { title?: string; subtitle?: string; description?: string; blocks?: Block[]; rawMd?: string; sourceFormat?: string }): Promise<Episode>
+  /** 작품 테마 배정 */
+  updateWorkThemeId(workId: string, themeId: string | null): Promise<Work>
 }

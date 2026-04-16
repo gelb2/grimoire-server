@@ -11,6 +11,7 @@ export interface Author {
   credits: number
   plan: string
   planExpireAt: Date | null
+  defaultThemeId?: string | null
   createdAt: Date
 }
 

@@ -89,6 +89,21 @@ export class GetThemeUseCase {
     await this.themeRepo.delete(themeId)
   }
 
+  /** 작품에 테마 배정 — 소유권 + 슬롯 확인 */
+  async assignThemeToWork(authorId: string, workId: string, themeId: string | null): Promise<void> {
+    if (themeId) {
+      const theme = await this.themeRepo.findById(themeId)
+      if (!theme) throw new NotFoundException('테마를 찾을 수 없습니다')
+      if (theme.authorId !== authorId) throw new ForbiddenException('본인의 테마만 배정할 수 있습니다')
+      if (!theme.isSlotted) throw new BadRequestException('슬롯에 배치된 테마만 작품에 배정할 수 있습니다')
+    }
+    const targetWork = await this.workRepo.findById(workId)
+    if (!targetWork) throw new NotFoundException('작품을 찾을 수 없습니다')
+    if (targetWork.authorId !== authorId) throw new ForbiddenException('본인의 작품만 수정할 수 있습니다')
+
+    await this.workRepo.updateWorkThemeId(workId, themeId)
+  }
+
   /** 시스템 폴백 테마 조회 (DB에서 midnight 시스템 테마) */
   private async getSystemFallback(): Promise<Theme> {
     const fallback = await this.themeRepo.findSystemThemeByPreset(SYSTEM_FALLBACK_PRESET)

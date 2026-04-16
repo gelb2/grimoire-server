@@ -24,4 +24,6 @@ export interface AuthorRepositoryPort {
   updateRole(id: string, role: string): Promise<Author>
   /** 작가 삭제 */
   deleteById(id: string): Promise<void>
+  /** 작가 기본 테마 설정 */
+  updateDefaultThemeId(id: string, themeId: string | null): Promise<Author>
 }
