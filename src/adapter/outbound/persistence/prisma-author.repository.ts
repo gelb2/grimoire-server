@@ -126,9 +126,17 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
   async deleteById(id: string): Promise<void> {
     await this.prisma.author.delete({ where: { id } })
   }
+
+  async updateDefaultThemeId(id: string, themeId: string | null): Promise<Author> {
+    const row = await this.prisma.author.update({
+      where: { id },
+      data: { defaultThemeId: themeId },
+    })
+    return toDomain(row)
+  }
 }
 
-function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; bio?: string | null; role: string; credits: number; plan: string; planExpireAt?: Date | null; createdAt: Date }): Author {
+function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; bio?: string | null; role: string; credits: number; plan: string; planExpireAt?: Date | null; defaultThemeId?: string | null; createdAt: Date }): Author {
   return {
     id: row.id,
     slug: row.slug,
@@ -140,6 +148,7 @@ function toDomain(row: { id: string; slug: string; name: string; email: string; 
     credits: row.credits,
     plan: row.plan,
     planExpireAt: row.planExpireAt ?? null,
+    defaultThemeId: row.defaultThemeId ?? null,
     createdAt: row.createdAt,
   }
 }
