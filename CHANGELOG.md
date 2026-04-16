@@ -1,5 +1,30 @@
 # Changelog — grimoire-server
 
+## [0.25.0] - 2026-04-17
+
+### 테마 시스템 전수 수정 + 에이전트 자율 실행 + 배포 자동화
+
+#### Added
+- POST /themes/:themeId/activate — 작가 공간 기본 테마 활성화 (슬롯 자동배정)
+- PATCH /themes/works/:workId/theme — 작품별 테마 배정
+- getSlotInfo에 defaultThemeId 포함
+- AI 테마 생성 시 tagline/headerSubtitle을 자동 이름으로 사용
+- deploy-prod.sh 수동 배포 스크립트 (GitHub Actions 우회)
+- pre-push hook에 docs-sync 센서 연결
+- 에이전트 프롬프트 자율 실행 전환 (developers, qa, visual-canon-keeper)
+
+#### Fixed
+- 기존 작가 테마 is_slotted=false + default_theme_id=null 수정 (마이그레이션)
+- 보안 헤더 SameSite strict 통일 + helmet 커스터마이징
+- 슬롯 제거 시 defaultThemeId 고아 참조 정리
+- 시스템 테마 슬롯 배정 차단 (source=system)
+- CSS 엔드포인트 @Throttle(30/min) 추가
+- 스키마 기본값 "기본 테마" → "내 테마"
+
+#### Changed
+- assignSlot: 첫 슬롯 시 자동 활성화
+- seed-all.ts: isSlotted=true + defaultThemeId 설정
+
 ## [0.24.0] - 2026-04-12
 
 ### 테스트 완성 + P1/P2 관리자 + 통계 시드 + 정비
