@@ -13,9 +13,10 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
   }
 
   async findAllByAuthorId(authorId: string): Promise<Theme[]> {
+    // 정렬은 id asc로 고정 — 사용자가 슬롯 토글/편집해도 순서가 출렁이지 않게
     const rows = await this.prisma.theme.findMany({
       where: { authorId },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { id: 'asc' },
     })
     return rows.map(toDomain)
   }
