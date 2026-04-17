@@ -1,3 +1,5 @@
+import { getAppEnv, isRemoteEnv } from './app-env'
+
 /** 부트스트랩 시 환경 변수 검증 */
 export function validateEnv(): void {
   // 필수 — 없으면 서버 부팅 차단
@@ -9,14 +11,16 @@ export function validateEnv(): void {
     process.exit(1)
   }
 
+  const appEnv = getAppEnv()
+  console.log(`[env] APP_ENV=${appEnv}, NODE_ENV=${process.env.NODE_ENV || '(unset)'}`)
+
   // 원격 환경(development/inhouse/production)에서 필수 — 미설정 시 서버 부팅 차단
-  const isRemote = process.env.NODE_ENV && process.env.NODE_ENV !== 'localhost'
   const remoteRequired: { key: string; label: string }[] = []
 
   for (const { key, label } of remoteRequired) {
     if (!process.env[key]) {
-      if (isRemote) {
-        console.error(`CRITICAL: ${label}이(가) ${process.env.NODE_ENV} 환경에서 설정되지 않았습니다. 서버를 시작할 수 없습니다.`)
+      if (isRemoteEnv()) {
+        console.error(`CRITICAL: ${label}이(가) ${appEnv} 환경에서 설정되지 않았습니다. 서버를 시작할 수 없습니다.`)
         process.exit(1)
       }
       console.warn(`${label} 미설정 — 로컬 기본값 사용 (원격 환경에서는 반드시 설정할 것)`)
