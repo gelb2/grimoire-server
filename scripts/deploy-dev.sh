@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# deploy-dev.sh — grimoire-server dev 환경 배포
+# 정본: docs/DEPLOY.md §4.1
+
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$(dirname "$SCRIPT_DIR")"   # grimoire-server/ 루트로 이동
+source "${SCRIPT_DIR}/deploy-common.sh"
+
+ENV="dev"
+info "=== grimoire-server deploy [$ENV] 시작 ==="
+
+# 1. preflight
+bash "${SCRIPT_DIR}/preflight.sh" "$ENV" || fail "preflight 실패. 배포 중단."
+
+# 2. SHA 확정 (preflight에서 이미 origin과 동기 확인)
+SHA=$(current_sha)
+info "배포 대상 SHA: $SHA"
+
+# 3. 배포 액션
+action_acr_login
+action_docker_build_push "$ENV" "$SHA"
+action_containerapp_update "$ENV" "$SHA"
+action_purge_old_images "$ENV"
+action_post_deploy_healthcheck "$ENV"
+
+step "배포 완료"
+ok "server [$ENV] 배포 성공"
+info "  이미지: $(image_fq_sha "$ENV" "$SHA")"
+info "  공개 URL: $(env_to_public_api_url "$ENV")"
