@@ -1,5 +1,6 @@
 import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger } from '@nestjs/common'
 import { Response } from 'express'
+import { isProduction } from '@infrastructure/config/app-env'
 
 /** prod 환경에서 500 에러의 스택 트레이스/내부 메시지 노출 방지 */
 @Catch()
@@ -18,8 +19,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       return
     }
 
-    // 예상치 못한 에러 — prod에서는 내부 정보 숨김
-    const isProd = process.env.NODE_ENV === 'production'
+    // 예상치 못한 에러 — production(실서비스)에서만 내부 정보 숨김.
+    // inhouse/dev는 QA 디버깅 편의를 위해 스택 노출 허용.
+    const isProd = isProduction()
     const message = exception instanceof Error ? exception.message : String(exception)
     const stack = exception instanceof Error ? exception.stack : undefined
 

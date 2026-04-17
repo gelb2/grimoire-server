@@ -9,6 +9,7 @@ import {
   NormalizedWebhookEvent,
 } from '@domain/port/outbound/payment-gateway.port'
 import { CREDIT_PRODUCTS } from '@domain/model/config'
+import { isProduction } from '@infrastructure/config/app-env'
 
 /**
  * Polar 결제 게이트웨이 어댑터 (MoR, Merchant of Record)
@@ -101,11 +102,11 @@ export class PolarAdapter implements PaymentGatewayPort {
     headers: Record<string, string>,
   ): NormalizedWebhookEvent | null {
     if (!this.webhookSecret) {
-      if (process.env.NODE_ENV === 'production') {
+      if (isProduction()) {
         this.logger.error('POLAR_WEBHOOK_SECRET 미설정 — 프로덕션 웹훅 거부')
         return null
       }
-      this.logger.warn('POLAR_WEBHOOK_SECRET 미설정 — 개발 환경에서 서명 검증 스킵')
+      this.logger.warn('POLAR_WEBHOOK_SECRET 미설정 — 개발/inhouse 환경에서 서명 검증 스킵')
     }
 
     // Standard Webhooks 서명 검증

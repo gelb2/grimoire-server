@@ -8,6 +8,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import { AccessLogService } from '@infrastructure/security/access-log.service'
+import { isRemoteEnv } from '@infrastructure/config/app-env'
 
 interface AuthenticatedRequest {
   user: { sub: string; slug: string; role: string }
@@ -56,7 +57,7 @@ export class AdminController {
 
     res.cookie(ACCESS_COOKIE, token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: isRemoteEnv(),
       sameSite: 'strict',
       maxAge: ACCESS_MAX_AGE,
       path: '/',
