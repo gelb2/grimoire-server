@@ -7,6 +7,7 @@ import { SocialUseCase } from '@application/social/social.usecase'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 import { OptionalAuthGuard } from '@adapter/inbound/http/guard/optional-auth.guard'
 import { extractClientIp } from '@adapter/inbound/http/util/ip-extractor'
+import { isRemoteEnv } from '@infrastructure/config/app-env'
 
 @Controller('social')
 export class SocialController {
@@ -36,7 +37,7 @@ export class SocialController {
         httpOnly: true,
         maxAge: 365 * 24 * 60 * 60 * 1000, // 1년
         sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
+        secure: isRemoteEnv(),
       })
     }
 
