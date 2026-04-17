@@ -1,6 +1,7 @@
 # SECURITY.md — grimoire-server
 
 > 보안 정책 + 배포 전 체크리스트.
+> **최신 감사일: 2026-04-17** (16항목 전수 실측 기반 최신화)
 
 ---
 
@@ -8,13 +9,20 @@
 
 | 변수 | 민감도 | 관리 방식 |
 |------|--------|----------|
-| DATABASE_URL | 높음 | Azure Key Vault / GitHub Secrets |
-| ANTHROPIC_API_KEY | 높음 (선택적) | Azure Key Vault / GitHub Secrets |
-| JWT_SECRET | 높음 | Azure Key Vault / GitHub Secrets |
+| DATABASE_URL | 높음 | Azure Container Apps env / GitHub Secrets |
+| ANTHROPIC_API_KEY | 높음 | Azure Container Apps env (3환경 공유 중 — 환경별 분리 TODO) |
+| OPENAI_API_KEY | 높음 | Azure Container Apps env (임베딩용) |
+| JWT_SECRET | 높음 | 환경별 별도 값 |
+| POLAR_ACCESS_TOKEN | 높음 | Azure Container Apps env (3환경 공유 — org 단일) |
+| POLAR_WEBHOOK_SECRET | 높음 | **환경별 별도** (endpoint별 고유) |
+| POLAR_PRODUCT_BASIC/POPULAR/BEST | 중간 | Polar product UUID |
+| RECAPTCHA_SECRET_KEY | 중간 | 서버 전용 검증 키 |
 | CORS_ORIGIN | 중간 | 환경별 설정 |
 
 - `.env` 파일은 `.gitignore`에 포함 (절대 커밋 금지)
 - `.env.example`만 커밋 (실제 값 미포함)
+- **실측 검증 (2026-04-17)**: git history 양 레포 grep, 소스 하드코딩, `.env.example` 커밋 전부 확인 → 외부 노출 0건
+- 상세 관리: `ACCOUNTS.md` (로컬 전용, git 미추적)
 
 > 환경변수 전체 목록: `docs/environments.md` 참조.
 
@@ -27,28 +35,78 @@
 - development: `https://dev.grimoire-book.com`
 - inhouse: `https://inhouse.grimoire-book.com`
 - production: `https://grimoire-book.com`
-- `*` 사용 절대 금지
+- `*` 사용 절대 금지 (폴백 제거, 미설정 시 기동 실패)
 
 ### 입력 검증
-- 모든 엔드포인트: `ValidationPipe` (whitelist + forbidNonWhitelisted)
+- 모든 엔드포인트: `ValidationPipe` (whitelist + forbidNonWhitelisted + transform)
 - DTO 기반 검증: `class-validator` 데코레이터
-- transform: true (타입 자동 변환)
+- **실측 (2026-04-17)**: DTO 5개 중 4개 class-validator 적용. 미적용 1개는 `authenticated-request.ts` = 타입 정의 (DTO 아님)
 
 ### 인증
-- JWT 토큰 기반 인증 (`JwtAuthGuard`)
+
+#### JWT + Refresh Token (2026-04-12 도입)
+
+- **Access Token**: `grimoire_token`, JWT, 15분 만료, HttpOnly Cookie
+- **Refresh Token**: `grimoire_refresh`, opaque token, 7일 만료, HttpOnly Cookie, DB 저장
 - 이메일/비밀번호 회원가입 + 로그인 (bcryptjs 해싱)
 - Google OAuth 로그인 (`POST /api/auth/google`)
 - `passwordHash` 필드는 API 응답에서 제외
+- `POST /api/auth/refresh` — Refresh Token으로 새 Access Token 발급
+
+#### 쿠키 속성 (전 엔드포인트 일관)
+
+`src/adapter/inbound/http/controller/auth.controller.ts::cookieOptions()`:
+```ts
+{
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict',
+  path: '/',
+  maxAge,
+}
+```
+
+- admin.controller도 동일 값으로 통일 (2026-04-16 `lax`→`strict` 수정)
+- 예외: `grimoire_anon` (익명 좋아요 쿠키) — `sameSite: 'lax'` (크로스 사이트 좋아요 허용 정책)
+
+#### 가드 커버리지 (2026-04-17 실측)
+
+- **63개 mutation 엔드포인트** 중 54개 보호 (JwtAuthGuard/AdminGuard/OptionalAuthGuard)
+- 9개 의도적 공개: `login/register/google/refresh/logout` (인증 전) + `likes/comments/delete-comment` (익명 허용 정책)
+- **Admin 40개 엔드포인트** 중 39개 AdminGuard 적용 (나머지 1개는 admin login, 정상)
 
 ### Rate Limiting
-- NestJS Throttler 전면 적용
-- 전체 엔드포인트에 요청 속도 제한
+
+- `ThrottlerGuard` **APP_GUARD 전역 적용** (`app.module.ts:141`)
+- `ThrottlerModule.forRoot([{ ttl: ..., limit: ... }])` 설정
+- 모든 엔드포인트 자동 보호 — 개별 `@Throttle` 데코레이터 불필요
+- 개별 제한이 필요한 엔드포인트에는 `@Throttle` 오버라이드 가능
+
+### 보안 헤더 (helmet + next.config.ts 통일, 2026-04-17 실측)
+
+**운영 curl 실측 — 전 엔드포인트 동일 헤더:**
+
+| 헤더 | 값 | 효과 |
+|------|-----|------|
+| Content-Security-Policy | 웹: 전체 CSP / API: `default-src 'self'; script-src 'none'` | XSS/인젝션 차단 |
+| Strict-Transport-Security | `max-age=63072000; includeSubDomains; preload` | HTTP 폴백 차단 |
+| X-Frame-Options | `DENY` | 클릭재킹 차단 |
+| X-Content-Type-Options | `nosniff` | MIME sniffing 차단 |
+| Referrer-Policy | `strict-origin-when-cross-origin` | 리퍼러 누출 차단 |
+| Permissions-Policy | `camera=(), microphone=(), geolocation=()` | 센서 API 차단 |
 
 ---
 
 ## 3. 데이터 보안
 
+### 소유권 검증
+
+- **실측 (2026-04-17)**: application 레이어에 `ForbiddenException/UnauthorizedException` **110건 throw**
+- UseCase 내에서 `user.sub` vs 리소스의 `authorId` 비교 후 일치하지 않으면 예외
+- 자기 리소스만 수정/삭제 가능 (theme, work, episode 등)
+
 ### 크레딧 시스템
+
 - 크레딧 차감: Prisma 트랜잭션으로 원자적 처리
 - 잔액 음수 방지: 트랜잭션 내 체크 + 에러 throw
 - credit_logs: INSERT only (수정/삭제 불가 — 감사 로그)
@@ -73,12 +131,14 @@
 - `src/adapter/outbound/persistence/prisma-credit.repository.ts` — `adjustCredits()`
 - `src/application/payment/payment.usecase.spec.ts` — 원자성 검증 테스트
 
-### 결제 보안
+### 결제 보안 (Polar, 2026-04-09 PAYAPP 폐기)
 
-- PAYAPP 웹훅: HMAC-SHA256 서명 검증 필수 (`src/adapter/outbound/payment/payapp.adapter.ts`)
-- 중복 웹훅 방지: tradeNo 기반 멱등성 (이미 completed면 무시)
+- **Polar 웹훅**: Standard Webhooks 스펙 HMAC 서명 검증 (`src/adapter/outbound/payment/polar.adapter.ts::verifyAndParseWebhook`)
+- 3환경 webhook endpoint 분리: dev/inhouse/prod 각자 고유 `POLAR_WEBHOOK_SECRET`
+- 중복 웹훅 방지: `tradeNo(checkoutId)` 기반 멱등성 (이미 completed면 무시)
 - 결제 기록: Payment 테이블에 전부 기록 (감사 추적)
 - 결제 시작 → 완료 사이: pending 상태로 추적
+- 서명 검증 실패 시: 즉시 null 반환 + 로그 기록
 
 ### 재가입 방지
 - signup_history: OAuth provider ID로 추적
@@ -93,11 +153,11 @@
 - [ ] `npm test` 전부 통과
 - [ ] `npm run build` 성공
 - [ ] `docker build` 성공
-- [ ] 환경변수 설정 확인 (DATABASE_URL, ANTHROPIC_API_KEY, JWT_SECRET)
+- [ ] 환경변수 설정 확인 (DATABASE_URL, ANTHROPIC_API_KEY, JWT_SECRET, POLAR_*)
 - [ ] Prisma 마이그레이션 완료
 - [ ] API 엔드포인트 응답 확인
 - [ ] CORS 설정 확인 (`*` 아닌지)
-- [ ] Swagger: production에서 비활성화
+- [ ] Swagger: production에서 비활성화 (2026-04-12 @nestjs/swagger 제거 완료)
 - [ ] DB 방화벽 규칙 확인
 - [ ] auth guard 적용 확인 (모든 mutation 엔드포인트에 @UseGuards(JwtAuthGuard))
 - [ ] role 기반 접근 제어 (admin 엔드포인트에 AdminGuard)
@@ -105,7 +165,23 @@
 - [ ] 입력값 검증 (DTO에 class-validator 적용)
 - [ ] 토큰 저장 방식 (HttpOnly Cookie, localStorage 사용 금지)
 - [ ] 환경변수에 placeholder/기본값 없는지 확인
-- [ ] Rate limiting (@Throttle) 모든 mutation에 적용
+- [ ] Rate limiting (APP_GUARD `ThrottlerGuard` 전역 적용 확인)
+
+### 자동화 — sensor-security-gate.sh (신설, 2026-04-17)
+
+QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICAL 감지 시 배포 차단:
+
+1. Mutation 엔드포인트 중 가드 미적용 (Public 제외) 검사
+2. Admin 엔드포인트 AdminGuard 누락 검사
+3. 쿠키 sameSite='strict' 일관성 검사
+4. 웹 localStorage에 token/password/jwt/secret 저장 여부
+5. 'use client' 파일에서 외부 API 직접 fetch 여부
+6. 운영 보호 엔드포인트 토큰 없이 401 반환 여부 (curl 실측)
+7. 보안 헤더 6종 curl 응답 일관성
+8. dangerouslySetInnerHTML 사용 여부
+
+스크립트: `.claude/scripts/sensor-security-gate.sh`
+사용법: QA 에이전트가 `sensor-server.sh`/`sensor-web.sh`와 동일 패턴으로 raw stdout을 QA_REPORT.md에 전체 첨부.
 
 ### 공통
 
@@ -138,13 +214,20 @@
 | DDoS | Cloudflare Proxy (무료 플랜 자동 방어) | Cloudflare 대시보드 |
 | 포트 스캔 | Container Apps: 443만 노출. DB: 방화벽 차단 | Azure 플랫폼 구조 |
 | SQL 인젝션 | Prisma ORM 파라미터 바인딩. raw SQL 미사용 | 코드 레벨 |
-| Brute force 로그인 | 회원가입 시간당 5회, 로그인 분당 10회 | `auth.controller.ts` @Throttle |
-| API 남용 | 전 엔드포인트 Throttle 적용 (분당 3~30회) | 각 controller |
+| Brute force 로그인 | Throttler 전역 + 로그인에 reCAPTCHA v3 | `auth.controller.ts` + `recaptcha.service.ts` |
+| API 남용 | 전 엔드포인트 Throttle (APP_GUARD) | `app.module.ts:141` |
 | CORS 우회 | 환경별 도메인 1개만 허용 (`*` 금지) | `main.ts` enableCors |
 | DB 직접 접근 | 방화벽: Azure 서비스만 허용. 개인 IP 사용 후 즉시 제거 | Azure DB 방화벽 |
-| **에피소드 크롤링** | 현재: 비로그인 조회 가능 (public 에피소드). 대응: 에피소드 상태값(nonPublic) + Rate Limiting + Cloudflare Bot | `content.controller.ts` + DB |
+| XSS | CSP(`script-src 'self'`) + HttpOnly Cookie + `dangerouslySetInnerHTML` 0건 | helmet + next.config.ts |
+| CSRF | SameSite=Strict + CORS 단일 origin (CSRF 토큰은 TODO) | cookieOptions |
+| 클릭재킹 | X-Frame-Options: DENY | helmet + next.config.ts |
+| 중간자(MITM) | HSTS 2년 + preload + Secure Cookie | helmet + next.config.ts |
+| 세션 탈취 (XSS) | HttpOnly (JS 접근 불가) + Access 15분 단기 | cookieOptions |
+| 에피소드 크롤링 | 에피소드 상태값(nonPublic) + Throttler + Cloudflare Bot | `content.controller.ts` + DB |
 | 내부 필드 노출 | API 응답에서 rawMd, workId, authorId 제거 완료 | `content.controller.ts`, `theme.controller.ts` |
 | 이미지 저장소 탈취 | ACR 인증 필수 (GitHub Secrets) | Azure ACR |
+| 결제 웹훅 위조 | HMAC 서명 검증 + tradeNo 멱등성 | `polar.adapter.ts` |
+| BFF 우회 | Next.js `/api/[...path]/route.ts` + 서버에서 CORS 차단 | BFF 프록시 |
 
 ### DB 방화벽 운영 규칙
 
@@ -163,17 +246,19 @@
 
 ---
 
-## 6. 보안 강화 TODO (제로 트러스트 로드맵)
+## 6. 보안 강화 TODO
 
-> 2026-03-31 보안 감사 + 경쟁사(한줄) 분석 기반. 우선순위 순.
+> 2026-04-17 전수 감사 결과 기반. 오늘 기준 실제 취약점 없음. 아래는 개선 여지.
 
-### 즉시 실행
+### 중기 (설계적 개선)
 
-| 항목 | 현재 | 조치 |
-|------|------|------|
-| Source Map 프로덕션 비활성화 | ✅ 적용됨 | `next.config.ts`에 `productionBrowserSourceMaps: false` 확인 완료 (2026-04-02) |
-| API 응답 필터링 | 미적용 | 내부 ID, 시스템 메타데이터가 응답에 불필요하게 노출되는지 점검 |
-| CORS origin 폴백 | `localhost:3001` | 환경변수 미설정 시 에러로 차단 (폴백 제거) |
+| 항목 | 현재 | 조치 | 우선순위 |
+|------|------|------|---------|
+| **CSRF 토큰** | SameSite=Strict + CORS 단일 origin으로 부분 방어 | Double-submit cookie 패턴 또는 `csurf` 미들웨어 도입 | 중간 |
+| **BFF 프록시 화이트리스트** | `[...path]` catch-all — `/api/admin/*`도 프록시 통과 | `/api/admin/*` 경로 화이트리스트 도입 또는 블랙리스트 | 중간 |
+| **@Public 데코레이터 명시** | 의도 공개 9개 + 가드 없음 상태가 구분 불명 | `@Public()` 커스텀 데코레이터로 의도 표시 | 낮음 (readability) |
+| **admin.controller 쿠키 통일** | `cookieOptions()` 재사용 안 하고 인라인 | auth.controller의 `cookieOptions()` import 공용 | 낮음 |
+| **ANTHROPIC_API_KEY 환경 분리** | 3환경 공유 (dev/inhouse/prod) | prod 전용 키 별도 발급 → dev 키 유출 영향 차단 | 낮음 |
 
 ### 결제/티어 도입 시
 
@@ -181,19 +266,6 @@
 |------|------|
 | 구독 티어 서버 사이드 검증 | 클라이언트가 보내는 요청을 DB 기반 티어로 교차 검증. 권한 밖 요청 403 차단 |
 | AI 모델 접근 제어 | 티어별 사용 가능 모델 제한 (현재는 서버가 모델을 결정하므로 공격 벡터 없음) |
-
-### 봇/크롤러 방어 (2026-04-02 추가, 비로그인 정책 도입에 따른 긴급)
-
-| 항목 | 현재 | 조치 | 우선순위 |
-|------|------|------|---------|
-| helmet (HTTP 헤더 보안) | ✅ 적용됨 | main.ts에 `app.use(helmet())` 적용 완료 (2026-04-02) | 완료 |
-| CAPTCHA | 없음 → 키 발급 대기 | Google reCAPTCHA v3 키 발급 후 회원가입/로그인에 도입 예정 | 높음 |
-| 봇 감지 미들웨어 | 없음 | User-Agent 블랙리스트 + 요청 패턴 분석 미들웨어 추가 | 중간 |
-| User-Agent 검증 | 없음 | 알려진 봇 User-Agent 차단 (curl, python-requests 등 비브라우저 차단) | 중간 |
-| CSRF 토큰 | 없음 | HttpOnly 쿠키 사용 중이라 실효성 제한적이나, 상태 변경 API에 CSRF 토큰 검토 | 낮음 |
-
-> honeypot 필드 (2026-04-02 적용 완료): 비로그인 댓글 작성 시 숨겨진 `website` 필드로 봇 자동 입력 차단.
-> robots.txt (2026-04-02 수정 완료): /api/, /dashboard/, /admin/, /login, /register, /library/ disallow 적용.
 
 ### 트래픽 증가 시
 
@@ -203,21 +275,35 @@
 | 크레딧 동시성 | optimistic locking 적용 (동시 좋아요/크레딧 차감 경합 방지) |
 | WAF | Cloudflare WAF 유료 플랜 또는 Azure WAF 검토 |
 
-### 이미 적용된 항목 (확인 완료)
+### 이미 적용된 항목 (2026-04-17 실측 확인)
 
-| 항목 | 상태 |
-|------|------|
-| HttpOnly + Secure + SameSite=Strict Cookie | ✅ 처음부터 적용 |
-| LocalStorage 토큰 저장 금지 | ✅ |
-| JwtAuthGuard 전 mutation 적용 | ✅ |
-| AdminGuard 관리자 엔드포인트 | ✅ |
-| 소유권 검증 (자기 리소스만 수정/삭제) | ✅ |
-| ValidationPipe + class-validator | ✅ |
-| BFF 패턴 (API_URL 클라이언트 미노출) | ✅ |
-| NEXT_PUBLIC_ 최소화 (APP_ENV, GOOGLE_CLIENT_ID만) | ✅ |
-| Cloudflare DDoS 방어 + Proxy | ✅ |
-| Rate Limiting 전 엔드포인트 | ✅ |
-| DB 방화벽 Azure 서비스만 허용 | ✅ |
+| 항목 | 상태 | 증거 |
+|------|------|------|
+| HttpOnly + Secure + SameSite=Strict Cookie | ✅ | `cookieOptions()` + admin.controller 통일 |
+| LocalStorage 토큰 저장 금지 | ✅ | 웹 전수 grep: token/password/jwt 0건 |
+| BFF 프록시 패턴 | ✅ | 클라이언트 컴포넌트 외부 fetch 0건 |
+| JwtAuthGuard 전 mutation 적용 | ✅ | 63개 중 54개 보호 + 9개 의도 공개 |
+| AdminGuard 관리자 엔드포인트 | ✅ | 40개 중 39개 (나머지 1개는 admin login) |
+| 소유권 검증 | ✅ | application 레이어 ForbiddenException 110건 |
+| ValidationPipe + class-validator | ✅ | DTO 4/5 (나머지 1개는 타입 정의) |
+| NEXT_PUBLIC_ 최소화 | ✅ | API URL 클라이언트 미노출 |
+| Cloudflare DDoS 방어 + Proxy | ✅ | Cloudflare 무료 플랜 |
+| Rate Limiting 전 엔드포인트 | ✅ | ThrottlerGuard APP_GUARD |
+| DB 방화벽 Azure 서비스만 허용 | ✅ | DB firewall rules |
+| helmet (HTTP 헤더) | ✅ | main.ts `app.use(helmet({...}))` — 2026-04-16 커스터마이징 |
+| CSP 헤더 (서버 + 웹) | ✅ | helmet CSP + next.config.ts CSP |
+| HSTS 2년 + preload | ✅ | `max-age=63072000; includeSubDomains; preload` |
+| X-Frame-Options: DENY | ✅ | helmet + next.config.ts |
+| reCAPTCHA v3 (register/login) | ✅ | `recaptcha.service.ts` + 서버 검증 |
+| honeypot 필드 (비로그인 댓글) | ✅ | 2026-04-02 적용 |
+| robots.txt | ✅ | /api/, /dashboard/, /admin/ disallow |
+| Refresh Token (Access 15분 + Refresh 7일) | ✅ | 2026-04-12 도입 |
+| ExceptionFilter (prod 스택 숨김) | ✅ | 2026-04-12 적용 |
+| npm audit 0건 | ✅ | 2026-04-12 NestJS 11 + Next.js latest 업그레이드 |
+| Source Map 프로덕션 비활성화 | ✅ | `next.config.ts` productionBrowserSourceMaps: false |
+| Polar 웹훅 서명 검증 | ✅ | Standard Webhooks HMAC |
+| 결제 원자성 (단일 $transaction) | ✅ | payment.usecase.spec.ts 검증 |
+| 결제 환경별 webhook secret 분리 | ✅ | 3환경 각자 다른 POLAR_WEBHOOK_SECRET |
 
 ---
 
@@ -226,4 +312,17 @@
 - `INFRASTRUCTURE.md` — Azure 리소스 구성
 - `docs/environments.md` — 환경별 설정 (정본)
 - 루트 `CLAUDE.md` §11 — 전수검사 체크리스트
+- `.claude/scripts/sensor-security-gate.sh` — 자동화 보안 게이트
 - 루트 `RESEARCH_HANLINE_API.md` — 경쟁사 한줄 API/보안 분석 (git 미추적)
+
+---
+
+## 8. 감사 이력
+
+| 일자 | 감사 범위 | 결과 |
+|------|----------|------|
+| 2026-03-31 | 초기 보안 감사 + 경쟁사 한줄 분석 | TODO 로드맵 수립 |
+| 2026-04-02 | helmet + reCAPTCHA + honeypot + robots.txt | 봇/크롤러 방어 1차 완료 |
+| 2026-04-12 #3 | NestJS 11 + Refresh Token + 보안 헤더 + npm audit | audit 양쪽 0건 |
+| 2026-04-16 | admin SameSite 통일 + helmet CSP 커스터마이징 + Next.js CSP | 보안 헤더 서버/웹 일관성 |
+| **2026-04-17** | **16항목 전수 실측 (grep + curl)** | **실제 취약점 0건, 개선 여지 5건 TODO 편입** |
