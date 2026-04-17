@@ -189,6 +189,28 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 - [ ] 2개 레포 TODO.md 업데이트
 - [ ] `docs/` 파일 2개 레포 동기화 확인
 
+### 수동 배포 시 보안 체크 (2026-04-18 신설)
+
+> GitHub Actions 빌링 이슈 등으로 CI가 막혔을 때 1차 배포 수단이 `make deploy-{env}`가 된다. 관련 정본은 `docs/DEPLOY.md`.
+
+배포 스크립트(`scripts/deploy-*.sh`)는 `scripts/preflight.sh`를 **반드시 선행 호출**하고, 아래 보안 관련 항목을 자동 검증한다. 하나라도 실패하면 배포 중단.
+
+- [x] Azure CLI 로그인 사용자가 기대 계정(`rainmaker8492@gmail.com`)과 일치 — 잘못된 계정에서 실수 배포 방지
+- [x] 리소스그룹 `zenith-rg` 고정 (다른 RG 접근 불가)
+- [x] Container App FQDN이 매트릭스와 완전 일치 — 오타/잘못된 앱 갱신 방지
+- [x] 필수 환경변수(DATABASE_URL/JWT_SECRET/CORS_ORIGIN/POLAR_*/ANTHROPIC/OPENAI/AZURE_STORAGE_*) 존재 — 값은 출력하지 않고 키만 검증
+- [x] CORS 환경별 기대값 검증 — dev=`*` 경고, inhouse/prod는 엄격 도메인 매칭
+- [x] git 워킹 트리 클린 + origin/<브랜치> 와 완전 동기화 — 로컬 미커밋/미푸시 상태로 배포하여 재현 불능 이미지 방지
+- [x] 이미지 태그 `{env}-{SHA}` 강제 — `:latest` 태그 노출 금지, 롤백 시 SHA로 역추적 가능
+- [x] prod 배포 시 interactive `yes` 입력 요구 — 실수 방지 (비대화형 환경에선 `SKIP_INTERACTIVE=1` 명시 필요)
+
+**수동 배포 시 비밀값 유출 주의사항**:
+
+1. 스크립트 stdout에 환경변수 **값**을 출력하지 않는다 (preflight는 "설정됨/누락" 여부만 출력).
+2. `docker build` 시 `--build-arg`로 전달되는 값은 이미지 레이어에 남는다. 현재 web 빌드의 `NEXT_PUBLIC_*` 3개는 **공개 값 전용** (공개 recaptcha site key, Google OAuth client ID). 비밀값을 build-arg로 넘기지 말 것.
+3. Docker 이미지에는 `.env` 파일을 포함하지 않는다. Dockerfile의 `.dockerignore`에 `.env` 포함 여부 확인.
+4. ACR 푸시 자격증명은 `az acr login`이 keychain에 저장하고 stdout에 노출하지 않는다.
+
 ---
 
 ## 5. 네트워크/포트 보안 현황
