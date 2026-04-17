@@ -8,6 +8,7 @@ import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 import { verifyRecaptcha } from '@adapter/inbound/http/util/recaptcha-verifier'
 import { AccessLogService } from '@infrastructure/security/access-log.service'
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
+import { isRemoteEnv } from '@infrastructure/config/app-env'
 
 /** 쿠키 상수 */
 const ACCESS_COOKIE = 'grimoire_token'
@@ -18,7 +19,9 @@ const REFRESH_MAX_AGE = 7 * 24 * 60 * 60 * 1000  // 7일
 function cookieOptions(maxAge: number) {
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    // HTTPS를 쓰는 모든 원격 환경(dev/inhouse/prod)에서 secure=true.
+    // 과거 NODE_ENV==='production' 체크는 inhouse NODE_ENV=production이어야만 작동하는 암묵적 의존성이었다.
+    secure: isRemoteEnv(),
     sameSite: 'strict' as const,
     path: '/',
     maxAge,

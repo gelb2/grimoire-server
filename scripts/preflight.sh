@@ -125,7 +125,7 @@ fi
 # 6. 필수 환경변수 존재 (Container App)
 # ─────────────────────────────────────────────────────────────
 step "6/8: Container App 필수 환경변수 존재 확인"
-REQUIRED_KEYS=("DATABASE_URL" "JWT_SECRET" "CORS_ORIGIN" "POLAR_ACCESS_TOKEN" "POLAR_WEBHOOK_SECRET" "ANTHROPIC_API_KEY" "OPENAI_API_KEY" "AZURE_STORAGE_ACCOUNT_NAME" "AZURE_STORAGE_ACCOUNT_KEY")
+REQUIRED_KEYS=("DATABASE_URL" "JWT_SECRET" "CORS_ORIGIN" "APP_ENV" "POLAR_ACCESS_TOKEN" "POLAR_WEBHOOK_SECRET" "ANTHROPIC_API_KEY" "OPENAI_API_KEY" "AZURE_STORAGE_ACCOUNT_NAME" "AZURE_STORAGE_ACCOUNT_KEY")
 ENV_KEYS=$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].env[].name" -o tsv 2>/dev/null || echo "")
 for key in "${REQUIRED_KEYS[@]}"; do
   if echo "$ENV_KEYS" | grep -qw "$key"; then
@@ -138,7 +138,21 @@ done
 # ─────────────────────────────────────────────────────────────
 # 7. CORS 정책 환경별 검증
 # ─────────────────────────────────────────────────────────────
-step "7/8: CORS_ORIGIN 환경별 검증"
+step "7/8: APP_ENV + CORS_ORIGIN 환경별 검증"
+# APP_ENV 값 검증 (dev → development, inhouse → inhouse, prod → production)
+ACTUAL_APP_ENV=$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].env[?name=='APP_ENV'].value" -o tsv 2>/dev/null || echo "")
+EXPECTED_APP_ENV="$ENV"
+if [ "$ENV" = "dev" ]; then EXPECTED_APP_ENV="development"; fi
+if [ "$ENV" = "prod" ]; then EXPECTED_APP_ENV="production"; fi
+if [ -z "$ACTUAL_APP_ENV" ]; then
+  _fail "APP_ENV 누락. az containerapp update --set-env-vars APP_ENV=${EXPECTED_APP_ENV} 로 설정 필요."
+elif [ "$ACTUAL_APP_ENV" != "$EXPECTED_APP_ENV" ]; then
+  _fail "APP_ENV 불일치: 실제 '$ACTUAL_APP_ENV' ≠ 기대 '$EXPECTED_APP_ENV'"
+else
+  _pass "APP_ENV: $ACTUAL_APP_ENV"
+fi
+
+
 ACTUAL_CORS=$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].env[?name=='CORS_ORIGIN'].value" -o tsv 2>/dev/null || echo "")
 case "$ENV" in
   dev)
