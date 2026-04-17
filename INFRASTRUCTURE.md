@@ -144,38 +144,32 @@ az ad sp create-for-rbac \
 
 ---
 
-## 6. 수동 배포 명령어
+## 6. 수동 배포
 
-### ACR 로그인
+> **정본: [`docs/DEPLOY.md`](docs/DEPLOY.md)** — 환경 매트릭스, preflight 전수검사, 3환경 배포 절차, 롤백 방법이 전부 거기 있다.
+> 2026-04-18부터 수동 배포가 1차 수단이 되었고, Makefile + scripts/로 체계화되었다.
 
-```bash
-az acr login --name grimoireacr
-```
-
-### 수동 빌드 + 푸시 (server)
+### 빠른 참조
 
 ```bash
-docker build -t grimoireacr.azurecr.io/grimoire-server:dev-manual .
-docker push grimoireacr.azurecr.io/grimoire-server:dev-manual
-az containerapp update \
-  --name grimoire-server-dev \
-  --resource-group zenith-rg \
-  --image grimoireacr.azurecr.io/grimoire-server:dev-manual
+cd grimoire-server
+make help                        # 전체 타겟 목록
+make preflight ENV=dev           # 배포 전 전수검사만
+make deploy-dev                  # dev 배포 (preflight + build + push + update + healthcheck)
+make deploy-inhouse              # inhouse 배포
+make deploy-prod                 # prod 배포 (interactive 'yes' 확인 필수)
+make logs ENV=dev                # Container App 로그 tail
+make rollback ENV=prod SHA=<full-sha>   # 과거 이미지로 되돌림
 ```
 
-### 수동 빌드 + 푸시 (web)
+web 레포도 동일한 Makefile 인터페이스를 가진다.
 
-```bash
-# BFF 패턴: API_URL은 빌드 인자가 아닌 Container Apps 런타임 환경변수로 설정
-docker build \
-  -t grimoireacr.azurecr.io/grimoire-web:dev-manual .
-docker push grimoireacr.azurecr.io/grimoire-web:dev-manual
-az containerapp update \
-  --name grimoire-web-dev \
-  --resource-group zenith-rg \
-  --image grimoireacr.azurecr.io/grimoire-web:dev-manual \
-  --set-env-vars API_URL=https://grimoire-server-dev.{FQDN}/api
-```
+### 주의사항
+
+1. **`:latest` 태그 사용 금지** — 반드시 `{env}-{SHA}` 태그로 배포한다. (스크립트가 자동 적용)
+2. **docs/DEPLOY.md §1 환경 매트릭스가 유일한 진실**. 환경변수/URL/태그 규칙 변경 시 그 표를 먼저 갱신한다.
+3. **GitHub Actions와 수동 배포는 동일 로직**이어야 한다. CI YAML을 고치면 scripts도 함께 고친다 (혹은 반대로).
+4. **prod 배포는 interactive 'yes' 입력** 없이는 진행되지 않는다 (preflight §8).
 
 ---
 
