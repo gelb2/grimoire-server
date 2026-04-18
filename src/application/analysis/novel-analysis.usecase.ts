@@ -44,31 +44,47 @@ export class NovelAnalysisUseCase {
     return { chunkCount: chunks.length, tokensUsed }
   }
 
-  /** 새 에피소드와 기존 작품의 일관성 분석 (RAG) */
+  /**
+   * 새 에피소드와 기존 작품의 일관성 분석 (RAG)
+   *
+   * 파라미터:
+   * - excludeEpisodeId — 지정 시 해당 episodeId의 청크를 검색 결과에서 제외.
+   *   재인덱싱된 기존 에피소드를 **재분석**할 때 자기 자신 청크가 섞이는
+   *   self-reference(환각 유도) 버그를 방지한다.
+   */
   async analyzeNewEpisode(
     workId: string,
     newEpisodeText: string,
     analysisTypes: ('consistency' | 'tone' | 'character')[] = ['consistency', 'tone', 'character'],
+    excludeEpisodeId?: string,
   ): Promise<AnalysisResult[]> {
-    // 기존 작품의 컨텍스트 검색
+    // 기존 작품의 컨텍스트 검색 (self-reference 가능성 대비 검색량 늘림)
     const queryEmbedding = await this.embedding.getEmbedding(newEpisodeText.slice(0, 2000))
-    const similarChunks = await this.vectorStore.searchSimilar(queryEmbedding, 20, workId)
+    const TOP_K_FETCH = excludeEpisodeId ? 30 : 20
+    const TOP_K_USE = 15
+    const similarChunks = await this.vectorStore.searchSimilar(queryEmbedding, TOP_K_FETCH, workId)
 
-    if (similarChunks.length === 0) {
+    // 자기 자신 에피소드 청크 제외 (재분석 시 환각 방지)
+    const filteredChunks = excludeEpisodeId
+      ? similarChunks.filter((c) => c.episodeId !== excludeEpisodeId)
+      : similarChunks
+
+    if (filteredChunks.length === 0) {
       return analysisTypes.map((type) => ({
         type,
         score: 100,
-        summary: '기존 에피소드가 없어 비교 불가 — 첫 에피소드입니다',
+        summary: '비교할 기존 에피소드가 없어 분석을 건너뜁니다',
         issues: [],
         suggestions: [],
       }))
     }
 
-    // 유사도 높은 청크들을 컨텍스트로 조합
-    const context = similarChunks
+    // 유사도 높은 청크들을 컨텍스트로 조합 — 각 청크에 출처 episodeId 라벨 부착
+    // (Claude가 "기존 컨텍스트"와 "새 에피소드"를 혼동하지 않도록 명시)
+    const context = filteredChunks
       .sort((a, b) => a.distance - b.distance)
-      .slice(0, 15)
-      .map((c) => c.chunkText)
+      .slice(0, TOP_K_USE)
+      .map((c) => `[기존 에피소드 ${c.episodeId} · 청크 ${c.chunkIndex}]\n${c.chunkText}`)
       .join('\n\n---\n\n')
 
     // ClaudeApiPort.ask를 바인딩하여 순수 함수에 전달

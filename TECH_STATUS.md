@@ -7,7 +7,7 @@
 
 ## 1. 현재 버전
 
-최신 버전은 `CHANGELOG.md` 참조. (현재 v0.25.0)
+최신 버전은 `CHANGELOG.md` 참조.
 
 ---
 
@@ -31,7 +31,7 @@
 | Reader (북마크/읽기 진행도) | 구현 완료 |
 | Discovery (검색/인기/최신 + 페이지네이션) | 구현 완료 |
 | Payment (Polar — 상품/웹훅/크레딧) | 구현 완료 |
-| Admin (28개 엔드포인트 — 통계/사용자/콘텐츠/제재/신고/댓글/결제/접근로그/설정/감사로그) | 구현 완료 |
+| Admin (통계/사용자/콘텐츠/제재/신고/댓글/결제/접근로그/설정/감사로그 — 개수는 `docs/api-contract.md` 참조) | 구현 완료 |
 | Analysis (RAG 인덱싱/일관성 체크) | 구현 완료 |
 | Chat (AI 어시스턴트 — 세션/메시지/RAG) | 구현 완료 |
 | Plan (구독 플랜 + 테마 슬롯 관리) | 구현 완료 |
@@ -62,12 +62,12 @@
 ### Prisma 스키마
 
 - 정본: `prisma/schema.prisma`
-- 모델 수: 23개 (schema.prisma에서 `model` 키워드로 확인)
+- 모델 수: `grep -c '^model ' prisma/schema.prisma` 로 확인 (하드코딩 금지)
 - 설명: `SCHEMA.md`, `docs/data-model.md`
 
 ### 테스트
 
-- 테스트 수: `npm test` 실행으로 확인 (현재 403개, 33 suites)
+- 테스트 수: `npm test` 실행으로 확인 (하드코딩 금지)
 - 커버리지: `npx jest --coverage` 실행으로 확인 (목표 60%)
 
 ### 인프라

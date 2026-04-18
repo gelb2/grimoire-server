@@ -335,7 +335,7 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 - `docs/environments.md` — 환경별 설정 (정본)
 - 루트 `CLAUDE.md` §11 — 전수검사 체크리스트
 - `.claude/scripts/sensor-security-gate.sh` — 자동화 보안 게이트
-- 루트 `RESEARCH_HANLINE_API.md` — 경쟁사 한줄 API/보안 분석 (git 미추적)
+- 루트 `research/RESEARCH_HANLINE_API.md` — 경쟁사 한줄 API/보안 분석 (git 미추적)
 
 ---
 
