@@ -1,6 +1,12 @@
 import { Controller, Get, Query } from '@nestjs/common'
+import { Throttle } from '@nestjs/throttler'
 import { DiscoveryUseCase } from '@application/discovery/discovery.usecase'
 
+/**
+ * Discovery — 공개 인기/최신/검색 엔드포인트.
+ * 비인증이고 트래픽이 높으므로 rate limit으로 봇 보호.
+ */
+@Throttle({ default: { ttl: 60000, limit: 60 } })  // 분당 60회 per IP
 @Controller('discover')
 export class DiscoveryController {
   constructor(private readonly discoveryUseCase: DiscoveryUseCase) {}
