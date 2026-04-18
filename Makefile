@@ -2,7 +2,8 @@
 # 정본: docs/DEPLOY.md
 
 .PHONY: help preflight deploy-dev deploy-inhouse deploy-prod logs rollback \
-        docker-login image-list image-clean dev-local test build
+        docker-login image-list image-clean dev-local test build \
+        db-sync-prod-to-inhouse db-sync-prod-to-dev db-sync-inhouse-to-dev db-sync-dev-to-local
 
 SHELL := /usr/bin/env bash
 
@@ -32,6 +33,13 @@ help:
 	@echo "  make test                        Jest 테스트"
 	@echo "  make build                       NestJS 빌드"
 	@echo "  make dev-local                   docker-compose로 로컬 전체 스택 기동"
+	@echo ""
+	@echo "DB 동기화 타겟 (INFRASTRUCTURE.md §10 — 비상용 수동 실행):"
+	@echo "  make db-sync-prod-to-inhouse     prod → inhouse (PII 유지, interactive 확인)"
+	@echo "  make db-sync-prod-to-dev         prod → dev (PII 마스킹, interactive 확인)"
+	@echo "  make db-sync-inhouse-to-dev      inhouse → dev (PII 마스킹, prod 우회용)"
+	@echo "  make db-sync-dev-to-local        dev → localhost (Docker DB 필요)"
+	@echo "  * 모두 DB_PASSWORD 환경변수 필요. az login 선행."
 
 # ─────────────────────────────────────────────────────────────
 # 배포 전수검사 / 배포
@@ -106,3 +114,21 @@ dev-local:
 	@echo ""
 	@echo "로컬 서버: http://localhost:3000"
 	@echo "종료: docker-compose down"
+
+# ─────────────────────────────────────────────────────────────
+# DB 동기화 (INFRASTRUCTURE.md §10)
+# 자동화: .github/workflows/db-sync-nightly.yml (매일 자정 KST)
+# 비상용: CI 다운 시 아래 타겟으로 로컬에서 수동 실행. 스크립트가 정본.
+# 전제: export DB_PASSWORD=...; az login 선행.
+# ─────────────────────────────────────────────────────────────
+db-sync-prod-to-inhouse:
+	@bash scripts/db-sync-remote.sh prod inhouse
+
+db-sync-prod-to-dev:
+	@bash scripts/db-sync-remote.sh prod dev --mask-pii
+
+db-sync-inhouse-to-dev:
+	@bash scripts/db-sync-remote.sh inhouse dev --mask-pii
+
+db-sync-dev-to-local:
+	@bash scripts/db-sync-local.sh

@@ -308,25 +308,63 @@ dev  ──→ local   (수동, 이미 마스킹된 데이터)
 
 마스킹 형식: `author-{n}@masked.local`, 고정 bcrypt 해시
 
-### localhost 동기화 (수동)
+### 수동 동기화 (비상용 + 즉시 실행 필요 시)
+
+`docs/DEPLOY.md §8` 원칙 "수동 실행은 긴급 수단으로 계속 유지. 스크립트가 정본, CI는 래퍼"를 DB 동기화에도 동일 적용.
+
+#### Makefile 진입점
 
 ```bash
-# Docker DB 실행 중이어야 함
-./scripts/db-sync-local.sh
+# prod 관련은 interactive 'yes' 확인 프롬프트 있음 (CI에선 SKIP_INTERACTIVE=1)
+export DB_PASSWORD='...'
+az login  # 선행
+
+make db-sync-prod-to-inhouse     # prod → inhouse (PII 유지)
+make db-sync-prod-to-dev         # prod → dev (PII 마스킹)
+make db-sync-inhouse-to-dev      # inhouse → dev (PII 마스킹, prod 우회 경로)
+make db-sync-dev-to-local        # dev → localhost (Docker DB 필요)
 ```
+
+#### 동작 순서 (scripts/db-sync-remote.sh)
+
+1. **입력 검증**: SOURCE/TARGET 유효성 + 방향 검증 (하위→상위 금지)
+2. **preflight**: `DB_PASSWORD` 환경변수 확인 + `az login` 확인 + Prisma Client generate
+3. **interactive 확인**: prod가 source/target이면 'yes' 입력 요구 (`SKIP_INTERACTIVE=1`로 스킵 가능)
+4. **방화벽 규칙 임시 추가**: 러너 IP를 source/target 양쪽 DB에 추가 (`rule-name=manual-db-sync-{epoch}`)
+5. **동기화 실행**: `npx tsx scripts/db-sync.ts SOURCE TARGET [--mask-pii]`
+6. **방화벽 규칙 제거**: `trap EXIT`으로 실패 시에도 자동 정리
+
+#### 언제 수동 실행이 필요한가
+
+- GitHub Actions 빌링 중단/다운
+- 긴급 QA를 위한 즉시 동기화 (자정 자동 실행 기다릴 수 없음)
+- inhouse DB 복구 등 장애 대응
+- prod↔inhouse 동기화 검증 (dry-run 없이 즉시 확인 필요 시)
 
 ### 방화벽 처리
 
 - 동기화 시작 시 러너 IP를 임시 방화벽 규칙으로 추가
 - 동기화 완료 후 (실패 포함) 반드시 제거 (`if: always()` / `trap EXIT`)
-- 규칙명: `github-actions-sync` (자동) / `temp-local-sync` (수동)
+- 규칙명:
+  - `github-actions-sync` (자동 / nightly workflow)
+  - `manual-db-sync-{epoch}` (수동 / db-sync-remote.sh)
+  - `temp-local-sync` (수동 / dev→local)
 
 ### 스크립트
 
-| 스크립트 | 용도 |
-|---------|------|
-| `scripts/db-sync.ts` | 데이터 동기화 (Prisma 기반, PII 마스킹 지원) |
-| `scripts/db-sync-local.sh` | dev → localhost 동기화 (방화벽 자동 관리) |
+| 스크립트 | 용도 | 진입점 |
+|---------|------|-------|
+| `scripts/db-sync.ts` | 데이터 동기화 코어 (Prisma 기반, PII 마스킹 지원) | 다른 스크립트가 호출 |
+| `scripts/db-sync-remote.sh` | 원격 DB 간 동기화 래퍼 (방화벽 자동 관리 + interactive 확인) | `make db-sync-*` |
+| `scripts/db-sync-local.sh` | dev → localhost 동기화 (방화벽 자동 관리) | `make db-sync-dev-to-local` |
+
+### 동기화 대상 테이블
+
+Prisma 모델 24개 중 **17개** 복사. 나머지는 환경별 독립이 합리적이라 제외.
+
+**포함 (17)**: Author, Theme, Work, Episode, SocialAccount, SignupHistory, CreditLog, Bookmark, ReadingProgress, Like, Subscription, Comment, Payment, DailyView, **Announcement, FeaturedWork, SystemSetting**
+
+**제외 (7, 환경별 독립)**: AccessLog, AdminAuditLog, ChatSession, ChatMessage, RefreshToken, Report, UserSanction
 
 ---
 
