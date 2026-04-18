@@ -75,6 +75,19 @@ describe('WorkManagementUseCase', () => {
         title: '테스트 작품',
       })
     })
+
+    it('title의 언더스코어를 공백으로 정규화한 뒤 저장한다 (Safari 자모 분해 방지)', async () => {
+      mockWorkRepo.createWork.mockResolvedValue(mockWork)
+
+      await useCase.createWork('author-1', {
+        slug: 'test-work',
+        title: '사슴악마_ep9_도리안그레이의초상_초고',
+      })
+
+      expect(mockWorkRepo.createWork).toHaveBeenCalledWith(
+        expect.objectContaining({ title: '사슴악마 ep9 도리안그레이의초상 초고' }),
+      )
+    })
   })
 
   describe('updateWork', () => {
@@ -86,6 +99,30 @@ describe('WorkManagementUseCase', () => {
 
       expect(result.title).toBe('수정된 제목')
       expect(mockWorkRepo.updateWork).toHaveBeenCalledWith('work-1', { title: '수정된 제목' })
+    })
+
+    it('title이 전달되면 정규화해서 저장한다', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.updateWork.mockResolvedValue(mockWork)
+
+      await useCase.updateWork('author-1', 'work-1', {
+        title: 'foo_bar__baz',
+        description: '설명',
+      })
+
+      expect(mockWorkRepo.updateWork).toHaveBeenCalledWith('work-1', {
+        title: 'foo bar baz',
+        description: '설명',
+      })
+    })
+
+    it('title이 없으면 정규화 로직을 건너뛴다', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.updateWork.mockResolvedValue(mockWork)
+
+      await useCase.updateWork('author-1', 'work-1', { description: '설명만' })
+
+      expect(mockWorkRepo.updateWork).toHaveBeenCalledWith('work-1', { description: '설명만' })
     })
 
     it('작품이 없으면 NotFoundException을 던진다', async () => {
@@ -180,6 +217,20 @@ title: "테스트"
       expect(paragraphTexts).not.toContain('slug: ep1')
       expect(paragraphTexts).not.toContain('type: episode')
       expect(paragraphTexts).toContain('본문 내용입니다.')
+    })
+
+    it('title의 언더스코어를 공백으로 정규화한 뒤 저장한다 (Safari 자모 분해 방지)', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.countEpisodesByWorkId.mockResolvedValue(0)
+      mockWorkRepo.createEpisode.mockResolvedValue(mockEpisode)
+
+      await useCase.createEpisode('author-1', 'work-1', {
+        title: '사슴악마_ep9_도리안그레이의초상_초고',
+        rawContent: '본문 내용입니다.',
+      })
+
+      const calledWith = mockWorkRepo.createEpisode.mock.calls[0][0]
+      expect(calledWith.title).toBe('사슴악마 ep9 도리안그레이의초상 초고')
     })
 
     it('한글 제목의 슬러그에서 한글을 제거한다', async () => {
@@ -322,6 +373,48 @@ title: "테스트"
       mockWorkRepo.findBySharedToken.mockResolvedValue(null)
 
       await expect(useCase.getEpisodeBySharedToken('no-token')).rejects.toThrow(NotFoundException)
+    })
+  })
+
+  describe('reuploadEpisode', () => {
+    const updatedMock = { ...mockEpisode, title: '정규화된 제목' }
+
+    beforeEach(() => {
+      mockWorkRepo.updateEpisodeContent = jest.fn().mockResolvedValue(updatedMock)
+    })
+
+    it('title이 전달되면 정규화해서 저장한다', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+
+      await useCase.reuploadEpisode('author-1', 'ep-1', {
+        title: '사슴악마_ep9_도리안그레이의초상_초고',
+        rawContent: '본문',
+      })
+
+      const calledWith = mockWorkRepo.updateEpisodeContent.mock.calls[0][1]
+      expect(calledWith.title).toBe('사슴악마 ep9 도리안그레이의초상 초고')
+    })
+
+    it('title이 없으면 기존 episode.title을 유지한다', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+
+      await useCase.reuploadEpisode('author-1', 'ep-1', {
+        rawContent: '본문만 갱신',
+      })
+
+      const calledWith = mockWorkRepo.updateEpisodeContent.mock.calls[0][1]
+      expect(calledWith.title).toBe(mockEpisode.title)
+    })
+
+    it('소유자가 아니면 ForbiddenException을 던진다', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+
+      await expect(
+        useCase.reuploadEpisode('other-author', 'ep-1', { rawContent: '본문' }),
+      ).rejects.toThrow(ForbiddenException)
     })
   })
 })
