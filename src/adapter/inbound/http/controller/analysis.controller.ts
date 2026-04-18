@@ -19,15 +19,31 @@ export class AnalysisController {
     return this.analysisUseCase.indexEpisode(body.episodeId, body.workId, body.rawText)
   }
 
-  /** 새 에피소드 일관성 분석 */
+  /**
+   * 새 에피소드 일관성 분석
+   *
+   * body.episodeId — 선택. **이미 인덱싱된 에피소드의 재분석** 시 전달하면
+   * 해당 episodeId의 청크가 RAG 검색에서 제외된다. 자기 자신 청크가 컨텍스트로
+   * 섞여 Claude가 기존 내용을 새 에피소드의 문제로 오보고하는 사태를 방지.
+   */
   @Throttle({ default: { ttl: 60000, limit: 3 } })  // AI API 호출 — 분당 3회
   @UseGuards(JwtAuthGuard)
   @Post('check')
   async analyzeEpisode(
-    @Body() body: { workId: string; newEpisodeText: string; types?: ('consistency' | 'tone' | 'character')[] },
+    @Body() body: {
+      workId: string
+      newEpisodeText: string
+      types?: ('consistency' | 'tone' | 'character')[]
+      episodeId?: string
+    },
   ) {
     this.validateRawText(body.newEpisodeText)
-    return this.analysisUseCase.analyzeNewEpisode(body.workId, body.newEpisodeText, body.types)
+    return this.analysisUseCase.analyzeNewEpisode(
+      body.workId,
+      body.newEpisodeText,
+      body.types,
+      body.episodeId,
+    )
   }
 
   /** 작품 인덱싱 상태 조회 */
