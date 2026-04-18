@@ -4,6 +4,7 @@ import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
 import { Work, Episode, EpisodeStatus } from '@domain/model/work'
 import { Block } from '@domain/model/block'
+import { normalizeTitle } from '@domain/model/title-normalizer'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
 import { CreditUseCase } from '@application/credit/credit.usecase'
 import { CreditReason } from '@domain/model/credit'
@@ -19,7 +20,7 @@ export class WorkManagementUseCase {
 
   /** 작품 생성 */
   async createWork(authorId: string, input: { slug: string; title: string; subtitle?: string; description?: string }): Promise<Work> {
-    return this.workRepo.createWork({ authorId, ...input })
+    return this.workRepo.createWork({ authorId, ...input, title: normalizeTitle(input.title) })
   }
 
   /** 커버 이미지 업로드 (소유권 검증) */
@@ -43,7 +44,11 @@ export class WorkManagementUseCase {
     if (!work) throw new NotFoundException('작품을 찾을 수 없습니다')
     if (work.authorId !== authorId) throw new ForbiddenException('작품 수정 권한이 없습니다')
 
-    return this.workRepo.updateWork(workId, input)
+    // title이 전달되면 정규화해서 저장 (Safari Hangul shaping 버그 회피)
+    const normalized = input.title !== undefined
+      ? { ...input, title: normalizeTitle(input.title) }
+      : input
+    return this.workRepo.updateWork(workId, normalized)
   }
 
   /** 작품 삭제 (소유권 검증, 에피소드 cascade) */
@@ -65,8 +70,11 @@ export class WorkManagementUseCase {
     if (!work) throw new NotFoundException('작품을 찾을 수 없습니다')
     if (work.authorId !== authorId) throw new ForbiddenException('에피소드 생성 권한이 없습니다')
 
-    // 슬러그 생성 (타이틀 기반, ASCII만 허용 — 한글 제외)
-    const slug = input.title.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+    // 제목 정규화 (Safari Hangul shaping 버그 회피 — 단일 진실 공급원)
+    const title = normalizeTitle(input.title)
+
+    // 슬러그 생성 (정규화된 타이틀 기반, ASCII만 허용 — 한글 제외)
+    const slug = title.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
 
     // 다음 orderNum 계산
     const episodeCount = await this.workRepo.countEpisodesByWorkId(work.id)
@@ -84,7 +92,7 @@ export class WorkManagementUseCase {
     const episode = await this.workRepo.createEpisode({
       workId: work.id,
       slug: meta?.slug || slug || `episode-${orderNum}`,
-      title: input.title,
+      title,
       subtitle: meta?.subtitle,
       description: meta?.description,
       type: meta?.type,
@@ -118,8 +126,13 @@ export class WorkManagementUseCase {
 
     const { blocks, meta } = this.parseContentWithMeta(input.rawContent, input.sourceFormat)
 
+    // 제목 정규화 — input.title이 있으면 정규화해서 사용, 없으면 기존 title 유지
+    // (meta.subtitle을 title로 쓰던 기존 폴백은 정규화 대상 외이므로 그대로 둔다 —
+    //  별도 이슈로 다룰 예정; 이번 PR 범위는 title 정규화 파이프라인 확립)
+    const normalizedInputTitle = input.title !== undefined ? normalizeTitle(input.title) : undefined
+
     const updated = await this.workRepo.updateEpisodeContent(episodeId, {
-      title: input.title ?? meta?.subtitle ?? episode.title,
+      title: normalizedInputTitle ?? meta?.subtitle ?? episode.title,
       subtitle: meta?.subtitle,
       description: meta?.description,
       blocks,

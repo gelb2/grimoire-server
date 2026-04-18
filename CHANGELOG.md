@@ -1,5 +1,27 @@
 # Changelog — grimoire-server
 
+## [0.26.0] - 2026-04-19
+
+### Title 정규화 파이프라인 도입 (Safari Hangul shaping 버그 회피)
+
+#### Added
+- `domain/model/title-normalizer.ts` — `normalizeTitle(raw)` 순수 함수. 언더스코어→공백, 연속 공백 단일화, trim. 단일 진실 공급원 (Hexagonal domain layer)
+- `normalizeTitle.spec.ts` — 13개 케이스 (언더스코어/공백/em-dash 보존/idempotent/non-string 방어)
+- `ParseManuscriptUseCase` 응답에 `normalizedTitle` 필드 추가 (MD/TXT/DOCX/HWP/HWPX 전 경로)
+- `docs/api-contract.md` — `/manuscripts/parse`, `/manuscripts/upload` 응답에 `normalizedTitle` 명세
+- `docs/glossary.md` — Title Normalization / normalizedTitle 용어 정의
+
+#### Fixed
+- `WorkManagementUseCase.createEpisode` — DB 저장 직전 `normalizeTitle(input.title)` 강제 (클라이언트 신뢰 제거)
+- `WorkManagementUseCase.reuploadEpisode` — 전달된 title 정규화
+- `WorkManagementUseCase.createWork` / `updateWork` — 작품 제목도 동일 원리로 정규화
+- 에피소드 slug 생성 기반을 정규화된 title로 변경 (기존: raw input.title)
+
+#### Rationale
+- Safari의 `italic + Noto Serif KR faux synthesis` 조합에서 한글+Latin+언더스코어 밀착 문자열의 자모 분해 버그 존재
+- 파일명이 그대로 title로 박히면 조건에 걸림 → 정규화 파이프라인으로 DB 무결성 보장
+- 사슴악마 17개 기존 에피소드 전부 깨끗 확인 → 마이그레이션 불필요
+
 ## [0.25.0] - 2026-04-17
 
 ### 테마 시스템 전수 수정 + 에이전트 자율 실행 + 배포 자동화
