@@ -93,5 +93,6 @@ export interface Theme {
   bakedCssUrl: string | null
   isSlotted: boolean
   source: 'system' | 'ai' | 'user'
+  createdAt: Date
   updatedAt: Date
 }
