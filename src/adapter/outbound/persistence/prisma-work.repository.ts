@@ -148,85 +148,99 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     return rows.map(toWorkDomain)
   }
 
-  async findPopular(limit: number): Promise<WorkWithMeta[]> {
-    const rows = await this.prisma.work.findMany({
-      take: limit,
-      orderBy: [{ viewCount: 'desc' }, { createdAt: 'asc' }],
-      include: {
-        author: { select: { name: true, slug: true } },
-        _count: { select: { episodes: true } },
-      },
-    })
-    return rows.map((r) => ({
-      ...toWorkDomain(r),
-      authorName: r.author.name,
-      authorSlug: r.author.slug,
-      episodeCount: r._count.episodes,
-    }))
-  }
-
-  async findRecent(limit: number): Promise<WorkWithMeta[]> {
-    const rows = await this.prisma.work.findMany({
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        author: { select: { name: true, slug: true } },
-        _count: { select: { episodes: true } },
-      },
-    })
-    return rows.map((r) => ({
-      ...toWorkDomain(r),
-      authorName: r.author.name,
-      authorSlug: r.author.slug,
-      episodeCount: r._count.episodes,
-    }))
-  }
-
-  async findPopularPaginated(page: number, pageSize: number): Promise<{ works: WorkWithMeta[]; totalCount: number }> {
-    const [rows, totalCount] = await Promise.all([
+  /**
+   * 인기 가중 랭킹 — engagement 반영
+   * score = viewCount + likes*10 + comments*5 + authorSubscribers*30
+   * (작품 규모가 작아 전체 로드 후 메모리 정렬. 작품 수 증가 시 쿼리 최적화 필요)
+   */
+  private async computeRankedWorks(): Promise<(WorkWithMeta & { score: number; lastEpisodeAt: Date | null })[]> {
+    const [works, likeAgg, commentAgg, subsAgg] = await Promise.all([
       this.prisma.work.findMany({
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        orderBy: [{ viewCount: 'desc' }, { createdAt: 'asc' }],
         include: {
           author: { select: { name: true, slug: true } },
           _count: { select: { episodes: true } },
+          episodes: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { createdAt: true },
+          },
         },
       }),
-      this.prisma.work.count(),
+      this.prisma.$queryRaw<{ workId: string; n: bigint }[]>`
+        SELECT e.work_id AS "workId", COUNT(l.id) AS n
+        FROM episodes e
+        LEFT JOIN likes l ON l.episode_id = e.id
+        GROUP BY e.work_id
+      `,
+      this.prisma.$queryRaw<{ workId: string; n: bigint }[]>`
+        SELECT e.work_id AS "workId", COUNT(c.id) AS n
+        FROM episodes e
+        LEFT JOIN comments c ON c.episode_id = e.id
+        GROUP BY e.work_id
+      `,
+      this.prisma.subscription.groupBy({ by: ['targetAuthorId'], _count: { _all: true } }),
     ])
+
+    const likesMap = new Map(likeAgg.map((r) => [r.workId, Number(r.n)]))
+    const commentsMap = new Map(commentAgg.map((r) => [r.workId, Number(r.n)]))
+    const subsMap = new Map(subsAgg.map((r) => [r.targetAuthorId, r._count._all]))
+
+    return works.map((w) => {
+      const likes = likesMap.get(w.id) ?? 0
+      const comments = commentsMap.get(w.id) ?? 0
+      const subs = subsMap.get(w.authorId) ?? 0
+      const score = w.viewCount + likes * 10 + comments * 5 + subs * 30
+      return {
+        ...toWorkDomain(w),
+        authorName: w.author.name,
+        authorSlug: w.author.slug,
+        episodeCount: w._count.episodes,
+        score,
+        lastEpisodeAt: w.episodes[0]?.createdAt ?? null,
+      }
+    })
+  }
+
+  async findPopular(limit: number): Promise<WorkWithMeta[]> {
+    const ranked = await this.computeRankedWorks()
+    ranked.sort((a, b) => b.score - a.score || a.createdAt.getTime() - b.createdAt.getTime())
+    return ranked.slice(0, limit).map(({ score: _s, lastEpisodeAt: _l, ...rest }) => rest)
+  }
+
+  async findRecent(limit: number): Promise<WorkWithMeta[]> {
+    // "최신"은 최근 에피소드 업데이트 기준 — 활발한 연재작이 먼저 노출되도록.
+    // 에피소드가 아직 없는 작품은 작품 생성일로 폴백.
+    const ranked = await this.computeRankedWorks()
+    ranked.sort((a, b) => {
+      const at = a.lastEpisodeAt?.getTime() ?? a.createdAt.getTime()
+      const bt = b.lastEpisodeAt?.getTime() ?? b.createdAt.getTime()
+      return bt - at
+    })
+    return ranked.slice(0, limit).map(({ score: _s, lastEpisodeAt: _l, ...rest }) => rest)
+  }
+
+  async findPopularPaginated(page: number, pageSize: number): Promise<{ works: WorkWithMeta[]; totalCount: number }> {
+    const ranked = await this.computeRankedWorks()
+    ranked.sort((a, b) => b.score - a.score || a.createdAt.getTime() - b.createdAt.getTime())
+    const start = (page - 1) * pageSize
     return {
-      works: rows.map((r) => ({
-        ...toWorkDomain(r),
-        authorName: r.author.name,
-        authorSlug: r.author.slug,
-        episodeCount: r._count.episodes,
-      })),
-      totalCount,
+      works: ranked.slice(start, start + pageSize).map(({ score: _s, lastEpisodeAt: _l, ...rest }) => rest),
+      totalCount: ranked.length,
     }
   }
 
   async findRecentPaginated(page: number, pageSize: number): Promise<{ works: WorkWithMeta[]; totalCount: number }> {
-    const [rows, totalCount] = await Promise.all([
-      this.prisma.work.findMany({
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          author: { select: { name: true, slug: true } },
-          _count: { select: { episodes: true } },
-        },
-      }),
-      this.prisma.work.count(),
-    ])
+    // "최신"도 computeRankedWorks로 일관된 경로. 에피소드 최근 업데이트 기준 정렬.
+    const ranked = await this.computeRankedWorks()
+    ranked.sort((a, b) => {
+      const at = a.lastEpisodeAt?.getTime() ?? a.createdAt.getTime()
+      const bt = b.lastEpisodeAt?.getTime() ?? b.createdAt.getTime()
+      return bt - at
+    })
+    const start = (page - 1) * pageSize
     return {
-      works: rows.map((r) => ({
-        ...toWorkDomain(r),
-        authorName: r.author.name,
-        authorSlug: r.author.slug,
-        episodeCount: r._count.episodes,
-      })),
-      totalCount,
+      works: ranked.slice(start, start + pageSize).map(({ score: _s, lastEpisodeAt: _l, ...rest }) => rest),
+      totalCount: ranked.length,
     }
   }
 
