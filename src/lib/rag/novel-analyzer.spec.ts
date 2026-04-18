@@ -49,12 +49,14 @@ describe('novel-analyzer', () => {
     expect(result.issues).toContain('주인공 말투 변화')
   })
 
-  it('JSON 파싱 실패 시 기본값을 반환한다', async () => {
+  it('JSON 파싱 실패 시 분석 실패 상태를 반환한다 (2회 재시도 후)', async () => {
     mockAsk.mockResolvedValue('이것은 JSON이 아닙니다')
 
     const result = await checkConsistency(mockAsk, '기존', '새로운')
-    expect(result.score).toBe(50)
-    expect(result.summary).toContain('JSON 파싱 실패')
+    // 파싱 2회 시도 후 모두 실패하면 score = -1 (분석 실패 명시)
+    expect(result.score).toBe(-1)
+    expect(result.summary).toContain('분석 실패')
+    expect(mockAsk).toHaveBeenCalledTimes(2)
   })
 
   it('trailing comma가 있는 JSON도 파싱한다', async () => {
