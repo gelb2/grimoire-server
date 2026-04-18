@@ -13,10 +13,10 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
   }
 
   async findAllByAuthorId(authorId: string): Promise<Theme[]> {
-    // 정렬은 id asc로 고정 — 사용자가 슬롯 토글/편집해도 순서가 출렁이지 않게
+    // 생성 순 오름차순 — 사용자가 슬롯 토글/편집해도 순서가 출렁이지 않게
     const rows = await this.prisma.theme.findMany({
       where: { authorId },
-      orderBy: { id: 'asc' },
+      orderBy: { createdAt: 'asc' },
     })
     return rows.map(toDomain)
   }
@@ -122,7 +122,7 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
   async findSlottedByAuthorId(authorId: string): Promise<Theme[]> {
     const rows = await this.prisma.theme.findMany({
       where: { authorId, isSlotted: true },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { createdAt: 'asc' },
     })
     return rows.map(toDomain)
   }
@@ -166,6 +166,7 @@ function toDomain(row: {
   bakedCssUrl: string | null
   isSlotted: boolean
   source: string
+  createdAt: Date
   updatedAt: Date
 }): Theme {
   return {
@@ -178,6 +179,7 @@ function toDomain(row: {
     bakedCssUrl: row.bakedCssUrl,
     isSlotted: row.isSlotted,
     source: row.source as 'system' | 'ai' | 'user',
+    createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
 }
