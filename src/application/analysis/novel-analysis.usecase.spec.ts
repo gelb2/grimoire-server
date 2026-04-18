@@ -29,6 +29,7 @@ describe('NovelAnalysisUseCase', () => {
     getEmbeddingsBatch: jest.Mock
   }
   let mockClaude: { ask: jest.Mock; generateTheme: jest.Mock }
+  let mockWorkRepo: { findById: jest.Mock; findEpisodes: jest.Mock }
 
   beforeEach(() => {
     jest.clearAllMocks()
@@ -48,11 +49,16 @@ describe('NovelAnalysisUseCase', () => {
       ask: jest.fn(),
       generateTheme: jest.fn(),
     }
+    mockWorkRepo = {
+      findById: jest.fn().mockResolvedValue(null),
+      findEpisodes: jest.fn().mockResolvedValue([]),
+    }
 
     useCase = new NovelAnalysisUseCase(
       mockVectorStore as any,
       mockEmbedding as any,
       mockClaude as any,
+      mockWorkRepo as any,
     )
   })
 
@@ -175,6 +181,79 @@ describe('NovelAnalysisUseCase', () => {
       expect(mockCheckCharacter).not.toHaveBeenCalled()
       expect(results).toHaveLength(1)
       expect(results[0].type).toBe('tone')
+    })
+
+    it('Work 메타(context/instructions)가 분석 함수에 전달된다', async () => {
+      mockWorkRepo.findById.mockResolvedValue({
+        id: 'work-1', title: '사슴악마', context: '현대 판타지', instructions: '느와르 톤',
+      })
+      mockVectorStore.searchSimilar.mockResolvedValue([
+        { chunkText: '청크', episodeId: 'ep-1', chunkIndex: 0, distance: 0.1 },
+      ])
+      mockCheckConsistency.mockResolvedValue({
+        type: 'consistency', score: 90, summary: 'ok', issues: [], suggestions: [],
+      })
+
+      await useCase.analyzeNewEpisode('work-1', '새 텍스트', ['consistency'])
+
+      const workMetaArg = mockCheckConsistency.mock.calls[0][3]
+      expect(workMetaArg).toEqual({
+        title: '사슴악마', context: '현대 판타지', instructions: '느와르 톤',
+      })
+    })
+
+    it('에피소드 제목을 컨텍스트 라벨에 포함한다', async () => {
+      mockWorkRepo.findEpisodes.mockResolvedValue([
+        { id: 'ep-9', title: '도리안그레이의 초상', orderNum: 9, type: 'episode' },
+      ])
+      mockVectorStore.searchSimilar.mockResolvedValue([
+        { chunkText: '청크내용', episodeId: 'ep-9', chunkIndex: 2, distance: 0.1 },
+      ])
+      mockCheckConsistency.mockResolvedValue({
+        type: 'consistency', score: 90, summary: 'ok', issues: [], suggestions: [],
+      })
+
+      await useCase.analyzeNewEpisode('work-1', '새 텍스트', ['consistency'])
+
+      const context = mockCheckConsistency.mock.calls[0][1] as string
+      expect(context).toContain('제9화 "도리안그레이의 초상"')
+      expect(context).toContain('청크 2')
+    })
+
+    it('환각 검증 — 원문에 없는 인용은 issues에서 제거된다', async () => {
+      mockVectorStore.searchSimilar.mockResolvedValue([
+        { chunkText: '청크', episodeId: 'ep-1', chunkIndex: 0, distance: 0.1 },
+      ])
+      mockCheckConsistency.mockResolvedValue({
+        type: 'consistency', score: 80, summary: '이슈 있음',
+        issues: [
+          '설정 충돌 — "원문에 있는 구절"',  // 통과 (아래 newText에 포함)
+          '허위 인용 — "존재하지 않는 내용"',  // 제외 (newText에 없음)
+          '인용 누락 issue',                // 제외 (따옴표 인용 없음)
+        ],
+        suggestions: [],
+      })
+
+      const newText = '새 에피소드 텍스트입니다. 원문에 있는 구절 이 여기 들어있어요.'
+      const results = await useCase.analyzeNewEpisode('work-1', newText, ['consistency'])
+
+      expect(results[0].issues).toHaveLength(1)
+      expect(results[0].issues[0]).toContain('원문에 있는 구절')
+    })
+
+    it('분석 실패(score=-1) 결과는 환각 검증에서 손대지 않는다', async () => {
+      mockVectorStore.searchSimilar.mockResolvedValue([
+        { chunkText: '청크', episodeId: 'ep-1', chunkIndex: 0, distance: 0.1 },
+      ])
+      mockCheckConsistency.mockResolvedValue({
+        type: 'consistency', score: -1, summary: '분석 실패 (AI 호출 오류)',
+        issues: [], suggestions: [],
+      })
+
+      const results = await useCase.analyzeNewEpisode('work-1', '아무 텍스트', ['consistency'])
+
+      expect(results[0].score).toBe(-1)
+      expect(results[0].summary).toContain('분석 실패')
     })
   })
 
