@@ -94,7 +94,7 @@ describe('NovelAnalysisUseCase', () => {
   })
 
   describe('analyzeNewEpisode', () => {
-    it('기존 컨텍스트가 없으면 첫 에피소드 결과를 반환한다', async () => {
+    it('기존 컨텍스트가 없으면 비교 불가 결과를 반환한다', async () => {
       mockVectorStore.searchSimilar.mockResolvedValue([])
 
       const results = await useCase.analyzeNewEpisode('work-1', '새 에피소드 텍스트')
@@ -102,9 +102,32 @@ describe('NovelAnalysisUseCase', () => {
       expect(results).toHaveLength(3)
       results.forEach((r) => {
         expect(r.score).toBe(100)
-        expect(r.summary).toContain('첫 에피소드')
+        expect(r.summary).toContain('비교할 기존 에피소드가 없')
         expect(r.issues).toEqual([])
       })
+    })
+
+    it('excludeEpisodeId 지정 시 자기 자신 청크를 컨텍스트에서 제외한다', async () => {
+      // 같은 workId 내 2개 에피소드 청크가 검색됨 — 하나는 제외 대상
+      mockVectorStore.searchSimilar.mockResolvedValue([
+        { id: 'ep-9_0', workId: 'work-1', episodeId: 'ep-9', chunkIndex: 0, chunkText: '자기 자신 청크 내용', distance: 0.1 },
+        { id: 'ep-5_2', workId: 'work-1', episodeId: 'ep-5', chunkIndex: 2, chunkText: '다른 에피소드 청크 내용', distance: 0.3 },
+      ] as any)
+      mockEmbedding.getEmbedding.mockResolvedValue([0.1])
+      mockCheckConsistency.mockResolvedValue({
+        type: 'consistency', score: 90, summary: 'ok', issues: [], suggestions: [],
+      })
+
+      await useCase.analyzeNewEpisode('work-1', '새 에피소드 텍스트', ['consistency'], 'ep-9')
+
+      // checkConsistency에 전달된 context를 검증 — ep-9 청크는 제외되어야 함
+      expect(mockCheckConsistency).toHaveBeenCalledTimes(1)
+      const context = mockCheckConsistency.mock.calls[0][1] as string
+      expect(context).toContain('ep-5')
+      expect(context).not.toContain('자기 자신 청크 내용')
+      expect(context).toContain('다른 에피소드 청크 내용')
+      // 라벨 프리픽스 확인
+      expect(context).toContain('[기존 에피소드 ep-5')
     })
 
     it('유사 청크가 있으면 분석을 수행한다', async () => {
