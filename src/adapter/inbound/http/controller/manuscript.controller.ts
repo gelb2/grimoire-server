@@ -58,14 +58,19 @@ export class ManuscriptController {
       throw new BadRequestException('파일이 첨부되지 않았습니다')
     }
 
+    // multer는 multipart 파일명을 latin1로 디코드한다 (RFC 7578 디폴트) —
+    // 한글 파일명이 깨지는 케이스 방지를 위해 UTF-8로 재디코딩.
+    // 이미 올바른 UTF-8로 온 경우(ASCII)에는 변환이 no-op으로 작용한다.
+    const filename = Buffer.from(file.originalname, 'latin1').toString('utf-8')
+
     // 확장자에서 포맷 결정
-    const ext = path.extname(file.originalname).toLowerCase().slice(1)
+    const ext = path.extname(filename).toLowerCase().slice(1)
     const format = ext as ManuscriptFormat
 
     return this.parseManuscript.executeFromBuffer({
       buffer: file.buffer,
       format,
-      filename: file.originalname,
+      filename,
     })
   }
 }

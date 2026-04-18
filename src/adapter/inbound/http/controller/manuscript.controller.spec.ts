@@ -118,4 +118,19 @@ describe('ManuscriptController — upload', () => {
       controller.uploadManuscript(undefined as any),
     ).rejects.toThrow(BadRequestException)
   })
+
+  it('한글 파일명의 latin1 디코딩을 UTF-8로 재변환한다', async () => {
+    // multer는 multipart 파일명을 latin1로 디코드하므로 한글이 깨져 들어옴 —
+    // originalname이 latin1로 디코드된 한글 바이트 상태를 시뮬레이션
+    const koreanFilename = '사슴악마_ep9_도리안그레이의초상_초고.txt'
+    const latinEncoded = Buffer.from(koreanFilename, 'utf-8').toString('latin1')
+    const file = createMockFile(latinEncoded, 'TXT 본문')
+    await controller.uploadManuscript(file)
+
+    expect(useCase.executeFromBuffer).toHaveBeenCalledWith({
+      buffer: file.buffer,
+      format: 'txt',
+      filename: koreanFilename,
+    })
+  })
 })

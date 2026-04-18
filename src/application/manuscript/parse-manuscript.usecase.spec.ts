@@ -150,5 +150,39 @@ describe('ParseManuscriptUseCase', () => {
         }),
       ).rejects.toThrow(BadRequestException)
     })
+
+    it('파일명에 언더스코어가 있으면 normalizedTitle에 공백으로 치환된 값을 담는다', async () => {
+      const buffer = Buffer.from('텍스트 내용')
+
+      const result = await useCase.executeFromBuffer({
+        buffer,
+        format: 'txt',
+        filename: '사슴악마_ep9_도리안그레이의초상_초고.txt',
+      })
+
+      expect(result.title).toBe('사슴악마_ep9_도리안그레이의초상_초고')
+      expect(result.normalizedTitle).toBe('사슴악마 ep9 도리안그레이의초상 초고')
+    })
+
+    it('docx/hwp/hwpx 모두 응답에 normalizedTitle이 포함된다', async () => {
+      const buffer = Buffer.from([0x50, 0x4b])
+      const cases: { format: 'docx' | 'hwp' | 'hwpx'; filename: string; expected: string }[] = [
+        { format: 'docx', filename: '내_소설_초고.docx', expected: '내 소설 초고' },
+        { format: 'hwp', filename: '챕터_01.hwp', expected: '챕터 01' },
+        { format: 'hwpx', filename: 'ep_99__최종.hwpx', expected: 'ep 99 최종' },
+      ]
+      for (const c of cases) {
+        const r = await useCase.executeFromBuffer({ buffer, format: c.format, filename: c.filename })
+        expect(r.normalizedTitle).toBe(c.expected)
+      }
+    })
+  })
+
+  describe('normalizedTitle 필드', () => {
+    it('MD 파싱(execute) 결과에 normalizedTitle이 포함된다', () => {
+      const result = useCase.execute('---\nslug: ep01\ntype: episode\n---\n본문입니다.')
+      expect(result.normalizedTitle).toBeDefined()
+      expect(typeof result.normalizedTitle).toBe('string')
+    })
   })
 })
