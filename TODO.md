@@ -12,6 +12,8 @@
 ## 중기 (Phase 2)
 
 - [ ] A24식 Artifacts 데이터 모델
+- [ ] `reuploadEpisode` — input.title 없을 때 `meta?.subtitle`을 title로 쓰는 폴백 버그 수정 (title-normalization-pipeline PR 범위 밖으로 분리됨)
+- [ ] 서버 파서가 frontmatter.title을 meta에 포함시키도록 계층 정리 (현재 웹에서만 frontmatter.title 읽음 — Hexagonal 관점 계층 꼬임)
 
 ## 장기
 

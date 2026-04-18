@@ -105,10 +105,15 @@ async function main() {
     const comments = await sourceDb.comment.findMany()
     const payments = await sourceDb.payment.findMany()
     const dailyViews = await sourceDb.dailyView.findMany()
+    // 3환경 간 정합성에 영향을 주는 관리자/플랫폼 데이터 — 반드시 동기화 대상
+    const announcements = await sourceDb.announcement.findMany()
+    const featuredWorks = await sourceDb.featuredWork.findMany()
+    const systemSettings = await sourceDb.systemSetting.findMany()
 
     console.log(`  authors: ${authors.length}, themes: ${themes.length}, works: ${works.length}, episodes: ${episodes.length}`)
     console.log(`  socialAccounts: ${socialAccounts.length}, creditLogs: ${creditLogs.length}, payments: ${payments.length}`)
     console.log(`  bookmarks: ${bookmarks.length}, likes: ${likes.length}, comments: ${comments.length}, dailyViews: ${dailyViews.length}`)
+    console.log(`  announcements: ${announcements.length}, featuredWorks: ${featuredWorks.length}, systemSettings: ${systemSettings.length}`)
 
     // PII 마스킹 적용
     const maskedAuthors = maskAuthors(authors, maskPii)
@@ -127,6 +132,10 @@ async function main() {
     await targetDb.bookmark.deleteMany()
     await targetDb.payment.deleteMany()
     await targetDb.creditLog.deleteMany()
+    // 플랫폼 관리자 데이터 — Author/Work에 느슨 참조(FK 없음)
+    await targetDb.systemSetting.deleteMany()
+    await targetDb.featuredWork.deleteMany()
+    await targetDb.announcement.deleteMany()
     await targetDb.episode.deleteMany()
     await targetDb.work.deleteMany()
     await targetDb.theme.deleteMany()
@@ -207,6 +216,22 @@ async function main() {
       await targetDb.dailyView.create({ data: dv })
     }
     console.log(`  ✓ dailyViews: ${dailyViews.length}`)
+
+    // 플랫폼 관리자 데이터 (FK 없음 — Author/Work 이후 순서 자유)
+    for (const a of announcements) {
+      await targetDb.announcement.create({ data: a as any })
+    }
+    console.log(`  ✓ announcements: ${announcements.length}`)
+
+    for (const fw of featuredWorks) {
+      await targetDb.featuredWork.create({ data: fw as any })
+    }
+    console.log(`  ✓ featuredWorks: ${featuredWorks.length}`)
+
+    for (const ss of systemSettings) {
+      await targetDb.systemSetting.create({ data: ss as any })
+    }
+    console.log(`  ✓ systemSettings: ${systemSettings.length}`)
 
     // 검증
     const authorCount = await targetDb.author.count()
