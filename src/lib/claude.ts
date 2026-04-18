@@ -22,7 +22,9 @@ export async function askClaude(
   const response = await getClient().messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: options?.maxTokens ?? 1024,
-    system: systemPrompt,
+    // 프롬프트 캐싱 활성화 — 동일 system prompt가 5분 내 재호출되면 토큰 비용 90%↓.
+    // 분석 3종(consistency/tone/character) 병렬 호출 시 system prompt 공유 효과가 큼.
+    system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content: userMessage }],
   })
   const block = response.content[0]
