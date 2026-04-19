@@ -7,6 +7,7 @@ import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.po
 import { CreditReason } from '@domain/model/credit'
 import { ANALYSIS_CREDIT_COST } from '@domain/model/config'
 import { chunkText, checkConsistency, checkTone, checkCharacter, AnalysisResult, WorkMeta } from '@lib/rag'
+import { abortableRace, throwIfAborted } from '@lib/abort'
 
 @Injectable()
 export class NovelAnalysisUseCase {
@@ -75,6 +76,9 @@ export class NovelAnalysisUseCase {
     newEpisodeText: string,
     analysisTypes: ('consistency' | 'tone' | 'character')[] = ['consistency', 'tone', 'character'],
     excludeEpisodeId?: string,
+    // 컨트롤러에서 HTTP request close 이벤트를 AbortSignal로 변환해 전달.
+    // abort 시 내부 Promise.race가 AbortedError로 reject되어 환불이 보장된다.
+    abortSignal?: AbortSignal,
   ): Promise<AnalysisResult[]> {
     // F2 — 크레딧 차감 (PLANNING §14, ai-cost-table §3-2)
     try {
@@ -86,9 +90,9 @@ export class NovelAnalysisUseCase {
     }
 
     try {
-      return await this.runAnalysis(workId, newEpisodeText, analysisTypes, excludeEpisodeId)
+      return await this.runAnalysis(workId, newEpisodeText, analysisTypes, excludeEpisodeId, abortSignal)
     } catch (error) {
-      // 실패 시 전액 환불
+      // 실패(AbortedError 포함) 시 전액 환불
       await this.creditRepo
         .adjustCredits(authorId, ANALYSIS_CREDIT_COST, CreditReason.NOVEL_ANALYSIS_REFUND)
         .catch((e) => this.logger.error(`환불 실패: ${String(e)}`))
@@ -102,12 +106,14 @@ export class NovelAnalysisUseCase {
     newEpisodeText: string,
     analysisTypes: ('consistency' | 'tone' | 'character')[],
     excludeEpisodeId?: string,
+    abortSignal?: AbortSignal,
   ): Promise<AnalysisResult[]> {
+    throwIfAborted(abortSignal)
     // 작품 메타 + 에피소드 제목 매핑 병렬 로드
-    const [work, episodeSummaries] = await Promise.all([
+    const [work, episodeSummaries] = await abortableRace(abortSignal, Promise.all([
       this.workRepo.findById(workId).catch(() => null),
       this.workRepo.findEpisodes(workId).catch(() => []),
-    ])
+    ]))
     const workMeta: WorkMeta | undefined = work
       ? { title: work.title, context: work.context, instructions: work.instructions }
       : undefined
@@ -116,11 +122,12 @@ export class NovelAnalysisUseCase {
       episodeTitleMap.set(ep.id, { title: ep.title, orderNum: ep.orderNum, type: ep.type })
     }
 
+    throwIfAborted(abortSignal)
     // 기존 작품의 컨텍스트 검색 (self-reference 가능성 대비 검색량 늘림)
-    const queryEmbedding = await this.embedding.getEmbedding(newEpisodeText.slice(0, 2000))
+    const queryEmbedding = await abortableRace(abortSignal, this.embedding.getEmbedding(newEpisodeText.slice(0, 2000)))
     const TOP_K_FETCH = excludeEpisodeId ? 30 : 20
     const TOP_K_USE = 15
-    const similarChunks = await this.vectorStore.searchSimilar(queryEmbedding, TOP_K_FETCH, workId)
+    const similarChunks = await abortableRace(abortSignal, this.vectorStore.searchSimilar(queryEmbedding, TOP_K_FETCH, workId))
 
     // 자기 자신 에피소드 청크 제외 (재분석 시 환각 방지)
     const filteredChunks = excludeEpisodeId
@@ -148,13 +155,14 @@ export class NovelAnalysisUseCase {
     const ask = this.claude.ask.bind(this.claude)
     const episodeForAnalysis = newEpisodeText.slice(0, 3000)
 
-    const resultsRaw = await Promise.all(
+    throwIfAborted(abortSignal)
+    const resultsRaw = await abortableRace(abortSignal, Promise.all(
       analysisTypes.map((type) => {
         if (type === 'consistency') return checkConsistency(ask, context, episodeForAnalysis, workMeta)
         if (type === 'tone') return checkTone(ask, context, episodeForAnalysis, workMeta)
         return checkCharacter(ask, context, episodeForAnalysis, workMeta)
       }),
-    )
+    ))
 
     // 환각 검증: issues 각 항목의 인용이 실제 새 에피소드 텍스트에 존재하는지 확인
     return resultsRaw.map((r) => this.filterHallucinatedIssues(r, newEpisodeText))

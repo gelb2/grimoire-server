@@ -40,14 +40,27 @@ export class AnalysisController {
     },
   ) {
     this.validateRawText(body.newEpisodeText)
-    // F2 (2026-04-19): 분석 호출 시 3 크레딧 차감. IDOR 방지용으로 body 대신 JWT sub 사용.
-    return this.analysisUseCase.analyzeNewEpisode(
-      req.user.sub,
-      body.workId,
-      body.newEpisodeText,
-      body.types,
-      body.episodeId,
-    )
+    // 클라이언트 HTTP abort(프론트 타임아웃, 네트워크 끊김, 사용자 페이지 이탈 등)를
+    // AbortSignal로 변환해 usecase에 전달. usecase는 각 단계에서 abortableRace/throwIfAborted로
+    // 체크 → AbortedError throw → catch 블록에서 크레딧 환불이 확정된다.
+    const abortController = new AbortController()
+    const abort = () => abortController.abort()
+    req.on('close', abort)
+    req.on('aborted', abort)
+    try {
+      // F2 (2026-04-19): 분석 호출 시 3 크레딧 차감. IDOR 방지용으로 body 대신 JWT sub 사용.
+      return await this.analysisUseCase.analyzeNewEpisode(
+        req.user.sub,
+        body.workId,
+        body.newEpisodeText,
+        body.types,
+        body.episodeId,
+        abortController.signal,
+      )
+    } finally {
+      req.removeListener('close', abort)
+      req.removeListener('aborted', abort)
+    }
   }
 
   /** 작품 인덱싱 상태 조회 */
