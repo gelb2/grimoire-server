@@ -1,5 +1,25 @@
 # Changelog — grimoire-server
 
+## [0.27.0] - 2026-04-19
+
+### F1/F2/F3 — §0 크레딧-원가 마진 전면 정합화
+
+#### Changed
+- **F1 기본 패키지 인상**: CREDIT_PRODUCTS.credit-5 price ₩1,000→₩2,000, priceUsd 99센트→149센트. Polar 고정수수료 $0.30 잠식(44%) 해소 → 안전배수 1.84× → 3.49× PASS
+- **F2 AI 분석 크레딧 확정**: ANALYSIS_CREDIT_COST=3 신규 상수, CreditReason.NOVEL_ANALYSIS / NOVEL_ANALYSIS_REFUND 추가. `NovelAnalysisUseCase.analyzeNewEpisode`에 authorId 파라미터 + 시작 전 3 차감 + 실패 시 전액 환불 로직. 컨트롤러 `/analysis/check`가 `req.user.sub` 전달 (IDOR 방지)
+- **F3 ai-analysis-spec §8 현행화**: "분석 1회 ≈ 5원" 삭제 → Sonnet 4.6 ₩60.4 / Haiku 4.5 ₩20.6 양 기준 병기. 크레딧 차감 정책 표 추가
+- **docs/ai-cost-table.md 전면 재작성**: PAYAPP 3.5% 가정 삭제, Polar 2.9%+$0.30 정본 반영. TBD 2건 제거. 베스트 기준 모든 기능 PASS 확인
+
+#### Test Updates
+- `payment.usecase.spec.ts` — credit-5 기대값 ₩1,000→₩2,000, AI_COST_PER_THEME_KRW 12→14.6
+- `polar.adapter.spec.ts` — webhook amount 99센트→149센트 / ₩1,000→₩2,000
+- `novel-analysis.usecase.spec.ts` — mockCreditRepo 추가, 크레딧 차감/부족/환불 3 케이스 추가, 전체 호출에 authorId 첫 인자 추가
+
+#### Rationale
+- 결제사 전환(PAYAPP→Polar) 당시 고정수수료($0.30≈₩442) 구조 변경이 기본 패키지 마진을 조용히 잠식
+- 4/18 Cost Audit에서 CRITICAL 3건 드러남 (COST_AUDIT_REPORT §3 정정 참조)
+- 사용자가 "인상" 방안 선택 (vs 최소 결제 ₩3,000 폐지 방안)
+
 ## [0.26.0] - 2026-04-19
 
 ### Title 정규화 파이프라인 도입 (Safari Hangul shaping 버그 회피)

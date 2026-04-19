@@ -12,7 +12,7 @@ describe('PaymentUseCase', () => {
     id: 'pay-1',
     authorId: 'author-1',
     productId: 'credit-5',
-    amount: 1000,
+    amount: 2000,
     credits: 5,
     externalTransactionId: null,
     status: 'pending',
@@ -29,7 +29,7 @@ describe('PaymentUseCase', () => {
   ): NormalizedWebhookEvent => ({
     type: 'order.paid',
     tradeNo: 'TRADE-001',
-    amount: 1000,
+    amount: 2000,
     status: 'success',
     ...overrides,
   })
@@ -87,13 +87,13 @@ describe('PaymentUseCase', () => {
       expect(products[0]).toHaveProperty('pricePerCredit')
     })
 
-    it('상품 가격이 올바르다 (기획서 §8 기준)', () => {
+    it('상품 가격이 올바르다 (기획서 §8 기준, F1 2026-04-19 인상 반영)', () => {
       const products = useCase.getProducts()
       const p5 = products.find((p) => p.id === 'credit-5')!
       const p20 = products.find((p) => p.id === 'credit-20')!
       const p50 = products.find((p) => p.id === 'credit-50')!
 
-      expect(p5.price).toBe(1000)
+      expect(p5.price).toBe(2000)
       expect(p20.price).toBe(3000)
       expect(p50.price).toBe(5000)
     })
@@ -107,7 +107,7 @@ describe('PaymentUseCase', () => {
         expect.objectContaining({
           authorId: 'author-1',
           productId: 'credit-5',
-          amount: 1000,
+          amount: 2000,
           credits: 5,
         }),
       )
@@ -115,7 +115,7 @@ describe('PaymentUseCase', () => {
         expect.objectContaining({
           productId: 'credit-5',
           productName: '5 크레딧',
-          amount: 1000,
+          amount: 2000,
         }),
       )
       expect(result.paymentUrl).toBe('https://example.com/pay/test')
@@ -225,8 +225,9 @@ describe('PaymentUseCase', () => {
   })
 
   describe('상품 가격 검증 — 크레딧 비용이 AI API 비용을 초과하는지', () => {
-    // 테마 생성 1회 ≈ 2000 tokens ≈ 약 12원 (Claude Sonnet 기준)
-    const AI_COST_PER_THEME_KRW = 12
+    // 테마 생성 1회 ≈ 800 input + 500 output tokens (Claude Sonnet 4.6, $3/$15 per 1M, 환율 ₩1,474)
+    // = ₩14.6 (docs/ai-cost-table.md §3-1 정본)
+    const AI_COST_PER_THEME_KRW = 14.6
 
     it('모든 상품의 크레딧당 가격이 AI 비용의 최소 5배 이상이다', () => {
       for (const product of CREDIT_PRODUCTS) {

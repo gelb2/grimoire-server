@@ -1,8 +1,11 @@
-import { Injectable, Inject, Logger } from '@nestjs/common'
+import { Injectable, Inject, Logger, BadRequestException } from '@nestjs/common'
 import { VectorStorePort } from '@domain/port/outbound/vector-store.port'
 import { EmbeddingPort } from '@domain/port/outbound/embedding.port'
 import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
+import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
+import { CreditReason } from '@domain/model/credit'
+import { ANALYSIS_CREDIT_COST } from '@domain/model/config'
 import { chunkText, checkConsistency, checkTone, checkCharacter, AnalysisResult, WorkMeta } from '@lib/rag'
 
 @Injectable()
@@ -14,6 +17,7 @@ export class NovelAnalysisUseCase {
     @Inject('EmbeddingPort') private readonly embedding: EmbeddingPort,
     @Inject('ClaudeApiPort') private readonly claude: ClaudeApiPort,
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
+    @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
   ) {}
 
   /** 에피소드 텍스트를 벡터화하여 인덱싱 */
@@ -57,13 +61,46 @@ export class NovelAnalysisUseCase {
    * - 3종 분석을 Promise.all 병렬 호출 (latency 1/3)
    * - 응답의 issues 인용이 실제 새 에피소드 텍스트에 존재하는지 후처리 검증 (환각 제거)
    *
+   * 크레딧 차감 (F2 2026-04-19):
+   * - 실행 전 ANALYSIS_CREDIT_COST(3) 크레딧 차감 — 부족 시 BadRequest
+   * - AI 호출 실패 시 전액 환불
+   *
    * 파라미터:
+   * - authorId — 크레딧 차감 대상 (JWT `sub` 경유)
    * - excludeEpisodeId — 재분석 시 자기 자신 청크 제외 (self-reference 방지)
    */
   async analyzeNewEpisode(
+    authorId: string,
     workId: string,
     newEpisodeText: string,
     analysisTypes: ('consistency' | 'tone' | 'character')[] = ['consistency', 'tone', 'character'],
+    excludeEpisodeId?: string,
+  ): Promise<AnalysisResult[]> {
+    // F2 — 크레딧 차감 (PLANNING §14, ai-cost-table §3-2)
+    try {
+      await this.creditRepo.adjustCredits(authorId, -ANALYSIS_CREDIT_COST, CreditReason.NOVEL_ANALYSIS)
+    } catch {
+      throw new BadRequestException(
+        `AI 분석은 ${ANALYSIS_CREDIT_COST} 크레딧이 필요합니다. 크레딧이 부족합니다.`,
+      )
+    }
+
+    try {
+      return await this.runAnalysis(workId, newEpisodeText, analysisTypes, excludeEpisodeId)
+    } catch (error) {
+      // 실패 시 전액 환불
+      await this.creditRepo
+        .adjustCredits(authorId, ANALYSIS_CREDIT_COST, CreditReason.NOVEL_ANALYSIS_REFUND)
+        .catch((e) => this.logger.error(`환불 실패: ${String(e)}`))
+      throw error
+    }
+  }
+
+  /** 분석 실제 실행 (크레딧 로직과 분리) */
+  private async runAnalysis(
+    workId: string,
+    newEpisodeText: string,
+    analysisTypes: ('consistency' | 'tone' | 'character')[],
     excludeEpisodeId?: string,
   ): Promise<AnalysisResult[]> {
     // 작품 메타 + 에피소드 제목 매핑 병렬 로드
