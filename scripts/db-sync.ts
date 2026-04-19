@@ -1,8 +1,7 @@
 /**
  * DB 동기화 스크립트 — source DB의 데이터를 target DB로 복사
  *
- * 사용법:
- *   npx tsx scripts/db-sync.ts prod inhouse
+ * 사용법 (2026-04-19 inhouse 제거):
  *   npx tsx scripts/db-sync.ts prod dev --mask-pii
  *   npx tsx scripts/db-sync.ts dev local
  *
