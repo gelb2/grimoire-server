@@ -389,13 +389,24 @@ Prisma 모델 24개 중 **17개** 복사. 나머지는 환경별 독립이 합�
 
 ## 12. 초기 세팅
 
+### 12.1 Azure 리소스 일괄 생성
+
 ```bash
-# Azure 리소스 일괄 생성
 chmod +x scripts/azure-setup.sh
 ./scripts/azure-setup.sh
 ```
 
 상세: `scripts/azure-setup.sh` 참조.
+
+### 12.2 로컬 배포 머신 사전 세팅 (최초 1회)
+
+`make deploy-*` 실행 전 맥북 로컬에서 **필수 1회** 세팅해야 하는 항목들. 누락 시 `az acr login` 단계에서 macOS TCC가 `python3.13` 권한 다이얼로그를 매 실행마다 띄워 자동화가 중단된다.
+
+- **Docker credential store**: `~/.docker/config.json`의 `credsStore`를 반드시 `"osxkeychain"`으로. Docker Desktop 기본값 `"desktop"`을 쓰면 TCC 다이얼로그 반복 발생.
+- **az CLI 로그인**: `rainmaker8492@gmail.com` 계정.
+- **Docker Desktop 기동**: `docker info` 통과 확인.
+
+상세 절차 + 해결 근거: `docs/DEPLOY.md §3 로컬 배포 머신 사전 세팅` 참조.
 
 ---
 
