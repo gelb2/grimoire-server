@@ -20,7 +20,6 @@
 |------|--------|----------|------|
 | localhost | `npx prisma migrate dev` | 개발자가 수동 실행 | 새 마이그레이션 파일 생성 + 즉시 적용 |
 | development | `npx prisma migrate deploy` | 컨테이너 시작 시 자동 | `docker-entrypoint.sh`에서 실행 |
-| inhouse | `npx prisma migrate deploy` | 컨테이너 시작 시 자동 | `docker-entrypoint.sh`에서 실행 |
 | production | `npx prisma migrate deploy` | `RUN_MIGRATION=true` 설정 시에만 | 미설정 시 스킵 (안전 기본값) |
 
 ### 환경변수
@@ -29,7 +28,7 @@
 |------|-----|------|
 | `SKIP_MIGRATION` | `true` | 모든 환경에서 마이그레이션 완전 스킵 |
 | `RUN_MIGRATION` | `true` | production에서 마이그레이션 실행 허용 |
-| (기본) | - | localhost~inhouse: 자동 실행, production: 스킵 |
+| (기본) | - | localhost~development: 자동 실행, production: 스킵 |
 
 ---
 
@@ -59,7 +58,7 @@ ls prisma/migrations/
 
 ### 3-3. 원격 DB 적용
 
-- development/inhouse: 코드 push → 컨테이너 재배포 → 자동 적용
+- development: 코드 push → 컨테이너 재배포 → 자동 적용
 - production: 컨테이너 환경변수에 `RUN_MIGRATION=true` 설정 후 배포
 
 ### 3-4. 수동 적용 (긴급 시)
@@ -130,7 +129,7 @@ npx prisma migrate status
 > 프로덕션(`RUN_MIGRATION=true` 설정 후 배포)은 아래 순서를 반드시 지킨다.
 
 ```
-[ ] 1. inhouse 환경에서 동일 마이그레이션이 문제 없이 적용됐는지 확인
+[ ] 1. dev(development) 환경에서 동일 마이그레이션이 문제 없이 적용됐는지 확인
 [ ] 2. 프로덕션 DB 스냅샷 생성 (Azure Portal → grimoire-db-prod → 백업)
 [ ] 3. prisma migrate status 로 현재 상태 확인
 [ ] 4. 마이그레이션 실행 (컨테이너 RUN_MIGRATION=true 배포 또는 수동)
@@ -209,7 +208,7 @@ npx prisma migrate resolve --applied {마이그레이션_이름}
 - **목적**: 변경 이유 (예: 에피소드 HWP 포맷 지원 추가)
 - **변경 내용**: 컬럼/테이블 추가·수정·삭제 요약
 - **롤백 방법**: 역방향 마이그레이션명 또는 "해당 없음"
-- **적용 환경**: localhost ✓ / development ✓ / inhouse ✓ / production ✓
+- **적용 환경**: localhost ✓ / development ✓ / production ✓
 ```
 
 ### 예시
@@ -219,7 +218,7 @@ npx prisma migrate resolve --applied {마이그레이션_이름}
 - **목적**: HWP 원고 업로드 지원을 위해 source_format에 'hwp' 값 허용
 - **변경 내용**: episodes.source_format 컬럼 — check constraint 수정
 - **롤백 방법**: rollback_add_hwp_source_format (constraint 원복)
-- **적용 환경**: localhost ✓ / development ✓ / inhouse ✓ / production ✓
+- **적용 환경**: localhost ✓ / development ✓ / production ✓
 ```
 
 ---
@@ -275,7 +274,7 @@ git revert {마이그레이션_커밋_SHA}
 | 상황 | 권장 방법 |
 |------|----------|
 | 로컬에서만 테스트 중 | `migrate reset` |
-| development/inhouse 환경 | 역방향 마이그레이션 생성 + 배포 |
+| development 환경 | 역방향 마이그레이션 생성 + 배포 |
 | production — 데이터 무결성 이상 없음 | 역방향 마이그레이션 생성 + 배포 |
 | production — 데이터 손상 발생 | Azure 스냅샷 복원 (사용자 확인 필수) |
 

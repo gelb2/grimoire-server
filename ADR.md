@@ -194,7 +194,7 @@ EXPLAIN ANALYZE SELECT * FROM works ORDER BY view_count DESC LIMIT 12;
 ## ADR-005: 도커라이징과 배포
 
 ### 결정
-Docker 멀티스테이지 빌드로 단일 이미지를 만들고, 환경변수만 바꿔서 3환경(dev/inhouse/prod) 배포.
+Docker 멀티스테이지 빌드로 단일 이미지를 만들고, 환경변수만 바꿔서 2환경(dev/prod) 배포. (2026-04-19: inhouse 제거)
 
 ### 구현
 ```dockerfile
@@ -212,8 +212,7 @@ CMD ["node", "dist/main.js"]
 ### 배포 흐름
 ```
 develop → docker build → ACR push → Container Apps update (dev)
-inhouse → 같은 이미지 → Container Apps update (inhouse)
-main → 같은 이미지 → Container Apps update (prod)
+main    → 같은 이미지 → Container Apps update (prod)
 ```
 
 ### 왜 이 방식인가 (Trade-off)
