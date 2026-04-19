@@ -1,11 +1,18 @@
 #!/bin/bash
 # Grimoire Azure 인프라 초기 세팅 스크립트
 # projectZenith 패턴 그대로 적용
+#
+# 2026-04-19 변경:
+#   - dev/prod 2환경만 생성 (inhouse 제거)
+#   - Container App: min-replicas=0, cpu=0.25, memory=0.5Gi (비용 절감)
+#   - 리소스그룹: zenith-rg (ProjectZenith 공유)
+#   - Container Apps Environment: zenith-env-dev (공유)
 set -e
 
-RESOURCE_GROUP="grimoire-rg"
+RESOURCE_GROUP="zenith-rg"
 LOCATION="koreacentral"
 ACR_NAME="grimoireacr"
+CONTAINER_APP_ENV="zenith-env-dev"
 DB_ADMIN="grimoireadmin"
 # DB_PASSWORD는 실행 시 입력받기
 read -sp "Enter DB admin password: " DB_PASSWORD
@@ -45,13 +52,15 @@ for ENV in dev prod; do
     --database-name grimoire
 done
 
-echo "=== 4. Container Apps Environment ==="
-az containerapp env create \
-  --name grimoire-env \
-  --resource-group $RESOURCE_GROUP \
-  --location $LOCATION
+echo "=== 4. Container Apps Environment (공유 — 이미 존재 시 스킵) ==="
+# zenith-env-dev는 ProjectZenith가 이미 생성했을 가능성 큼
+az containerapp env show --name $CONTAINER_APP_ENV --resource-group $RESOURCE_GROUP >/dev/null 2>&1 || \
+  az containerapp env create \
+    --name $CONTAINER_APP_ENV \
+    --resource-group $RESOURCE_GROUP \
+    --location $LOCATION
 
-echo "=== 5. Container Apps (server x3) ==="
+echo "=== 5. Container Apps (server x2: dev/prod) ==="
 ACR_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
 ACR_USER=$(az acr credential show --name $ACR_NAME --query username -o tsv)
 ACR_PASS=$(az acr credential show --name $ACR_NAME --query "passwords[0].value" -o tsv)
@@ -60,7 +69,7 @@ for ENV in dev prod; do
   az containerapp create \
     --name grimoire-server-$ENV \
     --resource-group $RESOURCE_GROUP \
-    --environment grimoire-env \
+    --environment $CONTAINER_APP_ENV \
     --target-port 3000 \
     --ingress external \
     --min-replicas 0 \
@@ -72,12 +81,12 @@ for ENV in dev prod; do
     --registry-password $ACR_PASS
 done
 
-echo "=== 6. Container Apps (web x3) ==="
+echo "=== 6. Container Apps (web x2: dev/prod) ==="
 for ENV in dev prod; do
   az containerapp create \
     --name grimoire-web-$ENV \
     --resource-group $RESOURCE_GROUP \
-    --environment grimoire-env \
+    --environment $CONTAINER_APP_ENV \
     --target-port 3001 \
     --ingress external \
     --min-replicas 0 \
@@ -89,13 +98,9 @@ for ENV in dev prod; do
     --registry-password $ACR_PASS
 done
 
-echo "=== 7. 예산 알림 설정 ==="
-az consumption budget create \
-  --resource-group $RESOURCE_GROUP \
-  --budget-name grimoire-budget \
-  --amount 50 \
-  --time-grain monthly \
-  --category cost
+echo "=== 7. 예산 알림 설정 (선택) ==="
+# Azure 구독 업그레이드 후 수동으로 Portal에서 설정 권장
+# az consumption budget create 는 비활성화 — subscription 상태에 따라 실패 가능
 
 echo ""
 echo "=== 완료 ==="
