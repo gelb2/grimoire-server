@@ -20,7 +20,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     // 예상치 못한 에러 — production(실서비스)에서만 내부 정보 숨김.
-    // inhouse/dev는 QA 디버깅 편의를 위해 스택 노출 허용.
+    // dev는 QA 디버깅 편의를 위해 스택 노출 허용.
     const isProd = isProduction()
     const message = exception instanceof Error ? exception.message : String(exception)
     const stack = exception instanceof Error ? exception.stack : undefined

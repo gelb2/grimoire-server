@@ -17,8 +17,8 @@ az group create --name $RESOURCE_GROUP --location $LOCATION
 echo "=== 2. Container Registry ==="
 az acr create --name $ACR_NAME --resource-group $RESOURCE_GROUP --sku Basic --admin-enabled true
 
-echo "=== 3. PostgreSQL (dev/inhouse/prod) ==="
-for ENV in dev inhouse prod; do
+echo "=== 3. PostgreSQL (dev/prod) ==="
+for ENV in dev prod; do
   az postgres flexible-server create \
     --resource-group $RESOURCE_GROUP \
     --name grimoire-db-$ENV \
@@ -56,7 +56,7 @@ ACR_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
 ACR_USER=$(az acr credential show --name $ACR_NAME --query username -o tsv)
 ACR_PASS=$(az acr credential show --name $ACR_NAME --query "passwords[0].value" -o tsv)
 
-for ENV in dev inhouse prod; do
+for ENV in dev prod; do
   az containerapp create \
     --name grimoire-server-$ENV \
     --resource-group $RESOURCE_GROUP \
@@ -73,7 +73,7 @@ for ENV in dev inhouse prod; do
 done
 
 echo "=== 6. Container Apps (web x3) ==="
-for ENV in dev inhouse prod; do
+for ENV in dev prod; do
   az containerapp create \
     --name grimoire-web-$ENV \
     --resource-group $RESOURCE_GROUP \

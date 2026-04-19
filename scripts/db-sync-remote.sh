@@ -5,10 +5,8 @@
 # 비상용 수단: GitHub Actions `db-sync-nightly.yml`이 다운되거나 빌링 문제 시
 #   로컬에서 동일한 로직으로 수동 실행 가능. 스크립트가 정본, CI는 래퍼로 관리.
 #
-# 사용:
-#   ./scripts/db-sync-remote.sh prod inhouse              # PII 유지
+# 사용 (2026-04-19 inhouse 제거 — 2환경 유지):
 #   ./scripts/db-sync-remote.sh prod dev --mask-pii       # PII 마스킹
-#   ./scripts/db-sync-remote.sh inhouse dev --mask-pii    # prod 우회 경로
 #
 # 환경변수:
 #   DB_PASSWORD           Azure DB 비밀번호 (필수)
@@ -33,19 +31,19 @@ if [ -z "$SOURCE" ] || [ -z "$TARGET" ]; then
   fail "사용: $0 SOURCE TARGET [--mask-pii]"
 fi
 
-case "$SOURCE" in prod|inhouse|dev) ;; *) fail "SOURCE는 prod|inhouse|dev 중 하나 (got '$SOURCE')" ;; esac
-case "$TARGET" in inhouse|dev)      ;; *) fail "TARGET은 inhouse|dev 중 하나 (got '$TARGET'). local 경로는 scripts/db-sync-local.sh 사용" ;; esac
+case "$SOURCE" in prod|dev) ;; *) fail "SOURCE는 prod|dev 중 하나 (got '$SOURCE')" ;; esac
+case "$TARGET" in dev)      ;; *) fail "TARGET은 dev만 허용 (got '$TARGET'). local 경로는 scripts/db-sync-local.sh 사용" ;; esac
 
 if [ "$SOURCE" = "$TARGET" ]; then
   fail "SOURCE와 TARGET이 같습니다"
 fi
 
-# 방향 검증 — prod=3, inhouse=2, dev=1. 하위→상위 금지.
+# 방향 검증 — prod=3, dev=1. 하위→상위 금지.
 rank_of() {
-  case "$1" in prod) echo 3 ;; inhouse) echo 2 ;; dev) echo 1 ;; *) echo 0 ;; esac
+  case "$1" in prod) echo 3 ;; dev) echo 1 ;; *) echo 0 ;; esac
 }
 if [ "$(rank_of "$SOURCE")" -le "$(rank_of "$TARGET")" ]; then
-  fail "하위 → 상위 동기화 금지: $SOURCE → $TARGET (허용: prod→inhouse, prod→dev, inhouse→dev)"
+  fail "하위 → 상위 동기화 금지: $SOURCE → $TARGET (허용: prod→dev)"
 fi
 
 # MASK_FLAG 처리

@@ -1,21 +1,22 @@
 /**
  * APP_ENV — 애플리케이션 환경 구분자
  *
- * NODE_ENV 대신 이 변수를 써서 4개 환경(localhost/development/inhouse/production)을
+ * NODE_ENV 대신 이 변수를 써서 3개 환경(localhost/development/production)을
  * 구분한다. NODE_ENV는 라이브러리 표준 (production/development/test) 전용으로 둔다.
  *
  * 참조: docs/environments.md, docs/DEPLOY.md
  *
  * 값:
  *   - localhost    : 로컬 개발 (Docker Compose DB, localhost:3000)
- *   - development  : dev 환경 (dev.grimoire-book.com)
- *   - inhouse      : 내부 QA 환경 (inhouse.grimoire-book.com)
+ *   - development  : dev 환경 (dev.grimoire-book.com) — QA 스테이징 겸임
  *   - production   : 실서비스 (grimoire-book.com)
+ *
+ * 2026-04-19: inhouse 환경 제거 (비용 절감 + dev가 QA 스테이징 역할 흡수)
  */
 
-export type AppEnv = 'localhost' | 'development' | 'inhouse' | 'production'
+export type AppEnv = 'localhost' | 'development' | 'production'
 
-const VALID_VALUES: readonly AppEnv[] = ['localhost', 'development', 'inhouse', 'production'] as const
+const VALID_VALUES: readonly AppEnv[] = ['localhost', 'development', 'production'] as const
 
 /**
  * 현재 APP_ENV 값을 반환한다.
