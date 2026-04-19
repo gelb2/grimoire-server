@@ -30,6 +30,13 @@ describe('NovelAnalysisUseCase', () => {
   }
   let mockClaude: { ask: jest.Mock; generateTheme: jest.Mock }
   let mockWorkRepo: { findById: jest.Mock; findEpisodes: jest.Mock }
+  let mockCreditRepo: {
+    adjustCredits: jest.Mock
+    findLogsByAuthorId: jest.Mock
+    giftTransfer: jest.Mock
+    getGiftRanking: jest.Mock
+    sumNegativeAmounts: jest.Mock
+  }
 
   beforeEach(() => {
     jest.clearAllMocks()
@@ -53,12 +60,20 @@ describe('NovelAnalysisUseCase', () => {
       findById: jest.fn().mockResolvedValue(null),
       findEpisodes: jest.fn().mockResolvedValue([]),
     }
+    mockCreditRepo = {
+      adjustCredits: jest.fn().mockResolvedValue({ credits: 10, log: {} }),
+      findLogsByAuthorId: jest.fn().mockResolvedValue([]),
+      giftTransfer: jest.fn(),
+      getGiftRanking: jest.fn().mockResolvedValue([]),
+      sumNegativeAmounts: jest.fn().mockResolvedValue(0),
+    }
 
     useCase = new NovelAnalysisUseCase(
       mockVectorStore as any,
       mockEmbedding as any,
       mockClaude as any,
       mockWorkRepo as any,
+      mockCreditRepo as any,
     )
   })
 
@@ -103,7 +118,7 @@ describe('NovelAnalysisUseCase', () => {
     it('기존 컨텍스트가 없으면 비교 불가 결과를 반환한다', async () => {
       mockVectorStore.searchSimilar.mockResolvedValue([])
 
-      const results = await useCase.analyzeNewEpisode('work-1', '새 에피소드 텍스트')
+      const results = await useCase.analyzeNewEpisode('author-1', 'work-1', '새 에피소드 텍스트')
 
       expect(results).toHaveLength(3)
       results.forEach((r) => {
@@ -124,7 +139,7 @@ describe('NovelAnalysisUseCase', () => {
         type: 'consistency', score: 90, summary: 'ok', issues: [], suggestions: [],
       })
 
-      await useCase.analyzeNewEpisode('work-1', '새 에피소드 텍스트', ['consistency'], 'ep-9')
+      await useCase.analyzeNewEpisode('author-1', 'work-1', '새 에피소드 텍스트', ['consistency'], 'ep-9')
 
       // checkConsistency에 전달된 context를 검증 — ep-9 청크는 제외되어야 함
       expect(mockCheckConsistency).toHaveBeenCalledTimes(1)
@@ -152,7 +167,7 @@ describe('NovelAnalysisUseCase', () => {
       mockCheckTone.mockResolvedValue({ ...mockResult, type: 'tone' as const })
       mockCheckCharacter.mockResolvedValue({ ...mockResult, type: 'character' as const })
 
-      const results = await useCase.analyzeNewEpisode('work-1', '새 에피소드 텍스트')
+      const results = await useCase.analyzeNewEpisode('author-1', 'work-1', '새 에피소드 텍스트')
 
       expect(mockEmbedding.getEmbedding).toHaveBeenCalled()
       expect(mockVectorStore.searchSimilar).toHaveBeenCalledWith(
@@ -174,7 +189,7 @@ describe('NovelAnalysisUseCase', () => {
         suggestions: [],
       })
 
-      const results = await useCase.analyzeNewEpisode('work-1', '새 텍스트', ['tone'])
+      const results = await useCase.analyzeNewEpisode('author-1', 'work-1', '새 텍스트', ['tone'])
 
       expect(mockCheckTone).toHaveBeenCalled()
       expect(mockCheckConsistency).not.toHaveBeenCalled()
@@ -194,7 +209,7 @@ describe('NovelAnalysisUseCase', () => {
         type: 'consistency', score: 90, summary: 'ok', issues: [], suggestions: [],
       })
 
-      await useCase.analyzeNewEpisode('work-1', '새 텍스트', ['consistency'])
+      await useCase.analyzeNewEpisode('author-1', 'work-1', '새 텍스트', ['consistency'])
 
       const workMetaArg = mockCheckConsistency.mock.calls[0][3]
       expect(workMetaArg).toEqual({
@@ -213,7 +228,7 @@ describe('NovelAnalysisUseCase', () => {
         type: 'consistency', score: 90, summary: 'ok', issues: [], suggestions: [],
       })
 
-      await useCase.analyzeNewEpisode('work-1', '새 텍스트', ['consistency'])
+      await useCase.analyzeNewEpisode('author-1', 'work-1', '새 텍스트', ['consistency'])
 
       const context = mockCheckConsistency.mock.calls[0][1] as string
       expect(context).toContain('제9화 "도리안그레이의 초상"')
@@ -235,7 +250,7 @@ describe('NovelAnalysisUseCase', () => {
       })
 
       const newText = '새 에피소드 텍스트입니다. 원문에 있는 구절 이 여기 들어있어요.'
-      const results = await useCase.analyzeNewEpisode('work-1', newText, ['consistency'])
+      const results = await useCase.analyzeNewEpisode('author-1', 'work-1', newText, ['consistency'])
 
       expect(results[0].issues).toHaveLength(1)
       expect(results[0].issues[0]).toContain('원문에 있는 구절')
@@ -250,10 +265,45 @@ describe('NovelAnalysisUseCase', () => {
         issues: [], suggestions: [],
       })
 
-      const results = await useCase.analyzeNewEpisode('work-1', '아무 텍스트', ['consistency'])
+      const results = await useCase.analyzeNewEpisode('author-1', 'work-1', '아무 텍스트', ['consistency'])
 
       expect(results[0].score).toBe(-1)
       expect(results[0].summary).toContain('분석 실패')
+    })
+
+    // F2 2026-04-19: AI 분석 3 크레딧 차감
+    describe('크레딧 차감 (F2)', () => {
+      it('분석 시작 전 3 크레딧을 차감한다', async () => {
+        mockVectorStore.searchSimilar.mockResolvedValue([])
+        await useCase.analyzeNewEpisode('author-1', 'work-1', '새 텍스트')
+
+        expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith(
+          'author-1', -3, 'novel_analysis',
+        )
+      })
+
+      it('크레딧 부족 시 BadRequest를 던지고 분석을 수행하지 않는다', async () => {
+        mockCreditRepo.adjustCredits.mockRejectedValueOnce(new Error('크레딧이 부족합니다'))
+
+        await expect(
+          useCase.analyzeNewEpisode('author-1', 'work-1', '새 텍스트'),
+        ).rejects.toThrow('AI 분석은 3 크레딧이 필요합니다')
+
+        expect(mockVectorStore.searchSimilar).not.toHaveBeenCalled()
+        expect(mockCheckConsistency).not.toHaveBeenCalled()
+      })
+
+      it('분석 중 예외가 나면 전액(3) 환불한다', async () => {
+        mockVectorStore.searchSimilar.mockRejectedValue(new Error('벡터 DB 장애'))
+
+        await expect(
+          useCase.analyzeNewEpisode('author-1', 'work-1', '새 텍스트'),
+        ).rejects.toThrow('벡터 DB 장애')
+
+        // 차감(-3)과 환불(+3)이 각각 호출됐는지
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -3, 'novel_analysis')
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 3, 'novel_analysis_refund')
+      })
     })
   })
 

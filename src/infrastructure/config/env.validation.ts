@@ -14,7 +14,7 @@ export function validateEnv(): void {
   const appEnv = getAppEnv()
   console.log(`[env] APP_ENV=${appEnv}, NODE_ENV=${process.env.NODE_ENV || '(unset)'}`)
 
-  // 원격 환경(development/inhouse/production)에서 필수 — 미설정 시 서버 부팅 차단
+  // 원격 환경(development/production)에서 필수 — 미설정 시 서버 부팅 차단
   const remoteRequired: { key: string; label: string }[] = []
 
   for (const { key, label } of remoteRequired) {

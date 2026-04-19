@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # preflight.sh — 배포 전 전수검사 (grimoire-server)
 # 사용: ./scripts/preflight.sh <env>
-#   <env>: dev | inhouse | prod
+#   <env>: dev | prod
 # 정본: docs/DEPLOY.md §3 preflight 전수검사 항목
 #
 # 모든 검사 통과 → exit 0
@@ -139,7 +139,7 @@ done
 # 7. CORS 정책 환경별 검증
 # ─────────────────────────────────────────────────────────────
 step "7/8: APP_ENV + CORS_ORIGIN 환경별 검증"
-# APP_ENV 값 검증 (dev → development, inhouse → inhouse, prod → production)
+# APP_ENV 값 검증 (dev → development, prod → production) — 2026-04-19 inhouse 제거
 ACTUAL_APP_ENV=$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].env[?name=='APP_ENV'].value" -o tsv 2>/dev/null || echo "")
 EXPECTED_APP_ENV="$ENV"
 if [ "$ENV" = "dev" ]; then EXPECTED_APP_ENV="development"; fi
@@ -160,13 +160,6 @@ case "$ENV" in
       _warn "dev CORS=* (의도됨). 그러나 prod는 엄격해야 함."
     else
       _pass "dev CORS: $ACTUAL_CORS"
-    fi
-    ;;
-  inhouse)
-    if [ "$ACTUAL_CORS" = "https://inhouse.grimoire-book.com" ]; then
-      _pass "inhouse CORS 정확"
-    else
-      _fail "inhouse CORS '$ACTUAL_CORS' ≠ 기대 'https://inhouse.grimoire-book.com'"
     fi
     ;;
   prod)
