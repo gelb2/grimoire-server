@@ -18,19 +18,32 @@ export const DAILY_FREE_LIMITS: Record<string, number> = {
 }
 
 /**
+ * AI 작품 분석 1회 차감 크레딧 — PLANNING §14 / ai-cost-table.md §3-2 (F2 2026-04-19 확정).
+ *
+ * 근거: Sonnet 4.6 기준 분석 회당 AI 원가 ₩60.4, 1~2 크레딧 시 전 패키지 안전배수 3× 미달.
+ * 3 크레딧 시 베스트 패키지 ₩300 vs 총 원가 ₩95.5 → 안전배수 3.14× PASS.
+ */
+export const ANALYSIS_CREDIT_COST = 3
+
+/**
  * 크레딧 상품 목록 — PLANNING_GRIMOIRE.md §8 기준
  *
  * `price`: 원화(KRW) 기준 — 기획서 정본
  * `priceUsd`: Polar 결제용 USD 센트 — Polar Product에 설정된 실제 결제 금액
  * 실제 결제 시 `POLAR_PRODUCT_*` 환경변수에 해당하는 Polar Product로 라우팅.
+ *
+ * F1 인상 (2026-04-19): 기본 패키지 ₩1,000→₩2,000
+ *   배경: Polar 고정수수료 $0.30(₩442)가 구 ₩1,000의 44%를 잠식 → 안전배수 1.84× CRITICAL.
+ *   대응: ₩2,000으로 인상, 개당 ₩400 확보 → 안전배수 3.49× PASS.
+ *   TODO: Polar Dashboard의 `POLAR_PRODUCT_BASIC` 상품 금액을 $1.49 (약 ₩2,196)로 맞춤 업데이트 필요.
  */
 export const CREDIT_PRODUCTS = [
   {
     id: 'credit-5',
     name: '5 크레딧',
     credits: 5,
-    price: 1000,
-    priceUsd: 99,
+    price: 2000,
+    priceUsd: 149,
     providerProductIdEnv: 'POLAR_PRODUCT_BASIC',
   },
   {

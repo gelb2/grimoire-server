@@ -1,7 +1,8 @@
-import { Controller, Post, Get, Body, Param, UseGuards, BadRequestException } from '@nestjs/common'
+import { Controller, Post, Get, Body, Param, Req, UseGuards, BadRequestException } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
+import { AuthenticatedRequest } from '@adapter/inbound/http/dto/authenticated-request'
 
 const RAW_TEXT_MIN_LENGTH = 10
 const RAW_TEXT_MAX_LENGTH = 50000
@@ -30,6 +31,7 @@ export class AnalysisController {
   @UseGuards(JwtAuthGuard)
   @Post('check')
   async analyzeEpisode(
+    @Req() req: AuthenticatedRequest,
     @Body() body: {
       workId: string
       newEpisodeText: string
@@ -38,7 +40,9 @@ export class AnalysisController {
     },
   ) {
     this.validateRawText(body.newEpisodeText)
+    // F2 (2026-04-19): 분석 호출 시 3 크레딧 차감. IDOR 방지용으로 body 대신 JWT sub 사용.
     return this.analysisUseCase.analyzeNewEpisode(
+      req.user.sub,
       body.workId,
       body.newEpisodeText,
       body.types,
