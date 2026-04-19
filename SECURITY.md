@@ -32,10 +32,9 @@
 
 ### CORS
 - localhost: `http://localhost:3001`
-- development: `https://dev.grimoire-book.com`
-- inhouse: `https://inhouse.grimoire-book.com`
+- development: `https://dev.grimoire-book.com` (현재 `*` 설정 — 의도된 느슨한 dev 값)
 - production: `https://grimoire-book.com`
-- `*` 사용 절대 금지 (폴백 제거, 미설정 시 기동 실패)
+- `*` 사용 절대 금지 (폴백 제거, 미설정 시 기동 실패) — 단 dev는 의도적 예외
 
 ### 입력 검증
 - 모든 엔드포인트: `ValidationPipe` (whitelist + forbidNonWhitelisted + transform)
@@ -134,7 +133,7 @@
 ### 결제 보안 (Polar, 2026-04-09 PAYAPP 폐기)
 
 - **Polar 웹훅**: Standard Webhooks 스펙 HMAC 서명 검증 (`src/adapter/outbound/payment/polar.adapter.ts::verifyAndParseWebhook`)
-- 3환경 webhook endpoint 분리: dev/inhouse/prod 각자 고유 `POLAR_WEBHOOK_SECRET`
+- 2환경 webhook endpoint 분리: dev/prod 각자 고유 `POLAR_WEBHOOK_SECRET` (2026-04-19 inhouse endpoint 제거)
 - 중복 웹훅 방지: `tradeNo(checkoutId)` 기반 멱등성 (이미 completed면 무시)
 - 결제 기록: Payment 테이블에 전부 기록 (감사 추적)
 - 결제 시작 → 완료 사이: pending 상태로 추적
@@ -199,7 +198,7 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 - [x] 리소스그룹 `zenith-rg` 고정 (다른 RG 접근 불가)
 - [x] Container App FQDN이 매트릭스와 완전 일치 — 오타/잘못된 앱 갱신 방지
 - [x] 필수 환경변수(DATABASE_URL/JWT_SECRET/CORS_ORIGIN/POLAR_*/ANTHROPIC/OPENAI/AZURE_STORAGE_*) 존재 — 값은 출력하지 않고 키만 검증
-- [x] CORS 환경별 기대값 검증 — dev=`*` 경고, inhouse/prod는 엄격 도메인 매칭
+- [x] CORS 환경별 기대값 검증 — dev=`*` 경고, prod는 엄격 도메인 매칭
 - [x] git 워킹 트리 클린 + origin/<브랜치> 와 완전 동기화 — 로컬 미커밋/미푸시 상태로 배포하여 재현 불능 이미지 방지
 - [x] 이미지 태그 `{env}-{SHA}` 강제 — `:latest` 태그 노출 금지, 롤백 시 SHA로 역추적 가능
 - [x] prod 배포 시 interactive `yes` 입력 요구 — 실수 방지 (비대화형 환경에선 `SKIP_INTERACTIVE=1` 명시 필요)
@@ -280,7 +279,7 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 | **BFF 프록시 화이트리스트** | `[...path]` catch-all — `/api/admin/*`도 프록시 통과 | `/api/admin/*` 경로 화이트리스트 도입 또는 블랙리스트 | 중간 |
 | **@Public 데코레이터 명시** | 의도 공개 9개 + 가드 없음 상태가 구분 불명 | `@Public()` 커스텀 데코레이터로 의도 표시 | 낮음 (readability) |
 | **admin.controller 쿠키 통일** | `cookieOptions()` 재사용 안 하고 인라인 | auth.controller의 `cookieOptions()` import 공용 | 낮음 |
-| **ANTHROPIC_API_KEY 환경 분리** | 3환경 공유 (dev/inhouse/prod) | prod 전용 키 별도 발급 → dev 키 유출 영향 차단 | 낮음 |
+| **ANTHROPIC_API_KEY 환경 분리** | 2환경 공유 (dev/prod) | prod 전용 키 별도 발급 → dev 키 유출 영향 차단 | 낮음 |
 
 ### 결제/티어 도입 시
 
