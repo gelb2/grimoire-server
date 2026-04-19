@@ -44,11 +44,11 @@ step() { printf "\n%s▶ %s%s\n" "$C_BOLD" "$*" "$C_OFF"; }
 # 환경 매트릭스 (값 조회 함수)
 # ─────────────────────────────────────────────────────────────
 
-# 유효한 ENV인지 검증
+# 유효한 ENV인지 검증 (2026-04-19 inhouse 제거 — 2환경만 유지)
 validate_env() {
   case "${1:-}" in
-    dev|inhouse|prod) return 0 ;;
-    *) fail "ENV must be one of: dev, inhouse, prod (got: '${1:-}')" ;;
+    dev|prod) return 0 ;;
+    *) fail "ENV must be one of: dev, prod (got: '${1:-}')" ;;
   esac
 }
 
@@ -56,7 +56,6 @@ validate_env() {
 env_to_branch() {
   case "$1" in
     dev) echo "develop" ;;
-    inhouse) echo "inhouse" ;;
     prod) echo "main" ;;
     *) return 1 ;;
   esac
@@ -66,7 +65,6 @@ env_to_branch() {
 env_to_app_name() {
   case "$1" in
     dev) echo "grimoire-server-dev" ;;
-    inhouse) echo "grimoire-server-inhouse" ;;
     prod) echo "grimoire-server-prod" ;;
     *) return 1 ;;
   esac
@@ -76,7 +74,6 @@ env_to_app_name() {
 env_to_fqdn() {
   case "$1" in
     dev) echo "grimoire-server-dev.${FQDN_SUFFIX}" ;;
-    inhouse) echo "grimoire-server-inhouse.${FQDN_SUFFIX}" ;;
     prod) echo "grimoire-server-prod.${FQDN_SUFFIX}" ;;
     *) return 1 ;;
   esac
@@ -86,7 +83,6 @@ env_to_fqdn() {
 env_to_public_api_url() {
   case "$1" in
     dev) echo "https://dev-api.grimoire-book.com" ;;
-    inhouse) echo "https://inhouse-api.grimoire-book.com" ;;
     prod) echo "https://api.grimoire-book.com" ;;
     *) return 1 ;;
   esac
@@ -96,7 +92,6 @@ env_to_public_api_url() {
 env_to_tag_prefix() {
   case "$1" in
     dev) echo "dev" ;;
-    inhouse) echo "inhouse" ;;
     prod) echo "prod" ;;
     *) return 1 ;;
   esac

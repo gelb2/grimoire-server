@@ -106,7 +106,7 @@ export class PolarAdapter implements PaymentGatewayPort {
         this.logger.error('POLAR_WEBHOOK_SECRET 미설정 — 프로덕션 웹훅 거부')
         return null
       }
-      this.logger.warn('POLAR_WEBHOOK_SECRET 미설정 — 개발/inhouse 환경에서 서명 검증 스킵')
+      this.logger.warn('POLAR_WEBHOOK_SECRET 미설정 — dev 환경에서 서명 검증 스킵')
     }
 
     // Standard Webhooks 서명 검증

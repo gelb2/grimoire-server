@@ -2,6 +2,11 @@
 
 > Azure 인프라 구성 + 운영 명령어.
 > 참조: `docs/environments.md` (정본), `SECURITY.md`
+>
+> **⚠️ 2026-04-19 변경: `inhouse` 환경 제거 (3환경 → 2환경).**
+> 아래 표에 `inhouse` 열/행/리소스가 남아있을 수 있음 — **실측 기준 `dev`/`prod`만 유효**.
+> Container App 4개 (server/web × dev/prod) 전부 `min-replicas=0, cpu=0.25, memory=0.5Gi`로 재설정 완료.
+> 후속 PR에서 상세 표 정정 예정.
 
 ---
 

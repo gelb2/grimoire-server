@@ -29,10 +29,10 @@ function getDbUrl(env: string): string {
   return `postgresql://${ADMIN}:${PW}@grimoire-db-${env}.postgres.database.azure.com:5432/grimoire?sslmode=require`
 }
 
-const VALID_ENVS = ['prod', 'inhouse', 'dev', 'local']
+const VALID_ENVS = ['prod', 'dev', 'local']
 
 // 동기화 방향 검증 (상위 → 하위만 허용)
-const ENV_RANK: Record<string, number> = { prod: 3, inhouse: 2, dev: 1, local: 0 }
+const ENV_RANK: Record<string, number> = { prod: 3, dev: 1, local: 0 }
 
 function maskAuthors(authors: any[], maskPii: boolean): any[] {
   if (!maskPii) return authors
@@ -60,7 +60,7 @@ async function main() {
   if (!source || !target) {
     console.error('사용법: npx tsx scripts/db-sync.ts [source] [target] [--mask-pii]')
     console.error('예: npx tsx scripts/db-sync.ts prod dev --mask-pii')
-    console.error('환경: prod, inhouse, dev, local')
+    console.error('환경: prod, dev, local')
     process.exit(1)
   }
 
@@ -77,7 +77,7 @@ async function main() {
 
   if (ENV_RANK[source] <= ENV_RANK[target]) {
     console.error(`❌ 하위 → 상위 동기화 금지: ${source} → ${target}`)
-    console.error('   허용 방향: prod → inhouse → dev → local')
+    console.error('   허용 방향: prod → dev → local')
     process.exit(1)
   }
 
