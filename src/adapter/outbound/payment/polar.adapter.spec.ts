@@ -155,7 +155,7 @@ describe('PolarAdapter', () => {
         data: {
           id: 'order-1',
           checkoutId: 'checkout-abc',
-          totalAmount: 149,
+          totalAmount: 199,
           status: 'paid',
           metadata: { authorId: 'author-1', internalProductId: 'credit-5' },
         },
@@ -166,7 +166,7 @@ describe('PolarAdapter', () => {
       expect(result).toEqual({
         type: 'order.paid',
         tradeNo: 'checkout-abc',
-        amount: 2000, // 149센트 → ₩2,000 (credit-5 상품 매핑, F1 2026-04-19 인상 반영)
+        amount: 2000, // 199센트 → ₩2,000 (credit-5 상품 매핑, F1 2026-04-19 인상, Polar 패턴 $X.99=₩X,000)
         status: 'success',
         userId: 'author-1',
       })

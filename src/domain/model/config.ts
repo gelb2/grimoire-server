@@ -35,7 +35,8 @@ export const ANALYSIS_CREDIT_COST = 3
  * F1 인상 (2026-04-19): 기본 패키지 ₩1,000→₩2,000
  *   배경: Polar 고정수수료 $0.30(₩442)가 구 ₩1,000의 44%를 잠식 → 안전배수 1.84× CRITICAL.
  *   대응: ₩2,000으로 인상, 개당 ₩400 확보 → 안전배수 3.49× PASS.
- *   TODO: Polar Dashboard의 `POLAR_PRODUCT_BASIC` 상품 금액을 $1.49 (약 ₩2,196)로 맞춤 업데이트 필요.
+ *   USD 매핑: 기존 Polar 패턴 "₩X,000 = $X.99" 유지 → $0.99 → $1.99 (199센트).
+ *   Polar Dashboard에서 POLAR_PRODUCT_BASIC 상품 금액 $0.99 → $1.99 변경 완료 (2026-04-19).
  */
 export const CREDIT_PRODUCTS = [
   {
@@ -43,7 +44,7 @@ export const CREDIT_PRODUCTS = [
     name: '5 크레딧',
     credits: 5,
     price: 2000,
-    priceUsd: 149,
+    priceUsd: 199,
     providerProductIdEnv: 'POLAR_PRODUCT_BASIC',
   },
   {
