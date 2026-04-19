@@ -305,6 +305,63 @@ describe('NovelAnalysisUseCase', () => {
         expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 3, 'novel_analysis_refund')
       })
     })
+
+    // 2026-04-19 P0: 클라이언트 HTTP disconnect 대응 — AbortSignal 기반 중단 + 환불 보장
+    describe('AbortSignal 기반 클라이언트 disconnect 대응', () => {
+      it('이미 aborted된 signal이 오면 즉시 AbortedError로 중단하고 환불한다', async () => {
+        const controller = new AbortController()
+        controller.abort()
+
+        await expect(
+          useCase.analyzeNewEpisode('author-1', 'work-1', '새 텍스트', undefined, undefined, controller.signal),
+        ).rejects.toThrow(/중단/)
+
+        // 차감 후 runAnalysis 진입 즉시 throwIfAborted → catch → 환불
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -3, 'novel_analysis')
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 3, 'novel_analysis_refund')
+        // 실제 분석은 시작도 안 함
+        expect(mockVectorStore.searchSimilar).not.toHaveBeenCalled()
+        expect(mockCheckConsistency).not.toHaveBeenCalled()
+      })
+
+      it('첫 workRepo 조회 진행 중 abort되면 AbortedError + 환불', async () => {
+        const controller = new AbortController()
+        // workRepo가 무한 대기하도록 설정 → abort로만 중단 가능
+        mockWorkRepo.findById.mockImplementation(() => new Promise(() => {}))
+        mockWorkRepo.findEpisodes.mockImplementation(() => new Promise(() => {}))
+
+        const promise = useCase.analyzeNewEpisode(
+          'author-1', 'work-1', '새 텍스트', undefined, undefined, controller.signal,
+        )
+        // 다음 tick에 abort
+        await new Promise((r) => setImmediate(r))
+        controller.abort()
+
+        await expect(promise).rejects.toThrow(/중단/)
+
+        // 차감 + 환불 양쪽 호출 확인
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -3, 'novel_analysis')
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 3, 'novel_analysis_refund')
+      })
+
+      it('signal 미지정이면 기존 동작 유지 (정상 경로)', async () => {
+        mockVectorStore.searchSimilar.mockResolvedValue([
+          { chunkText: '청크', episodeId: 'ep-1', chunkIndex: 0, distance: 0.1 },
+        ])
+        mockCheckConsistency.mockResolvedValue({
+          type: 'consistency', score: 90, summary: 'ok', issues: [], suggestions: [],
+        })
+
+        const results = await useCase.analyzeNewEpisode(
+          'author-1', 'work-1', '새 텍스트', ['consistency'], undefined, undefined,
+        )
+
+        expect(results).toHaveLength(1)
+        // 환불은 호출되지 않음 (정상 성공)
+        expect(mockCreditRepo.adjustCredits).toHaveBeenCalledTimes(1)
+        expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -3, 'novel_analysis')
+      })
+    })
   })
 
   describe('getIndexStatus', () => {
