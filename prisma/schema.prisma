@@ -339,6 +339,31 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
+/// AI 일관성 분석 리포트 (2026-04-24 F4)
+/// 사용자가 분석을 실행할 때마다 결과를 영구 저장 → 대시보드 히스토리에서 재조회.
+/// - authorId: 분석 실행자 (소유권)
+/// - workId/episodeId: 분석 대상 (작품 + 회차)
+/// - workTitle/episodeTitle: 스냅샷 (에피소드 삭제 후에도 히스토리 식별 가능)
+/// - types: 실행된 분석 타입 배열 (consistency/tone/character 조합)
+/// - results: AnalysisResult[] JSON 전체 — 점수/요약/이슈/제안 원본
+/// - creditsCharged: 이번 분석에 실제 차감된 크레딧 (기본 3, 향후 할인 정책 반영 가능)
+model AnalysisReport {
+  id             String   @id @default(uuid())
+  authorId       String   @map("author_id")
+  workId         String   @map("work_id")
+  episodeId      String   @map("episode_id")
+  workTitle      String   @map("work_title")
+  episodeTitle   String   @map("episode_title")
+  types          String[]  // consistency/tone/character 조합
+  results        Json     // AnalysisResult[] 전체
+  creditsCharged Int      @default(3) @map("credits_charged")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([authorId, createdAt(sort: Desc)])
+  @@index([episodeId])
+  @@map("analysis_reports")
+}
+
 model AdminAuditLog {
   id        String   @id @default(uuid())
   adminId   String   @map("admin_id")

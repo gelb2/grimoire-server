@@ -1,5 +1,66 @@
 # Changelog — grimoire-server
 
+## [0.29.0] - 2026-04-24
+
+### F4 보강 — AI 분석 리포트 영구 저장 + 히스토리 API
+
+#### Added
+- `prisma/schema.prisma` — `AnalysisReport` 모델 (authorId/workId/episodeId/workTitle/episodeTitle/types/results JSONB/creditsCharged/createdAt). 인덱스: `(author_id, created_at DESC)`, `(episode_id)`
+- `prisma/migrations/20260424010000_add_analysis_reports/migration.sql` — 마이그레이션 신규
+- `src/domain/port/outbound/analysis-report-repository.port.ts` — Port + AnalysisReport/Summary 타입
+- `src/adapter/outbound/persistence/prisma-analysis-report.repository.ts` — Prisma 어댑터 (create / findByAuthor / findById)
+- `NovelAnalysisUseCase.listReports(authorId)` + `getReport(authorId, reportId)` — 소유권 검증 포함
+- `analysis.controller.ts` — `GET /api/analysis/reports` (Summary 목록) + `GET /api/analysis/reports/:id` (상세)
+- `app.module.ts` — `AnalysisReportRepositoryPort` DI 바인딩
+
+#### Changed
+- `NovelAnalysisUseCase.analyzeEpisode` — 성공 시 reportRepo.create로 결과 영구 저장. 저장 실패는 catch로 보호(결과는 반환). 실패(환불 경로)는 저장하지 않음
+- 생성자 시그니처에 `reportRepo: AnalysisReportRepositoryPort` 추가
+
+#### Docs
+- `docs/api-contract.md` — Analysis 섹션에 `/reports` 2건 추가
+- `docs/ai-analysis-spec.md §5-1` 흐름 7단계(성공 시 저장) + §3-1-2 AnalysisReport 스키마 추가
+- `docs/data-model.md` — `analysis_reports` 테이블 명세 + 관계도 갱신
+
+#### Tests
+- `novel-analysis.usecase.spec.ts` — reportRepo mock 추가, 저장/실패-저장안함/listReports/getReport 4건 추가
+- 453건 전부 통과
+
+#### Rationale
+- 사용자 증상: 분석 완료 후 결과가 refreshUser 부작용으로 사라지고 재조회 수단이 없었음. 크레딧은 차감됐는데 결과는 증발
+- 웹에서 useEffect 의존성 체인으로 setResults([]) 발생하는 버그 외에, 근본적으로 분석 결과를 한 번의 뷰어 세션 안에서만 보여주는 설계가 부적절
+- → 결과는 DB 저장 + 분석 기록 화면에서 언제든 재조회 가능하도록 설계 전환
+
+## [0.28.0] - 2026-04-24
+
+### F4 — AI 일관성 분석 Q1=(a) 에피소드 ID 모드 전환 (벤치마크 정합)
+
+#### Changed
+- `NovelAnalysisUseCase.analyzeNewEpisode` 제거 → `analyzeEpisode(authorId, episodeId, types?, abortSignal?)` 신규
+  - DB의 `Episode.rawMd` 사용 (작가가 본문 재입력 강제 금지 — `docs/ai-analysis-spec.md §6-1` Claude Projects 벤치마크 정합)
+  - 자기 자신 청크는 RAG에서 자동 제외 (excludeEpisodeId = episodeId, self-reference 환각 방지)
+  - 소유권 검증: Episode → workId → Work.authorId === JWT sub (IDOR 방지, 크레딧 차감 전 수행)
+  - rawMd 길이 < 10자 BadRequest (분석 의미 없음)
+- `analysis.controller.ts` `/check` body: `{ episodeId, types? }` (이전 `{ workId, newEpisodeText, types?, episodeId? }` 폐기)
+- `runAnalysis` 시그니처 — `excludeEpisodeId` 필수 인자로 변경, TOP_K_FETCH 30 고정
+- `lib/abort.ts` 주석 — `analyzeNewEpisode` → `analyzeEpisode` 정정
+
+#### Docs Sync
+- `docs/ai-analysis-spec.md §5-1` — 흐름 0~6단계 재작성 (소유권→차감→RAG→분석→환각검증→환불)
+- `docs/api-contract.md` POST /api/analysis/check — 크레딧 1→3 정정 + body 새 시그니처 + 에러 케이스
+- 양 레포 동기화 완료
+
+#### Test Updates
+- `novel-analysis.usecase.spec.ts` — `analyzeNewEpisode` describe → `analyzeEpisode` 재작성
+  - `findEpisodeById` mock 추가, makeEpisode/makeWork 헬퍼 도입
+  - 신규 describe "소유권 검증 (IDOR 방지)" 4건 추가 (Episode 없음 / Work 없음 / 타인 작품 / rawMd 짧음)
+  - 모든 케이스 인자 형식 갱신, 446건 전부 통과
+
+#### Rationale
+- 사용자 지적: "Claude 채팅 프로젝트 개념"이 본 기능의 정본 벤치마크인데 분석 화면이 본문 복붙을 강제 → 벤치마크 위반
+- `research/FEATURE_AI_ANALYSIS.md §1` "이 경험을 그리모어 플랫폼에 내장하겠다는 것" 명시 + `ai-analysis-spec.md §6-1` 매핑표(파일=Episodes 자동 인덱싱) 정합
+- 같은 그리모어 안에서 채팅(`/dashboard/chat`)은 벤치마크를 따르는데 분석만 이탈했던 갭 정정
+
 ## [0.27.0] - 2026-04-19
 
 ### F1/F2/F3 — §0 크레딧-원가 마진 전면 정합화

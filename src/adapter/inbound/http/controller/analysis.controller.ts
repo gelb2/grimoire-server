@@ -21,11 +21,14 @@ export class AnalysisController {
   }
 
   /**
-   * 새 에피소드 일관성 분석
+   * 이미 업로드된 에피소드의 일관성 분석 (Q1=(a) 모드, 2026-04-24)
    *
-   * body.episodeId — 선택. **이미 인덱싱된 에피소드의 재분석** 시 전달하면
-   * 해당 episodeId의 청크가 RAG 검색에서 제외된다. 자기 자신 청크가 컨텍스트로
-   * 섞여 Claude가 기존 내용을 새 에피소드의 문제로 오보고하는 사태를 방지.
+   * Claude Projects 벤치마크 (`docs/ai-analysis-spec.md §6-1`) 정합:
+   * - 작가는 회차를 업로드하면 끝 — 분석 화면에서 본문 재입력 강제 금지
+   * - body.episodeId만 받아서 서버가 DB의 Episode.rawMd로 분석
+   * - 자기 자신 청크는 RAG 검색에서 자동 제외 (usecase 내부)
+   *
+   * 보안: 소유권 검증은 usecase 진입부에서 수행 (Episode.workId → Work.authorId === JWT sub)
    */
   @Throttle({ default: { ttl: 60000, limit: 3 } })  // AI API 호출 — 분당 3회
   @UseGuards(JwtAuthGuard)
@@ -33,13 +36,16 @@ export class AnalysisController {
   async analyzeEpisode(
     @Req() req: AuthenticatedRequest,
     @Body() body: {
-      workId: string
-      newEpisodeText: string
+      episodeId: string
       types?: ('consistency' | 'tone' | 'character')[]
-      episodeId?: string
     },
   ) {
-    this.validateRawText(body.newEpisodeText)
+    if (!body.episodeId || typeof body.episodeId !== 'string' || body.episodeId.trim().length === 0) {
+      throw new BadRequestException('episodeId가 필요합니다')
+    }
+    if (body.types && (!Array.isArray(body.types) || body.types.length === 0)) {
+      throw new BadRequestException('types가 비어 있을 수 없습니다')
+    }
     // 클라이언트 HTTP abort(프론트 타임아웃, 네트워크 끊김, 사용자 페이지 이탈 등)를
     // AbortSignal로 변환해 usecase에 전달. usecase는 각 단계에서 abortableRace/throwIfAborted로
     // 체크 → AbortedError throw → catch 블록에서 크레딧 환불이 확정된다.
@@ -49,12 +55,10 @@ export class AnalysisController {
     req.on('aborted', abort)
     try {
       // F2 (2026-04-19): 분석 호출 시 3 크레딧 차감. IDOR 방지용으로 body 대신 JWT sub 사용.
-      return await this.analysisUseCase.analyzeNewEpisode(
+      return await this.analysisUseCase.analyzeEpisode(
         req.user.sub,
-        body.workId,
-        body.newEpisodeText,
-        body.types,
         body.episodeId,
+        body.types,
         abortController.signal,
       )
     } finally {
@@ -68,6 +72,26 @@ export class AnalysisController {
   @Get('status/:workId')
   async getStatus(@Param('workId') workId: string) {
     return this.analysisUseCase.getIndexStatus(workId)
+  }
+
+  /**
+   * 분석 히스토리 목록 (최신순, 본인 것만)
+   * 응답: AnalysisReportSummary[] (results 미포함, scores 요약만)
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get('reports')
+  async listReports(@Req() req: AuthenticatedRequest) {
+    return this.analysisUseCase.listReports(req.user.sub)
+  }
+
+  /**
+   * 분석 리포트 단건 상세 (본인 것만, 소유권 검증)
+   * 응답: AnalysisReport (results 포함)
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get('reports/:id')
+  async getReport(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.analysisUseCase.getReport(req.user.sub, id)
   }
 
   /** rawText 입력 검증 (10~50000자) */
