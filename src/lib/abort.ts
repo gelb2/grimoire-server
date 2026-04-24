@@ -2,7 +2,7 @@
  * 클라이언트 disconnect 대응용 Promise 중단 유틸.
  *
  * NestJS 기본 동작: 클라이언트가 HTTP abort 해도 Node.js 이벤트 루프의
- * Promise 체인은 끝까지 실행된다. `analyzeNewEpisode`처럼 외부 AI 호출을
+ * Promise 체인은 끝까지 실행된다. `analyzeEpisode`처럼 외부 AI 호출을
  * 동반한 크레딧 차감 작업은, abort 후 서버가 성공으로 완료되면 환불 분기
  * (catch)를 타지 않아 사용자 크레딧이 차감된 상태로 끝난다.
  *
