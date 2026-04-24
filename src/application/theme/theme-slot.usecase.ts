@@ -71,7 +71,15 @@ export class ThemeSlotUseCase {
     return removed
   }
 
-  /** 테마를 작가 공간의 기본 테마로 활성화 — 슬롯 상태 자동 관리 */
+  /**
+   * 테마를 작가 공간의 기본 테마로 활성화 — 슬롯 상태 자동 관리
+   *
+   * 2026-04-24 개선: 슬롯이 가득 찬 상태에서 활성화 시도 시, 기존 기본 테마를 자동으로
+   * 슬롯에서 내린다 (auto-evict). 이전에는 `BadRequestException`을 던져 사용자가
+   * 기본 테마 전환을 위해 수동으로 슬롯을 비워야 했음 — free 플랜(슬롯 1)에서는 전환 경로가 막혀
+   * 있던 UX 버그. 테마 설정 자체는 `is_slotted=false`로 전환만 되고 삭제되지 않으므로 안전.
+   * 그래도 슬롯 빈 상태에서 activate한 테마 자체는 수용할 슬롯이 없으면 여전히 거부.
+   */
   async activateTheme(authorId: string, themeId: string): Promise<Theme> {
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
@@ -85,14 +93,21 @@ export class ThemeSlotUseCase {
     if (theme.authorId !== authorId) throw new ForbiddenException('본인의 테마만 활성화할 수 있습니다')
     if (theme.source === 'system') throw new ForbiddenException('시스템 테마는 활성화할 수 없습니다. 복사하여 사용하세요.')
 
-    // 슬롯에 없으면 자동 슬롯 배정
+    // 슬롯에 없으면 자동 슬롯 배정, 가득 차면 기존 기본 테마를 보관으로 내리고 공간 확보
     if (!theme.isSlotted) {
       const slotLimit = THEME_SLOT_LIMITS[author.plan] ?? 1
       const slottedCount = await this.themeRepo.countSlottedByAuthorId(authorId)
       if (slottedCount >= slotLimit) {
-        throw new BadRequestException(
-          `테마 슬롯이 가득 찼습니다 (${slottedCount}/${slotLimit}). 다른 테마를 슬롯에서 제거하세요.`,
-        )
+        // auto-evict: 현재 기본 테마를 슬롯에서 내려 공간을 만든다
+        // 설정값 자체는 유지되므로 사용자가 나중에 다시 활성화 가능
+        if (author.defaultThemeId && author.defaultThemeId !== themeId) {
+          await this.themeRepo.updateSlotStatus(author.defaultThemeId, false)
+        } else {
+          // 방어적: 기본 테마가 없거나 자기 자신인데 슬롯이 찼다면 운영자 점검 필요
+          throw new BadRequestException(
+            `테마 슬롯이 가득 찼습니다 (${slottedCount}/${slotLimit}). 다른 테마를 슬롯에서 제거하세요.`,
+          )
+        }
       }
       await this.themeRepo.updateSlotStatus(themeId, true)
     }

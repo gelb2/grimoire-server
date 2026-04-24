@@ -79,7 +79,23 @@ describe('ThemeSlotUseCase', () => {
       expect(mockAuthorRepo.updateDefaultThemeId).toHaveBeenCalledWith('author-1', 'theme-1')
     })
 
-    it('슬롯 가득 차면 BadRequestException', async () => {
+    it('슬롯 가득 차도 기본 테마가 있으면 auto-evict 후 활성화 (2026-04-24 UX 개선)', async () => {
+      // 현재 테마 2(기본 + 슬롯) 사용 중, 테마 1을 새로 활성화
+      mockAuthorRepo.findById.mockResolvedValue({ ...mockAuthor, defaultThemeId: 'theme-2' })
+      mockThemeRepo.countSlottedByAuthorId.mockResolvedValue(1)  // free 플랜 슬롯 full
+
+      await useCase.activateTheme('author-1', 'theme-1')
+
+      // 기존 기본 테마(theme-2)는 슬롯에서 자동 제외
+      expect(mockThemeRepo.updateSlotStatus).toHaveBeenCalledWith('theme-2', false)
+      // 새 테마(theme-1)는 슬롯에 배치
+      expect(mockThemeRepo.updateSlotStatus).toHaveBeenCalledWith('theme-1', true)
+      // 기본 테마 ID 갱신
+      expect(mockAuthorRepo.updateDefaultThemeId).toHaveBeenCalledWith('author-1', 'theme-1')
+    })
+
+    it('슬롯 가득 차고 기본 테마가 없거나 자기 자신이면 여전히 BadRequestException (방어적)', async () => {
+      mockAuthorRepo.findById.mockResolvedValue({ ...mockAuthor, defaultThemeId: null })
       mockThemeRepo.countSlottedByAuthorId.mockResolvedValue(1)
       await expect(useCase.activateTheme('author-1', 'theme-1')).rejects.toThrow(BadRequestException)
     })

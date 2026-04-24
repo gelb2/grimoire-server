@@ -1,5 +1,21 @@
 # Changelog — grimoire-server
 
+## [0.29.1] - 2026-04-24
+
+### Fix — 테마 활성화 auto-evict (슬롯 가득 찬 상태에서 기본 테마 전환 경로 복구)
+
+#### Changed
+- `ThemeSlotUseCase.activateTheme` — 슬롯이 가득 찬 상태에서 활성화 시도 시 기존 기본 테마를 자동으로 슬롯에서 내린다 (auto-evict). 테마 설정 자체는 `is_slotted=false`로만 전환되고 삭제되지 않아 사용자가 나중에 다시 활성화 가능
+- 예외적으로 기본 테마가 없거나 자기 자신인데 슬롯이 가득 찬 경우만 여전히 `BadRequestException`
+
+#### Tests
+- `theme-slot.usecase.spec.ts` — auto-evict 케이스 2건 추가, 기존 `슬롯 가득 차면 BadRequest` 케이스를 `기본 테마 없을 때만 BadRequest`로 정정
+- 454건 전부 통과
+
+#### Rationale
+- free 플랜(슬롯 1)에서 테마 전환 경로 완전 차단 — 사용자는 "테마 2 쓰다가 3으로 바꾸려는데 안 바뀜"을 보고
+- 슬롯은 용량 제한 개념이지만 "기본 테마 하나를 선택"한다는 사용자 의도는 단일 액션이어야 함. auto-evict로 UX 단순화
+
 ## [0.29.0] - 2026-04-24
 
 ### F4 보강 — AI 분석 리포트 영구 저장 + 히스토리 API
