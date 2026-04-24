@@ -2,7 +2,7 @@
 
 > **작업 시작**: 2026-04-25
 > **프롬프트**: `prompt-engineering/prompt-harness-phase1-p0-implementation.md`
-> **상위 계획**: `grimoire-server/research/HARNESS_ENGINEERING.md` §10 Phase 1
+> **상위 계획**: `research/HARNESS_ENGINEERING.md` (루트 workspace 정본) §10 Phase 1
 > **TODO 연결**: `grimoire-server/TODO.md` "Claude Code harness 강화" P0/P1
 
 ---
@@ -176,7 +176,7 @@ FAIL 항목: 없음
 | Hook | `.claude/settings.json` | 수정 (PostToolUse 추가, 루트 비-git) |
 | Doc | `grimoire-server/HANDOVER.md` | 수정 (grimoire-server 커밋) |
 | Doc | `grimoire-server/TODO.md` | 수정 (grimoire-server 커밋) |
-| Doc | `grimoire-server/research/HARNESS_ENGINEERING.md` | 수정 (grimoire-server 커밋) |
+| Doc | `research/HARNESS_ENGINEERING.md` (루트 workspace 정본) | 수정 (grimoire-server 커밋) |
 | Doc | `grimoire-server/PROGRESS_HARNESS_P0.md` | 신규 (이 파일 이동) |
 
 ### Phase 1 P0 OUTPUT_SPEC 체크리스트
@@ -190,6 +190,6 @@ FAIL 항목: 없음
 - [x] grimoire-web develop 변경 없음 → 커밋 불필요 (원래 프롬프트 가정과 실측 차이)
 - [x] `grimoire-server/HANDOVER.md` 갱신
 - [x] `grimoire-server/TODO.md` P0 체크
-- [x] `grimoire-server/research/HARNESS_ENGINEERING.md` Phase 1 완료 주석
+- [x] `research/HARNESS_ENGINEERING.md` (루트 workspace 정본) Phase 1 완료 주석
 - [x] `memory/project_session_20260425.md` + MEMORY.md 인덱스
 - [x] PROGRESS_HARNESS_P0.md 전 Phase 체크 완료

@@ -79,7 +79,7 @@
 - server 커밋: `8de95e5` (Docker credsStore 문서) → `4d38e0b` (abort 환불) → `9fa7213` (harness TODO) → `7415f8c` (harness 리서치 문서)
 - web 커밋: `d40c458` (DEPLOY 동기화) → `8fc53f4` (fetch aborted 수정) → `84923ba` (UI 문구 정직화) → `06eed28` (harness TODO)
 - 신규 메모리: `feedback_docker_credstore.md`, `project_analysis_refund_gap.md`, `project_session_20260419_3.md`, `project_session_20260419_4.md`
-- 신규 문서: `grimoire-server/research/HARNESS_ENGINEERING.md`, `docs/DEPLOY.md §3` (로컬 머신 세팅), `INFRASTRUCTURE.md §12.2`
+- 신규 문서: `research/HARNESS_ENGINEERING.md` (정본: 루트 workspace, grimoire-claude-docs repo), `docs/DEPLOY.md §3` (로컬 머신 세팅), `INFRASTRUCTURE.md §12.2`
 
 ### 세션 중 발견한 제 실수 4건 (재발 방지용)
 
@@ -142,7 +142,7 @@
 
 ## 3. Harness Engineering 리서치 요약
 
-> 상세: `grimoire-server/research/HARNESS_ENGINEERING.md` (커밋 `7415f8c`)
+> 상세: `research/HARNESS_ENGINEERING.md` (정본: 루트 workspace, grimoire-claude-docs repo) (커밋 `7415f8c`)
 
 ### 정의 (Martin Fowler)
 "Everything in an AI agent except the model itself" — 모델 주변을 **가이드(feedforward)**와 **센서(feedback)**로 조이는 사용자 구축 시스템.
@@ -220,7 +220,7 @@
 
 1. 루트 `CLAUDE.md` §0 (절대 수칙), §12 (메모리 기록), §14 (에이전트 구조)
 2. `grimoire-server/TODO.md` "Claude Code harness 강화" 섹션 ← 최근 갱신
-3. `grimoire-server/research/HARNESS_ENGINEERING.md` — 이번 세션 리서치 산출물
+3. `research/HARNESS_ENGINEERING.md` (정본: 루트 workspace, grimoire-claude-docs repo) — 이번 세션 리서치 산출물
 4. `memory/MEMORY.md` 인덱스 — 특히 `project_session_20260419_*.md` 최신 4개
 5. `memory/feedback_docker_credstore.md` — TCC 대응
 6. `grimoire-server/docs/DEPLOY.md §3` — 로컬 머신 세팅
