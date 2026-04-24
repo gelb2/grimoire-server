@@ -1,9 +1,44 @@
-# HANDOVER — 2026-04-19 → 다음 세션
+# HANDOVER — 2026-04-25 → 다음 세션
 
-> **작성자**: 2026-04-19 저녁 로컬 세션 (Claude Sonnet)
+> **작성자**: 2026-04-25 로컬 세션 (Claude Opus 4.7 1M)
 > **수신자**: 다음 리모트/로컬 세션 (Claude 또는 Codex 등)
-> **스냅샷 시점**: 2026-04-19 22:00 KST 기준, 양쪽 레포 `develop` 기준
+> **스냅샷 시점**: 2026-04-25 06:xx KST 기준, 양쪽 레포 `develop` 기준
 > **주의**: 이 문서는 시점 스냅샷입니다. 재작성되지 않으면 stale 됩니다. 첫 5분 읽기 이후엔 `git log --oneline -20 && cat TODO.md`로 현재 상태 재검증 필수.
+
+---
+
+## 0.5. 2026-04-25 세션 요약 (가장 최신)
+
+### Harness Engineering Phase 1 P0 구현 완료
+
+이번 세션 목표: `prompt-engineering/prompt-harness-phase1-p0-implementation.md` 프롬프트 실행. 2026-04-19 세션 실수 4건(TCC 헛소리, fetch aborted 추측, 환불 UI 거짓말, Chrome 조기 포기)을 시스템적으로 차단하는 skill + hook 배치.
+
+**산출물**
+- `.claude/skills/macos-tcc-handling/SKILL.md` — Docker credsStore=desktop → osxkeychain. "매번 허용" 답변 금지 프로토콜
+- `.claude/skills/production-bug-triage/SKILL.md` — fetch aborted 등 증상 보고 시 Chain-of-Verification 3단계 (curl → 코드 → 수치)
+- `.claude/skills/claude-in-chrome-recovery/SKILL.md` — Chrome MCP not connected 시 최소 3회 재시도 + javascript_tool 확인
+- `.claude/scripts/post-edit-tsc.sh` — Edit/Write 후 `.ts/.tsx/.cts/.mts`면 해당 레포 `tsc --noEmit` 자동. stdin JSON + 인자 fallback 양쪽 지원. tsc 실패 시 stderr 20줄만 출력, exit 0 유지
+- `.claude/settings.json` — PostToolUse hook 추가 (matcher=Edit|Write, timeout=60). 기존 4 hook (SessionStart/Stop/UserPromptSubmit/PreCompact) 보존
+
+**실측 발견**
+- `grimoire-web/.githooks/pre-push`는 **이미 존재** (2026-04-17 이식 완료 상태). 프롬프트가 "신설 필요"로 가정했으나 실측은 422 bytes 4단계 완성본. 이번 세션에서는 검증만 수행
+- grimoire-web이 `main` 브랜치로 check-out되어 있었음 → develop으로 전환
+
+**검증**
+- grimoire-qa 서브에이전트 독립 검증 5/5 PASS
+  1. Skills 3종 frontmatter 유효 + 증상어 포함 ✅
+  2. post-edit-tsc.sh 실행권한 + 4종 동작 ✅
+  3. settings.json 5 hook + 기존 4 보존 ✅
+  4. grimoire-web pre-push 완전 설정 ✅
+  5. grimoire-web develop 브랜치 청결 ✅
+
+**후속 작업**
+- 상세 리포트는 `grimoire-server/PROGRESS_HARNESS_P0.md`
+- 다음 단계 Phase 1 P1 (Skills 추가 + Slash commands + db-sync 예외)은 TODO.md §단기 참조
+
+---
+
+## 0.6. 2026-04-19 세션 (직전)
 
 ---
 

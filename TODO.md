@@ -9,18 +9,18 @@
 ### 외부 연동
 - [ ] Polar KYC + 한국 payout 승인 (사용자 액션)
 
-### Claude Code harness 강화 (2026-04-19 도입 필요 — 루트 `.claude/` 작업, 실제 실수 재발 방지용)
+### Claude Code harness 강화 (2026-04-19 도입 — 루트 `.claude/` 작업, 실제 실수 재발 방지용)
 
-> 실측 대비 현황: `.claude/settings.json`에 SessionStart/Stop/UserPromptSubmit/PreCompact 4개 hook만 있고 전부 "메모리 파일 관리"에 치우침. 편집 직후 강제 검증 축이 전면 부재. 이번 2026-04-19 세션에서 실제 발생한 실수(TCC 헛소리, fetch aborted 추측, 환불 UI 거짓 문구, Chrome extension 조기 포기)를 시스템적으로 막는 장치가 없어서 매 세션 재발 가능.
+> 실측 대비 현황: 2026-04-25 세션에서 Phase 1 P0 구현 완료 (Skills 3종, PostToolUse hook, post-edit-tsc.sh, grimoire-web pre-push 검증). 편집 직후 tsc 자동 + 재발 방지 skill 3종 배치 완료. 세부 리포트는 `grimoire-server/PROGRESS_HARNESS_P0.md` 참조.
 
-**P0 (즉시)**
-- [ ] `grimoire-web/.githooks/pre-push` 설치 — server는 있으나 web 없음. tsc + vitest + build + docs 동기화 검증
-- [ ] 루트 `.claude/settings.json`에 `PostToolUse` hook 추가 — Edit/Write 후 변경 파일이 `.ts`/`.tsx`면 해당 레포 `npx tsc --noEmit` 자동 실행
+**P0 (완료 — 2026-04-25)**
+- [x] `grimoire-web/.githooks/pre-push` 설치 확인 — 실제로는 2026-04-17에 이미 이식 완료 상태 (422 bytes, 4단계 tsc/test/build/docs). 2026-04-25 세션에서 검증 PASS
+- [x] 루트 `.claude/settings.json`에 `PostToolUse` hook 추가 — Edit/Write 후 `.ts/.tsx/.cts/.mts` 편집 시 해당 레포 `npx tsc --noEmit` 자동. `/Users/sokol/Desktop/Git/ProjectGrimoire/.claude/scripts/post-edit-tsc.sh`가 경로 기반 레포 자동 감지. 기존 4 hook 보존
 
-**P1 — Skills 3종 (`.claude/skills/`)**
-- [ ] `macos-tcc-handling.md` — "매번 허용" 답변 금지 + osxkeychain 검증 프로토콜 (feedback_docker_credstore.md를 skill로 승격)
-- [ ] `production-bug-triage.md` — curl 실측 → 코드 경로 추적 → 추정 금지 (feedback_fullcheck_method.md를 skill로 승격)
-- [ ] `claude-in-chrome-recovery.md` — extension 미연결 시 3회 재시도 + navigate 지연 대응
+**P1 — Skills 3종 (`.claude/skills/`) — 완료 (2026-04-25)**
+- [x] `.claude/skills/macos-tcc-handling/SKILL.md` — "매번 허용" 답변 금지 + osxkeychain 검증 프로토콜 (feedback_docker_credstore.md 승격)
+- [x] `.claude/skills/production-bug-triage/SKILL.md` — Chain-of-Verification 3단계 (curl → 코드 경로 → 수치 근거). 추정 금지
+- [x] `.claude/skills/claude-in-chrome-recovery/SKILL.md` — extension 미연결 시 최소 3회 재시도 + javascript_tool URL 확인 + 새 탭 우회
 
 **P2 — Slash commands (`.claude/commands/`)**
 - [ ] `/dev-login-smoke` — db-sync --mask-pii 회귀 감지용 실제 dev 로그인 시도

@@ -453,27 +453,29 @@ v2 추가 제안:
 - ✅ 3대 레포 분석
 - ✅ Skills 개념 정리
 
-### Phase 1 — 1~2일 (P0)
+### Phase 1 — 1~2일 (P0) — **완료 (2026-04-25)**
 
 **목표**: Edit 직후 강제 검증 축 확보 + 재발 방지 skill 3종
 
-- [ ] `grimoire-web/.githooks/pre-push` 이식 (server 스크립트 그대로)
-- [ ] 루트 `.claude/settings.json`에 `PostToolUse` hook 추가
+- [x] `grimoire-web/.githooks/pre-push` 이식 — 실제로는 2026-04-17에 이미 이식 완료 상태 (422 bytes, 4단계 tsc/test/build/docs). 2026-04-25 검증 PASS.
+- [x] 루트 `.claude/settings.json`에 `PostToolUse` hook 추가 (matcher=Edit|Write, timeout=60)
   ```json
   "PostToolUse": [{
     "matcher": "Edit|Write",
     "hooks": [{
       "type": "command",
-      "command": "bash /Users/sokol/Desktop/Git/ProjectGrimoire/.claude/scripts/post-edit-tsc.sh \"$CLAUDE_TOOL_INPUT_file_path\"",
-      "timeout": 30
+      "command": "bash /Users/sokol/Desktop/Git/ProjectGrimoire/.claude/scripts/post-edit-tsc.sh",
+      "timeout": 60
     }]
   }]
   ```
-  `post-edit-tsc.sh`는 파일 경로 기반으로 해당 레포 판별 → `npx tsc --noEmit` 실행 → 실패 시 stderr로 리포트
-- [ ] `.claude/skills/` 디렉토리 신설 + 3 skill
-  - `.claude/skills/macos-tcc-handling/SKILL.md`
-  - `.claude/skills/production-bug-triage/SKILL.md`
-  - `.claude/skills/claude-in-chrome-recovery/SKILL.md`
+  `post-edit-tsc.sh`는 stdin JSON + 인자 fallback 양쪽 지원. `.ts/.tsx/.cts/.mts` 화이트리스트, 그 외는 조용히 exit 0. 파일 경로 기반으로 grimoire-server/ 또는 grimoire-web/ 판별 → `npx tsc --noEmit` 실행 → 실패 시 stderr 20줄만 출력, Claude 흐름은 차단하지 않음.
+- [x] `.claude/skills/` 디렉토리 신설 + 3 skill (2026-04-25)
+  - `.claude/skills/macos-tcc-handling/SKILL.md` — credsStore=desktop → osxkeychain 강제. "매번 허용" 답변 금지
+  - `.claude/skills/production-bug-triage/SKILL.md` — curl → 코드 경로 → 수치 근거 3단계 Chain-of-Verification
+  - `.claude/skills/claude-in-chrome-recovery/SKILL.md` — 최소 3회 재시도 + javascript_tool URL 확인 + 새 탭 우회
+
+**독립 검증**: grimoire-qa 서브에이전트 5/5 PASS (`grimoire-server/PROGRESS_HARNESS_P0.md` 참조).
 
 ### Phase 2 — 3~5일 (P1)
 
