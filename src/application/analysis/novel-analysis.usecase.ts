@@ -54,32 +54,55 @@ export class NovelAnalysisUseCase {
   }
 
   /**
-   * 새 에피소드와 기존 작품의 일관성 분석 (RAG)
+   * 이미 업로드된 에피소드와 같은 작품의 다른 회차 사이의 일관성 분석 (RAG, Q1=(a) 모드)
+   *
+   * Claude Projects 벤치마크 (`docs/ai-analysis-spec.md §6-1`):
+   * - 작가는 회차를 업로드한 시점에 이미 본문을 제공한 상태 → **분석 화면에서 본문 재입력 금지**
+   * - 회차 1개를 선택하면 서버가 DB에서 `Episode.rawMd`를 로드해 분석에 사용
+   * - 자기 자신 청크는 RAG 검색에서 자동 제외(self-reference 환각 방지)
    *
    * Claude Projects 스타일 강화:
    * - Work 메타(title/context/instructions) 로드 → 시스템 프롬프트 동적 주입
    * - 에피소드 제목을 컨텍스트 라벨에 포함 (`[제9화 "도리안그레이의 초상" · 청크 3]`)
    * - 3종 분석을 Promise.all 병렬 호출 (latency 1/3)
-   * - 응답의 issues 인용이 실제 새 에피소드 텍스트에 존재하는지 후처리 검증 (환각 제거)
+   * - 응답의 issues 인용이 실제 에피소드 텍스트에 존재하는지 후처리 검증 (환각 제거)
    *
    * 크레딧 차감 (F2 2026-04-19):
    * - 실행 전 ANALYSIS_CREDIT_COST(3) 크레딧 차감 — 부족 시 BadRequest
    * - AI 호출 실패 시 전액 환불
    *
+   * 보안 (CLAUDE.md §0 정책 강제):
+   * - Episode → workId → Work.authorId === authorId 검증 (IDOR 방지)
+   * - body.workId는 신뢰하지 않고 Episode 실제 workId만 사용
+   *
    * 파라미터:
-   * - authorId — 크레딧 차감 대상 (JWT `sub` 경유)
-   * - excludeEpisodeId — 재분석 시 자기 자신 청크 제외 (self-reference 방지)
+   * - authorId — JWT `sub` 경유, 크레딧 차감 + 소유권 검증 대상
+   * - episodeId — 분석할 회차 ID (DB에 인덱싱되어 있어야 의미 있는 결과)
    */
-  async analyzeNewEpisode(
+  async analyzeEpisode(
     authorId: string,
-    workId: string,
-    newEpisodeText: string,
+    episodeId: string,
     analysisTypes: ('consistency' | 'tone' | 'character')[] = ['consistency', 'tone', 'character'],
-    excludeEpisodeId?: string,
     // 컨트롤러에서 HTTP request close 이벤트를 AbortSignal로 변환해 전달.
     // abort 시 내부 Promise.race가 AbortedError로 reject되어 환불이 보장된다.
     abortSignal?: AbortSignal,
   ): Promise<AnalysisResult[]> {
+    // 0. 에피소드 로드 + 소유권 검증 (크레딧 차감 전에 실패해야 환불 케이스 발생 안 함)
+    const episode = await this.workRepo.findEpisodeById(episodeId)
+    if (!episode) {
+      throw new BadRequestException('에피소드를 찾을 수 없습니다')
+    }
+    const work = await this.workRepo.findById(episode.workId)
+    if (!work) {
+      throw new BadRequestException('작품을 찾을 수 없습니다')
+    }
+    if (work.authorId !== authorId) {
+      throw new BadRequestException('본인 작품의 에피소드만 분석할 수 있습니다')
+    }
+    if (!episode.rawMd || episode.rawMd.length < 10) {
+      throw new BadRequestException('에피소드 본문이 너무 짧아 분석할 수 없습니다')
+    }
+
     // F2 — 크레딧 차감 (PLANNING §14, ai-cost-table §3-2)
     try {
       await this.creditRepo.adjustCredits(authorId, -ANALYSIS_CREDIT_COST, CreditReason.NOVEL_ANALYSIS)
@@ -90,7 +113,8 @@ export class NovelAnalysisUseCase {
     }
 
     try {
-      return await this.runAnalysis(workId, newEpisodeText, analysisTypes, excludeEpisodeId, abortSignal)
+      // self-reference 환각 방지를 위해 분석 대상 에피소드 자신은 RAG에서 자동 제외
+      return await this.runAnalysis(episode.workId, episode.rawMd, analysisTypes, episodeId, abortSignal)
     } catch (error) {
       // 실패(AbortedError 포함) 시 전액 환불
       await this.creditRepo
@@ -105,7 +129,7 @@ export class NovelAnalysisUseCase {
     workId: string,
     newEpisodeText: string,
     analysisTypes: ('consistency' | 'tone' | 'character')[],
-    excludeEpisodeId?: string,
+    excludeEpisodeId: string,
     abortSignal?: AbortSignal,
   ): Promise<AnalysisResult[]> {
     throwIfAborted(abortSignal)
@@ -123,22 +147,20 @@ export class NovelAnalysisUseCase {
     }
 
     throwIfAborted(abortSignal)
-    // 기존 작품의 컨텍스트 검색 (self-reference 가능성 대비 검색량 늘림)
+    // 분석 대상 에피소드 본문으로 RAG 검색 (자기 자신 청크가 항상 1순위라 30개 검색 후 제외)
     const queryEmbedding = await abortableRace(abortSignal, this.embedding.getEmbedding(newEpisodeText.slice(0, 2000)))
-    const TOP_K_FETCH = excludeEpisodeId ? 30 : 20
+    const TOP_K_FETCH = 30
     const TOP_K_USE = 15
     const similarChunks = await abortableRace(abortSignal, this.vectorStore.searchSimilar(queryEmbedding, TOP_K_FETCH, workId))
 
-    // 자기 자신 에피소드 청크 제외 (재분석 시 환각 방지)
-    const filteredChunks = excludeEpisodeId
-      ? similarChunks.filter((c) => c.episodeId !== excludeEpisodeId)
-      : similarChunks
+    // 자기 자신 에피소드 청크 제외 (self-reference 환각 방지)
+    const filteredChunks = similarChunks.filter((c) => c.episodeId !== excludeEpisodeId)
 
     if (filteredChunks.length === 0) {
       return analysisTypes.map((type) => ({
         type,
         score: 100,
-        summary: '비교할 기존 에피소드가 없어 분석을 건너뜁니다',
+        summary: '같은 작품에 비교할 다른 에피소드가 없어 분석을 건너뜁니다',
         issues: [],
         suggestions: [],
       }))
