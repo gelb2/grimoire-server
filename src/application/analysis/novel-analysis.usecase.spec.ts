@@ -79,6 +79,7 @@ describe('NovelAnalysisUseCase', () => {
     getGiftRanking: jest.Mock
     sumNegativeAmounts: jest.Mock
   }
+  let mockReportRepo: { create: jest.Mock; findByAuthor: jest.Mock; findById: jest.Mock }
 
   beforeEach(() => {
     jest.clearAllMocks()
@@ -111,12 +112,19 @@ describe('NovelAnalysisUseCase', () => {
       sumNegativeAmounts: jest.fn().mockResolvedValue(0),
     }
 
+    mockReportRepo = {
+      create: jest.fn().mockResolvedValue({}),
+      findByAuthor: jest.fn().mockResolvedValue([]),
+      findById: jest.fn().mockResolvedValue(null),
+    }
+
     useCase = new NovelAnalysisUseCase(
       mockVectorStore as any,
       mockEmbedding as any,
       mockClaude as any,
       mockWorkRepo as any,
       mockCreditRepo as any,
+      mockReportRepo as any,
     )
   })
 
@@ -421,6 +429,90 @@ describe('NovelAnalysisUseCase', () => {
         expect(mockCreditRepo.adjustCredits).toHaveBeenCalledTimes(1)
         expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -3, 'novel_analysis')
       })
+    })
+  })
+
+  describe('리포트 영구 저장 (성공 시)', () => {
+    it('분석 성공 시 reportRepo.create로 저장한다', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue(
+        makeEpisode({ id: 'ep-1', workId: 'work-1', rawMd: '본문 텍스트입니다 충분히 길게' }),
+      )
+      mockWorkRepo.findById.mockResolvedValue(makeWork({ id: 'work-1', authorId: 'author-1', title: '사슴악마' }))
+      mockVectorStore.searchSimilar.mockResolvedValue([
+        { id: 'ep-2_0', workId: 'work-1', episodeId: 'ep-2', chunkIndex: 0, chunkText: '청크', distance: 0.1 },
+      ] as any)
+      mockCheckConsistency.mockResolvedValue({
+        type: 'consistency', score: 90, summary: 'ok', issues: [], suggestions: [],
+      })
+
+      await useCase.analyzeEpisode('author-1', 'ep-1', ['consistency'])
+
+      expect(mockReportRepo.create).toHaveBeenCalledTimes(1)
+      const arg = mockReportRepo.create.mock.calls[0][0]
+      expect(arg).toMatchObject({
+        authorId: 'author-1',
+        workId: 'work-1',
+        episodeId: 'ep-1',
+        workTitle: '사슴악마',
+        types: ['consistency'],
+        creditsCharged: 3,
+      })
+      expect(arg.results).toHaveLength(1)
+      expect(arg.results[0].score).toBe(90)
+    })
+
+    it('리포트 저장 실패 시에도 분석 결과는 반환한다 (catch 보호)', async () => {
+      mockVectorStore.searchSimilar.mockResolvedValue([
+        { id: 'ep-2_0', workId: 'work-1', episodeId: 'ep-2', chunkIndex: 0, chunkText: '청크', distance: 0.1 },
+      ] as any)
+      mockCheckConsistency.mockResolvedValue({
+        type: 'consistency', score: 90, summary: 'ok', issues: [], suggestions: [],
+      })
+      mockReportRepo.create.mockRejectedValueOnce(new Error('DB 장애'))
+
+      const results = await useCase.analyzeEpisode('author-1', 'ep-1', ['consistency'])
+
+      expect(results).toHaveLength(1)
+      expect(results[0].score).toBe(90)
+    })
+
+    it('분석 실패 시에는 리포트를 저장하지 않는다 (환불만)', async () => {
+      mockVectorStore.searchSimilar.mockRejectedValue(new Error('벡터 DB 장애'))
+
+      await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('벡터 DB 장애')
+      expect(mockReportRepo.create).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('listReports / getReport', () => {
+    it('listReports — repo의 findByAuthor를 50건으로 호출', async () => {
+      mockReportRepo.findByAuthor.mockResolvedValue([{ id: 'r-1' }])
+
+      const list = await useCase.listReports('author-1')
+
+      expect(mockReportRepo.findByAuthor).toHaveBeenCalledWith('author-1', 50)
+      expect(list).toEqual([{ id: 'r-1' }])
+    })
+
+    it('getReport — 존재하지 않으면 NotFoundException', async () => {
+      mockReportRepo.findById.mockResolvedValue(null)
+
+      await expect(useCase.getReport('author-1', 'r-x')).rejects.toThrow('찾을 수 없습니다')
+    })
+
+    it('getReport — 타인 리포트는 ForbiddenException', async () => {
+      mockReportRepo.findById.mockResolvedValue({ id: 'r-1', authorId: 'OTHER' })
+
+      await expect(useCase.getReport('author-1', 'r-1')).rejects.toThrow('본인의 분석 리포트')
+    })
+
+    it('getReport — 본인 리포트는 그대로 반환', async () => {
+      const report = { id: 'r-1', authorId: 'author-1', results: [] }
+      mockReportRepo.findById.mockResolvedValue(report)
+
+      const got = await useCase.getReport('author-1', 'r-1')
+
+      expect(got).toBe(report)
     })
   })
 

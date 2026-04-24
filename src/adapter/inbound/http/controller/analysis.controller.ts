@@ -74,6 +74,26 @@ export class AnalysisController {
     return this.analysisUseCase.getIndexStatus(workId)
   }
 
+  /**
+   * 분석 히스토리 목록 (최신순, 본인 것만)
+   * 응답: AnalysisReportSummary[] (results 미포함, scores 요약만)
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get('reports')
+  async listReports(@Req() req: AuthenticatedRequest) {
+    return this.analysisUseCase.listReports(req.user.sub)
+  }
+
+  /**
+   * 분석 리포트 단건 상세 (본인 것만, 소유권 검증)
+   * 응답: AnalysisReport (results 포함)
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get('reports/:id')
+  async getReport(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.analysisUseCase.getReport(req.user.sub, id)
+  }
+
   /** rawText 입력 검증 (10~50000자) */
   private validateRawText(text: string | undefined): void {
     if (!text || typeof text !== 'string') {
