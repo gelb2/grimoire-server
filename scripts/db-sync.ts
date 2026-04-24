@@ -3,13 +3,18 @@
  *
  * 사용법 (2026-04-19 inhouse 제거):
  *   npx tsx scripts/db-sync.ts prod dev --mask-pii
+ *   npx tsx scripts/db-sync.ts prod dev --mask-pii --preserve-accounts
  *   npx tsx scripts/db-sync.ts dev local
  *
  * 옵션:
- *   --mask-pii    PII(이메일, 비밀번호 해시, OAuth 이메일)를 마스킹
+ *   --mask-pii          PII(이메일, 비밀번호 해시, OAuth 이메일)를 마스킹
+ *   --preserve-accounts DB_SYNC_PRESERVE_EMAILS 환경변수의 이메일 목록은 마스킹 스킵
+ *                       (2026-04-19 회귀: --mask-pii로 dev 로그인 불가 → 테스트 계정 보존용)
  *
  * 환경변수:
- *   DB_PASSWORD   Azure DB 비밀번호 (미설정 시 기본값 사용)
+ *   DB_PASSWORD                Azure DB 비밀번호 (미설정 시 기본값 사용)
+ *   DB_SYNC_PRESERVE_EMAILS    --preserve-accounts 사용 시 마스킹 제외할 이메일 (콤마 분리)
+ *                              예: deerdevil@grimoire.app,admin@grimoire.app
  */
 
 import { PrismaClient } from '@prisma/client'
@@ -19,6 +24,16 @@ const ADMIN = 'grimoireadmin'
 
 // PII 마스킹용 고정 bcrypt 해시 (비밀번호: "masked2026")
 const MASKED_PASSWORD_HASH = '$2b$10$KjXGfJxQJfzQ2q8lRj5zWOBYcZJg.Zq0Z9R8Q1RVG8J5r5t8N2H0O'
+
+function getPreserveEmails(): Set<string> {
+  const raw = process.env.DB_SYNC_PRESERVE_EMAILS || ''
+  return new Set(
+    raw
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.length > 0),
+  )
+}
 
 function getDbUrl(env: string): string {
   if (env === 'local') {
@@ -33,28 +48,63 @@ const VALID_ENVS = ['prod', 'dev', 'local']
 // 동기화 방향 검증 (상위 → 하위만 허용)
 const ENV_RANK: Record<string, number> = { prod: 3, dev: 1, local: 0 }
 
-function maskAuthors(authors: any[], maskPii: boolean): any[] {
+function maskAuthors(
+  authors: any[],
+  maskPii: boolean,
+  preserveEmails: Set<string>,
+): any[] {
   if (!maskPii) return authors
-  return authors.map((a, i) => ({
-    ...a,
-    email: `author-${i + 1}@masked.local`,
-    passwordHash: MASKED_PASSWORD_HASH,
-  }))
+  return authors.map((a, i) => {
+    const email = (a.email || '').toLowerCase()
+    if (preserveEmails.has(email)) {
+      // 보존 대상 — email/passwordHash 그대로 유지
+      return a
+    }
+    return {
+      ...a,
+      email: `author-${i + 1}@masked.local`,
+      passwordHash: MASKED_PASSWORD_HASH,
+    }
+  })
 }
 
-function maskSocialAccounts(accounts: any[], maskPii: boolean): any[] {
+function maskSocialAccounts(
+  accounts: any[],
+  authors: any[],
+  maskPii: boolean,
+  preserveEmails: Set<string>,
+): any[] {
   if (!maskPii) return accounts
-  return accounts.map((sa, i) => ({
-    ...sa,
-    providerEmail: `social-${i + 1}@masked.local`,
-  }))
+  // 보존 작가의 authorId 추출 (해당 작가의 SocialAccount는 providerEmail도 보존)
+  const preserveAuthorIds = new Set(
+    authors
+      .filter((a) => preserveEmails.has((a.email || '').toLowerCase()))
+      .map((a) => a.id),
+  )
+  return accounts.map((sa, i) => {
+    if (preserveAuthorIds.has(sa.authorId)) {
+      return sa
+    }
+    return {
+      ...sa,
+      providerEmail: `social-${i + 1}@masked.local`,
+    }
+  })
 }
 
 async function main() {
   const args = process.argv.slice(2)
   const maskPii = args.includes('--mask-pii')
+  const preserveAccounts = args.includes('--preserve-accounts')
   const positionalArgs = args.filter((a) => !a.startsWith('--'))
   const [source, target] = positionalArgs
+
+  const preserveEmails = preserveAccounts ? getPreserveEmails() : new Set<string>()
+  if (preserveAccounts && preserveEmails.size === 0) {
+    console.error('❌ --preserve-accounts 사용 시 DB_SYNC_PRESERVE_EMAILS 환경변수에 콤마 분리 이메일 목록이 필요합니다')
+    console.error('   예: DB_SYNC_PRESERVE_EMAILS=deerdevil@grimoire.app,admin@grimoire.app')
+    process.exit(1)
+  }
 
   if (!source || !target) {
     console.error('사용법: npx tsx scripts/db-sync.ts [source] [target] [--mask-pii]')
@@ -81,8 +131,11 @@ async function main() {
   }
 
   console.log(`╔══════════════════════════════════════════╗`)
-  console.log(`║   DB 동기화: ${source} → ${target}${maskPii ? ' (PII 마스킹)' : ''}`)
+  console.log(`║   DB 동기화: ${source} → ${target}${maskPii ? ' (PII 마스킹)' : ''}${preserveAccounts ? ' [보존 ' + preserveEmails.size + '개]' : ''}`)
   console.log(`╚══════════════════════════════════════════╝`)
+  if (preserveAccounts) {
+    console.log(`  보존 이메일: ${[...preserveEmails].join(', ')}`)
+  }
 
   const sourceDb = new PrismaClient({ datasources: { db: { url: getDbUrl(source) } } })
   const targetDb = new PrismaClient({ datasources: { db: { url: getDbUrl(target) } } })
@@ -115,10 +168,16 @@ async function main() {
     console.log(`  announcements: ${announcements.length}, featuredWorks: ${featuredWorks.length}, systemSettings: ${systemSettings.length}`)
 
     // PII 마스킹 적용
-    const maskedAuthors = maskAuthors(authors, maskPii)
-    const maskedSocialAccounts = maskSocialAccounts(socialAccounts, maskPii)
+    const maskedAuthors = maskAuthors(authors, maskPii, preserveEmails)
+    const maskedSocialAccounts = maskSocialAccounts(socialAccounts, authors, maskPii, preserveEmails)
     if (maskPii) {
       console.log(`  ⚠ PII 마스킹 적용됨: email, passwordHash, providerEmail`)
+      if (preserveAccounts) {
+        const preservedCount = maskedAuthors.filter((a) =>
+          preserveEmails.has((a.email || '').toLowerCase()),
+        ).length
+        console.log(`  ✓ 마스킹 제외 작가 ${preservedCount}명 (DB_SYNC_PRESERVE_EMAILS)`)
+      }
     }
 
     // 2. Target 데이터 삭제 (FK 역순)
