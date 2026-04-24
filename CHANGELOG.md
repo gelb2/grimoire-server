@@ -1,5 +1,36 @@
 # Changelog — grimoire-server
 
+## [0.29.0] - 2026-04-24
+
+### F4 보강 — AI 분석 리포트 영구 저장 + 히스토리 API
+
+#### Added
+- `prisma/schema.prisma` — `AnalysisReport` 모델 (authorId/workId/episodeId/workTitle/episodeTitle/types/results JSONB/creditsCharged/createdAt). 인덱스: `(author_id, created_at DESC)`, `(episode_id)`
+- `prisma/migrations/20260424010000_add_analysis_reports/migration.sql` — 마이그레이션 신규
+- `src/domain/port/outbound/analysis-report-repository.port.ts` — Port + AnalysisReport/Summary 타입
+- `src/adapter/outbound/persistence/prisma-analysis-report.repository.ts` — Prisma 어댑터 (create / findByAuthor / findById)
+- `NovelAnalysisUseCase.listReports(authorId)` + `getReport(authorId, reportId)` — 소유권 검증 포함
+- `analysis.controller.ts` — `GET /api/analysis/reports` (Summary 목록) + `GET /api/analysis/reports/:id` (상세)
+- `app.module.ts` — `AnalysisReportRepositoryPort` DI 바인딩
+
+#### Changed
+- `NovelAnalysisUseCase.analyzeEpisode` — 성공 시 reportRepo.create로 결과 영구 저장. 저장 실패는 catch로 보호(결과는 반환). 실패(환불 경로)는 저장하지 않음
+- 생성자 시그니처에 `reportRepo: AnalysisReportRepositoryPort` 추가
+
+#### Docs
+- `docs/api-contract.md` — Analysis 섹션에 `/reports` 2건 추가
+- `docs/ai-analysis-spec.md §5-1` 흐름 7단계(성공 시 저장) + §3-1-2 AnalysisReport 스키마 추가
+- `docs/data-model.md` — `analysis_reports` 테이블 명세 + 관계도 갱신
+
+#### Tests
+- `novel-analysis.usecase.spec.ts` — reportRepo mock 추가, 저장/실패-저장안함/listReports/getReport 4건 추가
+- 453건 전부 통과
+
+#### Rationale
+- 사용자 증상: 분석 완료 후 결과가 refreshUser 부작용으로 사라지고 재조회 수단이 없었음. 크레딧은 차감됐는데 결과는 증발
+- 웹에서 useEffect 의존성 체인으로 setResults([]) 발생하는 버그 외에, 근본적으로 분석 결과를 한 번의 뷰어 세션 안에서만 보여주는 설계가 부적절
+- → 결과는 DB 저장 + 분석 기록 화면에서 언제든 재조회 가능하도록 설계 전환
+
 ## [0.28.0] - 2026-04-24
 
 ### F4 — AI 일관성 분석 Q1=(a) 에피소드 ID 모드 전환 (벤치마크 정합)

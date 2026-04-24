@@ -1,9 +1,14 @@
-import { Injectable, Inject, Logger, BadRequestException } from '@nestjs/common'
+import { Injectable, Inject, Logger, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common'
 import { VectorStorePort } from '@domain/port/outbound/vector-store.port'
 import { EmbeddingPort } from '@domain/port/outbound/embedding.port'
 import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
+import {
+  AnalysisReportRepositoryPort,
+  AnalysisReport,
+  AnalysisReportSummary,
+} from '@domain/port/outbound/analysis-report-repository.port'
 import { CreditReason } from '@domain/model/credit'
 import { ANALYSIS_CREDIT_COST } from '@domain/model/config'
 import { chunkText, checkConsistency, checkTone, checkCharacter, AnalysisResult, WorkMeta } from '@lib/rag'
@@ -19,6 +24,8 @@ export class NovelAnalysisUseCase {
     @Inject('ClaudeApiPort') private readonly claude: ClaudeApiPort,
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
     @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
+    @Inject('AnalysisReportRepositoryPort')
+    private readonly reportRepo: AnalysisReportRepositoryPort,
   ) {}
 
   /** 에피소드 텍스트를 벡터화하여 인덱싱 */
@@ -112,9 +119,10 @@ export class NovelAnalysisUseCase {
       )
     }
 
+    let results: AnalysisResult[]
     try {
       // self-reference 환각 방지를 위해 분석 대상 에피소드 자신은 RAG에서 자동 제외
-      return await this.runAnalysis(episode.workId, episode.rawMd, analysisTypes, episodeId, abortSignal)
+      results = await this.runAnalysis(episode.workId, episode.rawMd, analysisTypes, episodeId, abortSignal)
     } catch (error) {
       // 실패(AbortedError 포함) 시 전액 환불
       await this.creditRepo
@@ -122,6 +130,40 @@ export class NovelAnalysisUseCase {
         .catch((e) => this.logger.error(`환불 실패: ${String(e)}`))
       throw error
     }
+
+    // 성공 시 분석 리포트를 영구 저장 (대시보드 히스토리용).
+    // DB 실패로 응답 자체가 실패하지 않도록 catch로 보호 — 결과는 반환하되 로그만 남김.
+    try {
+      await this.reportRepo.create({
+        authorId,
+        workId: episode.workId,
+        episodeId,
+        workTitle: work.title,
+        episodeTitle: episode.title,
+        types: analysisTypes,
+        results,
+        creditsCharged: ANALYSIS_CREDIT_COST,
+      })
+    } catch (err) {
+      this.logger.error(`분석 리포트 저장 실패 (결과는 반환): ${String(err)}`)
+    }
+
+    return results
+  }
+
+  /** 작가의 분석 히스토리 목록 조회 (최신순, 50건 상한) */
+  async listReports(authorId: string): Promise<AnalysisReportSummary[]> {
+    return this.reportRepo.findByAuthor(authorId, 50)
+  }
+
+  /** 단건 상세 조회 + 소유권 검증 */
+  async getReport(authorId: string, reportId: string): Promise<AnalysisReport> {
+    const report = await this.reportRepo.findById(reportId)
+    if (!report) throw new NotFoundException('분석 리포트를 찾을 수 없습니다')
+    if (report.authorId !== authorId) {
+      throw new ForbiddenException('본인의 분석 리포트만 조회할 수 있습니다')
+    }
+    return report
   }
 
   /** 분석 실제 실행 (크레딧 로직과 분리) */
