@@ -3,7 +3,7 @@
  * 실행: SEED_ADMIN_PASSWORD='strong-pw' npx tsx scripts/seed-admin.ts
  * 용도: 3환경 공통 — 이미 존재하면 role만 admin으로 업데이트
  *
- * 2026-04-25 변경: 평문 비번 'REMOVED_CREDENTIAL_014' 제거. SEED_ADMIN_PASSWORD env 필수.
+ * 2026-04-25 변경: 평문 비번 제거 (보안 회수). SEED_ADMIN_PASSWORD env 필수.
  */
 import { PrismaClient } from '@prisma/client'
 import * as bcrypt from 'bcryptjs'

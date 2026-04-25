@@ -1060,7 +1060,7 @@ B사감은 학생들의 편지를 검열했다. 남학생한테서 온 편지가
 // ── 메인 실행 ──────────────────────────────────────────
 
 async function main() {
-  // 2026-04-25: 평문 비번 'REMOVED_CREDENTIAL_012' 제거. SEED_PASSWORD env 필수.
+  // 2026-04-25: 평문 비번 제거 (보안 회수). SEED_PASSWORD env 필수.
   if (!process.env.SEED_PASSWORD) {
     throw new Error('SEED_PASSWORD env 필수. 예: SEED_PASSWORD="strong-pw" npx tsx scripts/seed-more-classics.ts')
   }

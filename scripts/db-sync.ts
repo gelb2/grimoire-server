@@ -19,7 +19,7 @@
 
 import { PrismaClient } from '@prisma/client'
 
-// 2026-04-25: fallback 평문 'REMOVED_CREDENTIAL_010' 제거. DB_PASSWORD env 필수.
+// 2026-04-25: fallback 평문 제거 (보안 회수). DB_PASSWORD env 필수.
 const PW = process.env.DB_PASSWORD
 if (!PW) {
   console.error('❌ DB_PASSWORD env 필수. 예: DB_PASSWORD="strong-pw" npx tsx scripts/db-sync.ts ...')
