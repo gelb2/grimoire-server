@@ -124,7 +124,7 @@ async function main() {
       method: 'POST',
       body: JSON.stringify({
         email: 'deerdevil@grimoire.app',
-        password: 'REMOVED_CREDENTIAL_013',
+        password: process.env.SEED_PASSWORD ?? (() => { throw new Error('SEED_PASSWORD env 필수') })(),
         name: '사슴악마',
         slug: 'deerdevil',
       }),
@@ -138,7 +138,7 @@ async function main() {
       method: 'POST',
       body: JSON.stringify({
         email: 'deerdevil@grimoire.app',
-        password: 'REMOVED_CREDENTIAL_013',
+        password: process.env.SEED_PASSWORD ?? (() => { throw new Error('SEED_PASSWORD env 필수') })(),
       }),
     })
     console.log(`  ✓ 로그인 완료\n`)

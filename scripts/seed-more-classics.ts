@@ -47,7 +47,7 @@ const AUTHORS: AuthorSeed[] = [
     name: '이광수',
     slug: 'lee-gwangsu',
     email: 'lee-gwangsu@grimoire.app',
-    password: 'REMOVED_CREDENTIAL_012',
+    password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
       {
@@ -154,7 +154,7 @@ const AUTHORS: AuthorSeed[] = [
     name: '김소월',
     slug: 'kim-sowol',
     email: 'kim-sowol@grimoire.app',
-    password: 'REMOVED_CREDENTIAL_012',
+    password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
       {
@@ -368,7 +368,7 @@ const AUTHORS: AuthorSeed[] = [
     name: '윤동주',
     slug: 'yun-dongju',
     email: 'yun-dongju@grimoire.app',
-    password: 'REMOVED_CREDENTIAL_012',
+    password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
       {
@@ -585,7 +585,7 @@ const AUTHORS: AuthorSeed[] = [
     name: '이상',
     slug: 'yi-sang',
     email: 'yi-sang@grimoire.app',
-    password: 'REMOVED_CREDENTIAL_012',
+    password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
       {
@@ -670,7 +670,7 @@ const AUTHORS: AuthorSeed[] = [
     name: '채만식',
     slug: 'chae-mansik',
     email: 'chae-mansik@grimoire.app',
-    password: 'REMOVED_CREDENTIAL_012',
+    password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
       {
@@ -741,7 +741,7 @@ const AUTHORS: AuthorSeed[] = [
     name: '이효석',
     slug: 'lee-hyoseok',
     email: 'lee-hyoseok@grimoire.app',
-    password: 'REMOVED_CREDENTIAL_012',
+    password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
       {
@@ -812,7 +812,7 @@ const AUTHORS: AuthorSeed[] = [
     name: '김유정',
     slug: 'kim-yujeong',
     email: 'kim-yujeong@grimoire.app',
-    password: 'REMOVED_CREDENTIAL_012',
+    password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
       {
@@ -919,7 +919,7 @@ const AUTHORS: AuthorSeed[] = [
     name: '현진건',
     slug: 'hyun-jingeon',
     email: 'hyun-jingeon@grimoire.app',
-    password: 'REMOVED_CREDENTIAL_012',
+    password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
       {
@@ -990,7 +990,7 @@ B사감은 학생들의 편지를 검열했다. 남학생한테서 온 편지가
     name: '나도향',
     slug: 'na-dohyang',
     email: 'na-dohyang@grimoire.app',
-    password: 'REMOVED_CREDENTIAL_012',
+    password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
       {
@@ -1060,6 +1060,10 @@ B사감은 학생들의 편지를 검열했다. 남학생한테서 온 편지가
 // ── 메인 실행 ──────────────────────────────────────────
 
 async function main() {
+  // 2026-04-25: 평문 비번 'REMOVED_CREDENTIAL_012' 제거. SEED_PASSWORD env 필수.
+  if (!process.env.SEED_PASSWORD) {
+    throw new Error('SEED_PASSWORD env 필수. 예: SEED_PASSWORD="strong-pw" npx tsx scripts/seed-more-classics.ts')
+  }
   console.log('=== 추가 고전문학 시드 스크립트 시작 ===')
   console.log(`DATABASE_URL: ${process.env.DATABASE_URL?.substring(0, 30)}...`)
 

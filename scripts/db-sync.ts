@@ -19,7 +19,12 @@
 
 import { PrismaClient } from '@prisma/client'
 
-const PW = process.env.DB_PASSWORD || 'REMOVED_CREDENTIAL_010'
+// 2026-04-25: fallback 평문 'REMOVED_CREDENTIAL_010' 제거. DB_PASSWORD env 필수.
+const PW = process.env.DB_PASSWORD
+if (!PW) {
+  console.error('❌ DB_PASSWORD env 필수. 예: DB_PASSWORD="strong-pw" npx tsx scripts/db-sync.ts ...')
+  process.exit(1)
+}
 const ADMIN = 'grimoireadmin'
 
 // PII 마스킹용 고정 bcrypt 해시 (비밀번호: "masked2026")
@@ -37,6 +42,7 @@ function getPreserveEmails(): Set<string> {
 
 function getDbUrl(env: string): string {
   if (env === 'local') {
+    // 로컬 docker-compose 기본값 — 외부 노출 영향 없음
     const localPw = process.env.LOCAL_DB_PASSWORD || 'REMOVED_CREDENTIAL_011'
     return `postgresql://${ADMIN}:${localPw}@localhost:5432/grimoire`
   }

@@ -260,10 +260,11 @@ az postgres flexible-server firewall-rule create \
   --resource-group zenith-rg --name grimoire-db-dev \
   --rule-name debug-$(date +%s) \
   --start-ip-address "$MY_IP" --end-ip-address "$MY_IP" --output none
-PGPASSWORD='REMOVED_CREDENTIAL_010' psql \
+PGPASSWORD="REMOVED_CREDENTIAL_015" psql \
   -h grimoire-db-dev.postgres.database.azure.com \
   -U grimoireadmin -d grimoire \
   -c "SELECT email, slug, name FROM authors WHERE slug = 'deerdevil';"
+# DEV_DB_PW 값은 ACCOUNTS.md (로컬 vault, .gitignore) 참조
 # 작업 끝나면 방화벽 규칙 제거 필수:
 # az postgres flexible-server firewall-rule delete -g zenith-rg -n grimoire-db-dev --rule-name debug-... --yes
 ```
