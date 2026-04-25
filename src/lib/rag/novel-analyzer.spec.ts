@@ -65,4 +65,74 @@ describe('novel-analyzer', () => {
     const result = await checkConsistency(mockAsk, '기존', '새로운')
     expect(result.score).toBe(80)
   })
+
+  describe('SDK signal 전파 (HARNESS §10 Phase 4)', () => {
+    it('checkConsistency: signal 전달 시 ask options.signal로 전파된다', async () => {
+      mockAsk.mockResolvedValue(JSON.stringify({ score: 80, summary: 's', issues: [], suggestions: [] }))
+      const controller = new AbortController()
+
+      await checkConsistency(mockAsk, '기존', '새로운', undefined, controller.signal)
+
+      expect(mockAsk).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({ signal: controller.signal }),
+      )
+    })
+
+    it('checkTone / checkCharacter도 동일하게 signal 전파', async () => {
+      mockAsk.mockResolvedValue(JSON.stringify({ score: 90, summary: 's', issues: [], suggestions: [] }))
+      const controller = new AbortController()
+
+      await checkTone(mockAsk, '기존', '새로운', undefined, controller.signal)
+      await checkCharacter(mockAsk, '기존', '새로운', undefined, controller.signal)
+
+      expect(mockAsk).toHaveBeenCalledTimes(2)
+      expect(mockAsk).toHaveBeenNthCalledWith(
+        1,
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({ signal: controller.signal }),
+      )
+      expect(mockAsk).toHaveBeenNthCalledWith(
+        2,
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({ signal: controller.signal }),
+      )
+    })
+
+    it('signal 미전달 시 기존 동작 유지 (options.signal 없음)', async () => {
+      mockAsk.mockResolvedValue(JSON.stringify({ score: 70, summary: 's', issues: [], suggestions: [] }))
+
+      await checkConsistency(mockAsk, '기존', '새로운')
+
+      const callArgs = mockAsk.mock.calls[0][2]
+      expect(callArgs?.signal).toBeUndefined()
+    })
+
+    it('aborted signal 상태에서 ask가 throw하면 즉시 throw (재시도 swallow 안 함)', async () => {
+      const controller = new AbortController()
+      controller.abort()
+      const abortError = Object.assign(new Error('aborted'), { name: 'AbortError' })
+      mockAsk.mockRejectedValue(abortError)
+
+      await expect(
+        checkConsistency(mockAsk, '기존', '새로운', undefined, controller.signal),
+      ).rejects.toBe(abortError)
+
+      // signal이 aborted면 첫 시도 throw 즉시 전파 — 재시도 안 함
+      expect(mockAsk).toHaveBeenCalledTimes(1)
+    })
+
+    it('signal 미아보트 + ask 일반 throw는 1회 재시도 (기존 동작 보존)', async () => {
+      mockAsk
+        .mockRejectedValueOnce(new Error('rate limit'))
+        .mockResolvedValueOnce(JSON.stringify({ score: 60, summary: 's', issues: [], suggestions: [] }))
+
+      const result = await checkConsistency(mockAsk, '기존', '새로운')
+      expect(result.score).toBe(60)
+      expect(mockAsk).toHaveBeenCalledTimes(2)
+    })
+  })
 })
