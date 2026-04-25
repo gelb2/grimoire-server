@@ -2,6 +2,11 @@ import { AuthorTheme } from '@domain/model/theme'
 
 export interface AskOptions {
   maxTokens?: number
+  /**
+   * 클라이언트 disconnect / 서버 abort 발생 시 Anthropic API 호출 자체를 cancel하기 위한 signal.
+   * 미전달 시 기존 동작 유지 (호출 cancel 안 됨). HARNESS §10 Phase 4 — SDK signal 전파.
+   */
+  signal?: AbortSignal
 }
 
 export interface ClaudeApiPort {
