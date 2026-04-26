@@ -3,10 +3,12 @@
  *
  * - DeerDevil: deerDevil 프리셋 (사슴악마 전용, midnight과 독립)
  * - 고전문학 작가: 문학 스타일에 맞는 고유 테마 생성
- * - 모든 작가에게 test1234 비밀번호 + 10 크레딧 부여
+ * - 모든 작가에게 SEED_PASSWORD env 비번 + 10 크레딧 부여
  * - 멱등성 보장: 여러 번 실행해도 안전 (upsert 사용)
  *
- * 실행: DATABASE_URL="postgresql://..." npx tsx scripts/seed-themes.ts
+ * 2026-04-25 변경: 평문 비번 제거 (보안 회수). SEED_PASSWORD env 필수.
+ *
+ * 실행: SEED_PASSWORD="strong-pw" DATABASE_URL="postgresql://..." npx tsx scripts/seed-themes.ts
  * 또는 .env 파일에 DATABASE_URL이 설정되어 있으면 자동으로 읽음
  */
 
@@ -370,8 +372,10 @@ async function main() {
   console.log('=== 작가 테마 + 테스트 계정 시드 시작 ===')
   console.log(`대상 작가: ${AUTHORS.length}명\n`)
 
-  // 비밀번호 해싱 (test1234, bcrypt 10 rounds)
-  const passwordHash = await bcrypt.hash('test1234', 10)
+  // 2026-04-25: 평문 비번 제거 (보안 회수). SEED_PASSWORD env 필수.
+  const seedPw = process.env.SEED_PASSWORD
+  if (!seedPw) throw new Error('SEED_PASSWORD env 필수')
+  const passwordHash = await bcrypt.hash(seedPw, 10)
 
   let success = 0
   let fail = 0
@@ -429,7 +433,7 @@ async function main() {
   }
 
   console.log(`\n=== 완료: 성공 ${success} / 실패 ${fail} / 전체 ${AUTHORS.length} ===`)
-  console.log('비밀번호: test1234 (전 작가 공통)')
+  console.log('비밀번호: SEED_PASSWORD env 값 (전 작가 공통)')
   console.log('크레딧: 10 (전 작가)')
 }
 

@@ -142,7 +142,11 @@ export class ClaudeThemeAdapter implements ClaudeApiPort {
     return theme
   }
 
-  async ask(systemPrompt: string, userMessage: string, options?: { maxTokens?: number }): Promise<string> {
+  async ask(
+    systemPrompt: string,
+    userMessage: string,
+    options?: { maxTokens?: number; signal?: AbortSignal },
+  ): Promise<string> {
     return askClaude(systemPrompt, userMessage, options)
   }
 }

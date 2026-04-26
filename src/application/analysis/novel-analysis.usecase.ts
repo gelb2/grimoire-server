@@ -220,11 +220,13 @@ export class NovelAnalysisUseCase {
     const episodeForAnalysis = newEpisodeText.slice(0, 3000)
 
     throwIfAborted(abortSignal)
+    // signal을 checkXxx까지 그대로 전달 → Anthropic SDK messages.create의 RequestOptions.signal에 도달.
+    // abort 시 fetch가 즉시 cancel되어 백그라운드 토큰 낭비 0건 (HARNESS §10 Phase 4 SDK signal 전파).
     const resultsRaw = await abortableRace(abortSignal, Promise.all(
       analysisTypes.map((type) => {
-        if (type === 'consistency') return checkConsistency(ask, context, episodeForAnalysis, workMeta)
-        if (type === 'tone') return checkTone(ask, context, episodeForAnalysis, workMeta)
-        return checkCharacter(ask, context, episodeForAnalysis, workMeta)
+        if (type === 'consistency') return checkConsistency(ask, context, episodeForAnalysis, workMeta, abortSignal)
+        if (type === 'tone') return checkTone(ask, context, episodeForAnalysis, workMeta, abortSignal)
+        return checkCharacter(ask, context, episodeForAnalysis, workMeta, abortSignal)
       }),
     ))
 

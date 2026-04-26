@@ -164,7 +164,9 @@ async function step1CreateAuthorsAndThemes(): Promise<void> {
   console.log('[Step 1/7] 작가 + 테마 생성')
   console.log('══════════════════════════════════════')
 
-  const passwordHash = await bcrypt.hash('test1234', 10)
+  const seedPw = process.env.SEED_PASSWORD
+  if (!seedPw) throw new Error('SEED_PASSWORD env 필수 (2026-04-25 보안 회수)')
+  const passwordHash = await bcrypt.hash(seedPw, 10)
   let success = 0
 
   for (const a of AUTHORS_WITH_THEMES) {

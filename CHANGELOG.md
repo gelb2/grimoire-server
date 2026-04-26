@@ -1,5 +1,25 @@
 # Changelog — grimoire-server
 
+## [0.29.2] - 2026-04-26
+
+### Feat — Anthropic SDK signal 완전 전파 (HARNESS §10 Phase 4)
+
+#### Changed
+- `lib/claude.ts:askClaude` options에 `signal?: AbortSignal` 추가, SDK `messages.create` 두 번째 인자 RequestOptions로 전달 → fetch abort 시 Anthropic API 호출도 즉시 cancel
+- `domain/port/outbound/claude-api.port.ts:AskOptions`에 signal 필드 추가
+- `adapter/outbound/ai/claude-theme.adapter.ts:ask` 시그니처 갱신 (signal 옵션 통과)
+- `lib/rag/novel-analyzer.ts:AskFn / runAnalysis / checkConsistency / checkTone / checkCharacter` 모두 signal 인자 추가 (체인 끝까지 전달)
+- `application/analysis/novel-analysis.usecase.ts` — checkXxx 호출 시 abortSignal 전달
+
+#### Tests
+- `lib/rag/novel-analyzer.spec.ts` — signal 전파 5건 (전달/미전달/abort 시 즉시 throw/일반 throw 재시도 보존)
+- novel-analyzer 10/10 PASS, analysis usecase 30/30 PASS, sensor-server 4/4 PASS
+
+#### Rationale
+- 기존: 사용자 disconnect 시 abortableRace로 Promise는 reject되지만 백그라운드 Anthropic API call은 계속 실행 → 토큰 낭비
+- 이번: SDK fetch에 signal 전달 → 즉시 cancel. 운영 토큰 절감 + UX 즉시 반영
+- HARNESS §10 Phase 4 잔여 항목 해소
+
 ## [0.29.1] - 2026-04-24
 
 ### Fix — 테마 활성화 auto-evict (슬롯 가득 찬 상태에서 기본 테마 전환 경로 복구)

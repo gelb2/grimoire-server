@@ -10,7 +10,11 @@
  */
 
 /** AI 호출 함수 시그니처 — ClaudeApiPort.ask 또는 mock 주입 */
-export type AskFn = (systemPrompt: string, userMessage: string, options?: { maxTokens?: number }) => Promise<string>
+export type AskFn = (
+  systemPrompt: string,
+  userMessage: string,
+  options?: { maxTokens?: number; signal?: AbortSignal },
+) => Promise<string>
 
 export interface AnalysisResult {
   type: 'consistency' | 'tone' | 'character'
@@ -89,20 +93,23 @@ function makeFailure(type: AnalysisResult['type'], reason: string): AnalysisResu
   return { type, score: -1, summary: `분석 실패 (${reason})`, issues: [], suggestions: [] }
 }
 
-/** 단일 분석 실행 — JSON 파싱 실패 시 1회 재시도 */
+/** 단일 분석 실행 — JSON 파싱 실패 시 1회 재시도. signal 전달 시 abort에 즉시 반응 (Anthropic API 호출 cancel) */
 async function runAnalysis(
   type: AnalysisResult['type'],
   systemPrompt: string,
   userMessage: string,
   ask: AskFn,
+  signal?: AbortSignal,
 ): Promise<AnalysisResult> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const raw = await ask(systemPrompt, userMessage, { maxTokens: 2048 })
+      const raw = await ask(systemPrompt, userMessage, { maxTokens: 2048, signal })
       const parsed = tryParseAnalysisJSON(raw)
       if (parsed) return { type, ...parsed }
       // 파싱 실패 → 다음 시도
     } catch (err) {
+      // abort는 절대 swallow 금지 — 즉시 throw해서 환불 분기 보장
+      if (signal?.aborted) throw err
       // Claude API 오류 → 재시도 (1회만)
       if (attempt === 1) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -114,24 +121,42 @@ async function runAnalysis(
 }
 
 /** 설정 붕괴 체크 */
-export async function checkConsistency(ask: AskFn, context: string, newEpisode: string, work?: WorkMeta): Promise<AnalysisResult> {
+export async function checkConsistency(
+  ask: AskFn,
+  context: string,
+  newEpisode: string,
+  work?: WorkMeta,
+  signal?: AbortSignal,
+): Promise<AnalysisResult> {
   const systemPrompt = buildSystemPrompt('', CONSISTENCY_INSTRUCTION, '완벽한 일관성', work)
   const userMessage = `[기존 에피소드 컨텍스트]\n${context}\n\n[새 에피소드]\n${newEpisode}`
-  return runAnalysis('consistency', systemPrompt, userMessage, ask)
+  return runAnalysis('consistency', systemPrompt, userMessage, ask, signal)
 }
 
 /** 톤 일관성 체크 */
-export async function checkTone(ask: AskFn, context: string, newEpisode: string, work?: WorkMeta): Promise<AnalysisResult> {
+export async function checkTone(
+  ask: AskFn,
+  context: string,
+  newEpisode: string,
+  work?: WorkMeta,
+  signal?: AbortSignal,
+): Promise<AnalysisResult> {
   const systemPrompt = buildSystemPrompt('', TONE_INSTRUCTION, '완벽한 톤 일관성', work)
   const userMessage = `[기존 에피소드 컨텍스트]\n${context}\n\n[새 에피소드]\n${newEpisode}`
-  return runAnalysis('tone', systemPrompt, userMessage, ask)
+  return runAnalysis('tone', systemPrompt, userMessage, ask, signal)
 }
 
 /** 캐릭터 어감 체크 */
-export async function checkCharacter(ask: AskFn, context: string, newEpisode: string, work?: WorkMeta): Promise<AnalysisResult> {
+export async function checkCharacter(
+  ask: AskFn,
+  context: string,
+  newEpisode: string,
+  work?: WorkMeta,
+  signal?: AbortSignal,
+): Promise<AnalysisResult> {
   const systemPrompt = buildSystemPrompt('', CHARACTER_INSTRUCTION, '완벽한 캐릭터 일관성', work)
   const userMessage = `[기존 에피소드 컨텍스트]\n${context}\n\n[새 에피소드]\n${newEpisode}`
-  return runAnalysis('character', systemPrompt, userMessage, ask)
+  return runAnalysis('character', systemPrompt, userMessage, ask, signal)
 }
 
 /**
