@@ -74,8 +74,8 @@ export class NovelAnalysisUseCase {
    * - 3종 분석을 Promise.all 병렬 호출 (latency 1/3)
    * - 응답의 issues 인용이 실제 에피소드 텍스트에 존재하는지 후처리 검증 (환각 제거)
    *
-   * 크레딧 차감 (F2 2026-04-19):
-   * - 실행 전 ANALYSIS_CREDIT_COST(3) 크레딧 차감 — 부족 시 BadRequest
+   * 크레딧 차감 (F2 2026-04-19, 2026-04-27 4 크레딧으로 인상):
+   * - 실행 전 ANALYSIS_CREDIT_COST(4) 크레딧 차감 — 부족 시 BadRequest
    * - AI 호출 실패 시 전액 환불
    *
    * 보안 (CLAUDE.md §0 정책 강제):
