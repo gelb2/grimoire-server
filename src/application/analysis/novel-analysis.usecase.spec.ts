@@ -350,30 +350,30 @@ describe('NovelAnalysisUseCase', () => {
       })
     })
 
-    // F2 2026-04-19: AI 분석 3 크레딧 차감
-    describe('크레딧 차감 (F2)', () => {
-      it('소유권 검증 통과 후 3 크레딧을 차감한다', async () => {
+    // F2 2026-04-19: AI 분석 3 크레딧 차감 → 2026-04-27: 4 크레딧 인상 (cost-accountant 시뮬, FAIL 약점 해소)
+    describe('크레딧 차감 (F2 2026-04-19 → 4 크레딧 인상 2026-04-27)', () => {
+      it('소유권 검증 통과 후 4 크레딧을 차감한다', async () => {
         mockVectorStore.searchSimilar.mockResolvedValue([])
         await useCase.analyzeEpisode('author-1', 'ep-1')
 
-        expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -3, 'novel_analysis')
+        expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -4, 'novel_analysis')
       })
 
       it('크레딧 부족 시 BadRequest를 던지고 분석을 수행하지 않는다', async () => {
         mockCreditRepo.adjustCredits.mockRejectedValueOnce(new Error('크레딧이 부족합니다'))
 
-        await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('AI 분석은 3 크레딧이 필요합니다')
+        await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('AI 분석은 4 크레딧이 필요합니다')
         expect(mockVectorStore.searchSimilar).not.toHaveBeenCalled()
         expect(mockCheckConsistency).not.toHaveBeenCalled()
       })
 
-      it('분석 중 예외가 나면 전액(3) 환불한다', async () => {
+      it('분석 중 예외가 나면 전액(4) 환불한다', async () => {
         mockVectorStore.searchSimilar.mockRejectedValue(new Error('벡터 DB 장애'))
 
         await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('벡터 DB 장애')
 
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -3, 'novel_analysis')
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 3, 'novel_analysis_refund')
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -4, 'novel_analysis')
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 4, 'novel_analysis_refund')
       })
     })
 
@@ -387,8 +387,8 @@ describe('NovelAnalysisUseCase', () => {
           useCase.analyzeEpisode('author-1', 'ep-1', undefined, controller.signal),
         ).rejects.toThrow(/중단/)
 
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -3, 'novel_analysis')
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 3, 'novel_analysis_refund')
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -4, 'novel_analysis')
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 4, 'novel_analysis_refund')
         expect(mockVectorStore.searchSimilar).not.toHaveBeenCalled()
         expect(mockCheckConsistency).not.toHaveBeenCalled()
       })
@@ -411,8 +411,8 @@ describe('NovelAnalysisUseCase', () => {
 
         await expect(promise).rejects.toThrow(/중단/)
 
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -3, 'novel_analysis')
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 3, 'novel_analysis_refund')
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -4, 'novel_analysis')
+        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 4, 'novel_analysis_refund')
       })
 
       it('signal 미지정이면 기존 동작 유지 (정상 경로)', async () => {
@@ -427,7 +427,7 @@ describe('NovelAnalysisUseCase', () => {
 
         expect(results).toHaveLength(1)
         expect(mockCreditRepo.adjustCredits).toHaveBeenCalledTimes(1)
-        expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -3, 'novel_analysis')
+        expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -4, 'novel_analysis')
       })
     })
   })
@@ -455,7 +455,7 @@ describe('NovelAnalysisUseCase', () => {
         episodeId: 'ep-1',
         workTitle: '사슴악마',
         types: ['consistency'],
-        creditsCharged: 3,
+        creditsCharged: 4,
       })
       expect(arg.results).toHaveLength(1)
       expect(arg.results[0].score).toBe(90)

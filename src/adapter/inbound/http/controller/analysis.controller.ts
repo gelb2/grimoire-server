@@ -54,7 +54,7 @@ export class AnalysisController {
     req.on('close', abort)
     req.on('aborted', abort)
     try {
-      // F2 (2026-04-19): 분석 호출 시 3 크레딧 차감. IDOR 방지용으로 body 대신 JWT sub 사용.
+      // F2 (2026-04-19 → 2026-04-27 4 크레딧 인상): 분석 호출 시 ANALYSIS_CREDIT_COST 크레딧 차감. IDOR 방지용으로 body 대신 JWT sub 사용.
       return await this.analysisUseCase.analyzeEpisode(
         req.user.sub,
         body.episodeId,

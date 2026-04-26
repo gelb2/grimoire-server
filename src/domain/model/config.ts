@@ -18,12 +18,17 @@ export const DAILY_FREE_LIMITS: Record<string, number> = {
 }
 
 /**
- * AI 작품 분석 1회 차감 크레딧 — PLANNING §14 / ai-cost-table.md §3-2 (F2 2026-04-19 확정).
+ * AI 작품 분석 1회 차감 크레딧 — PLANNING §14 / ai-cost-table.md §3-2.
  *
- * 근거: Sonnet 4.6 기준 분석 회당 AI 원가 ₩60.4, 1~2 크레딧 시 전 패키지 안전배수 3× 미달.
- * 3 크레딧 시 베스트 패키지 ₩300 vs 총 원가 ₩95.5 → 안전배수 3.14× PASS.
+ * 박제 이력:
+ * - F2 2026-04-19: 3 크레딧 확정 (Sonnet 4.6, 베스트 안전배수 3.14× PASS)
+ * - 2026-04-27 #9 사용자 결정: 3 → 4 크레딧 인상 (cost-accountant 시뮬 검증)
+ *   - 사유: Sonnet +20% 시뮬 시 베스트 2.79× / 인기 2.96× → §0 위반 FAIL 약점
+ *   - 환율 +8.5% 시뮬 시 베스트 2.98× FAIL
+ *   - 4 크레딧 인상 후: 베스트 3.73× / 인기 3.61× / 기본 3.48× (모두 PASS)
+ *   - +20% 시뮬 후 베스트 3.35× → FAIL 약점 완전 해소
  */
-export const ANALYSIS_CREDIT_COST = 3
+export const ANALYSIS_CREDIT_COST = 4
 
 /**
  * 크레딧 상품 목록 — PLANNING_GRIMOIRE.md §8 기준
