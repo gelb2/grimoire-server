@@ -4,6 +4,7 @@ import { VectorStorePort } from '@domain/port/outbound/vector-store.port'
 import { EmbeddingPort } from '@domain/port/outbound/embedding.port'
 import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
+import { guardPromptInjection } from '@lib/prompt-injection-guard'
 
 const CHAT_SYSTEM_PROMPT = `당신은 소설 작가를 돕는 AI 어시스턴트입니다.
 
@@ -40,6 +41,10 @@ export class ChatUseCase {
 
   /** 메시지 전송 + AI 응답 생성 */
   async sendMessage(authorId: string, sessionId: string, userMessage: string): Promise<{ userMsg: ChatMessage; assistantMsg: ChatMessage }> {
+    // P17 — LLM Prompt Injection 방어 (OWASP LLM01, Constitution 19 Principles)
+    // 검출 시 BadRequestException — 클라이언트에 자연스러운 문장 재작성 요구
+    guardPromptInjection(userMessage, 'chat.sendMessage')
+
     const session = await this.chatRepo.findSessionById(sessionId)
     if (!session) throw new NotFoundException('채팅 세션을 찾을 수 없습니다')
     if (session.authorId !== authorId) throw new ForbiddenException('본인의 채팅만 사용할 수 있습니다')
