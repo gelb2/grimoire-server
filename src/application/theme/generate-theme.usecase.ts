@@ -7,6 +7,7 @@ import { CreditReason } from '@domain/model/credit'
 import { Theme } from '@domain/model/theme'
 import { isPlanExpired } from '@domain/model/plan'
 import { DAILY_FREE_LIMITS } from '@domain/model/config'
+import { guardPromptInjection } from '@lib/prompt-injection-guard'
 
 @Injectable()
 export class GenerateThemeUseCase {
@@ -19,6 +20,10 @@ export class GenerateThemeUseCase {
 
   /** AI 테마 생성 — 슬롯 체크 없음 (생성은 자유, 활성화가 슬롯 제한) */
   async execute(authorId: string, description: string, themeName?: string): Promise<Theme> {
+    // P17 — LLM Prompt Injection 방어 (OWASP LLM01, Constitution 19 Principles)
+    // 테마 description은 짧은 자연어 → injection 패턴은 즉시 차단
+    guardPromptInjection(description, 'theme.generate')
+
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
 
