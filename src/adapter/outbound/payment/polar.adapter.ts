@@ -7,6 +7,7 @@ import {
   PaymentInitRequest,
   PaymentInitResponse,
   NormalizedWebhookEvent,
+  NormalizedCheckout,
 } from '@domain/port/outbound/payment-gateway.port'
 import { CREDIT_PRODUCTS } from '@domain/model/config'
 import { isProduction } from '@infrastructure/config/app-env'
@@ -244,5 +245,104 @@ export class PolarAdapter implements PaymentGatewayPort {
     if (product) return product.price
     // 매핑 실패 시 고정 환율 폴백 (1 USD = 1400 KRW)
     return Math.round((amountCents / 100) * 1400)
+  }
+
+  /**
+   * PG↔DB 정합성 검증 cron용 — 최근 checkout 목록 조회 (Sprint PAY-P0-2).
+   *
+   * - Polar SDK `polar.checkouts.list({ page, limit, sorting: ['-created_at'] })` 활용.
+   * - Polar는 server-side `since` 필터 미지원 → clientSide 필터링 필수.
+   * - 정렬: created_at desc → since 이전 checkout 도달 시 break (이후 페이지 스킵).
+   * - limit은 최대 100 (Polar SDK 제약).
+   *
+   * @param since createdAt 이후 checkout만 반환
+   * @param limit 페이지당 row 수 (최대 100)
+   * @returns NormalizedCheckout 배열 (시간순)
+   */
+  async listRecentCheckouts(since: Date, limit: number): Promise<NormalizedCheckout[]> {
+    const safeLimit = Math.min(Math.max(limit, 1), 100)
+    const collected: NormalizedCheckout[] = []
+    let page = 1
+    const MAX_PAGES = 20 // 안전 상한 — page 20 * limit 100 = 최대 2000 row/cron
+
+    try {
+      while (page <= MAX_PAGES) {
+        const response = await this.polar.checkouts.list({
+          page,
+          limit: safeLimit,
+          sorting: ['-created_at'],
+        })
+        // Polar SDK는 PageIterator 반환 — result.items 배열 직접 접근
+        const result = (response as unknown as {
+          result?: { items?: Array<Record<string, unknown>> }
+        }).result
+        const items = result?.items ?? []
+        if (items.length === 0) break
+
+        let reachedSince = false
+        for (const raw of items) {
+          const checkout = raw as {
+            id?: string
+            createdAt?: Date | string
+            status?: string
+            totalAmount?: number
+            netAmount?: number
+            amount?: number
+          }
+          const createdAt = checkout.createdAt
+            ? new Date(checkout.createdAt)
+            : new Date(0)
+          if (createdAt < since) {
+            // since 이전 checkout 도달 → 더 이상 페이지 진행 불필요
+            reachedSince = true
+            break
+          }
+          if (!checkout.id) continue
+          collected.push({
+            externalTransactionId: checkout.id,
+            status: this.mapCheckoutStatus(checkout.status),
+            amount: this.convertToKrw(
+              checkout.totalAmount ?? checkout.netAmount ?? checkout.amount ?? 0,
+            ),
+            createdAt,
+          })
+        }
+
+        if (reachedSince) break
+        if (items.length < safeLimit) break // 마지막 페이지
+        page += 1
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e)
+      this.logger.error(`Polar checkouts.list 호출 실패 (page=${page}): ${message}`)
+      throw new Error(`Polar checkouts.list 호출 실패: ${message}`)
+    }
+
+    return collected
+  }
+
+  /**
+   * Polar checkout status → NormalizedCheckout status 매핑.
+   * - 'succeeded' → 'succeeded' (S1 boost 후보)
+   * - 'expired' / 'failed' → 'failed'
+   * - 'open' → 'open' (사용자 결제 진행 중)
+   * - 'confirmed' → 'open' (결제 확인 단계 — 아직 webhook 미발송 가능)
+   * - refund는 checkout 단계 status가 아닌 order 단계 — list API에서는 확인 불가 (S2 mismatch는 webhook 의존)
+   */
+  private mapCheckoutStatus(
+    status?: string,
+  ): 'succeeded' | 'refunded' | 'failed' | 'open' {
+    switch (status) {
+      case 'succeeded':
+        return 'succeeded'
+      case 'expired':
+      case 'failed':
+        return 'failed'
+      case 'open':
+      case 'confirmed':
+        return 'open'
+      default:
+        return 'open'
+    }
   }
 }

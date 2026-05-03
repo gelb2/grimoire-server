@@ -396,3 +396,19 @@ model AdminAuditLog {
   @@index([action])
   @@map("admin_audit_logs")
 }
+
+/// PG↔DB 정합성 검증 cron checkpoint (Sprint PAY-P0-2, 2026-05-03)
+/// 단일 row 보장 — id='singleton' 고정. cron 실행마다 동일 row를 upsert.
+/// CERTI_PROJ thermage-batch-api 패턴 차용 (DB single-row checkpoint).
+model ReconciliationCheckpoint {
+  id              String   @id @default("singleton")
+  lastRunAt       DateTime @map("last_run_at") @db.Timestamptz(3)
+  processedCount  Int      @default(0) @map("processed_count")
+  boostCount      Int      @default(0) @map("boost_count")
+  mismatchCount   Int      @default(0) @map("mismatch_count")
+  expireCount     Int      @default(0) @map("expire_count")
+  errorMessage    String?  @map("error_message")
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("reconciliation_checkpoints")
+}

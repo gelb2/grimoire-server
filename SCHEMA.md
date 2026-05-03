@@ -206,6 +206,27 @@ PG 웹훅 재전송 멱등성 박제 — `event_id` UNIQUE 제약으로 race con
 
 @@index: `[eventType, processedAt]` — 최근 이벤트 조회 성능
 
+### reconciliation_checkpoints (Sprint PAY-P0-2, 2026-05-03)
+
+PG↔DB 정합성 검증 cron의 단일 row checkpoint — `id` default `'singleton'` + INSERT seed로 항상 1 row 보장. 정본: `.claude/shared-contracts.md` §12.
+
+| Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
+|-------------|---------|------|------|------|
+| id | id | String | PK, default("singleton") | 단일 row 보장 — 항상 'singleton' |
+| lastRunAt | last_run_at | DateTime (Timestamptz(3)) | - | 마지막 cron 시작 시각 (다음 cron의 since 필터) |
+| processedCount | processed_count | Int | default(0) | 마지막 실행에서 처리한 row 수 |
+| boostCount | boost_count | Int | default(0) | 자동 보정 row 수 (S1) |
+| mismatchCount | mismatch_count | Int | default(0) | refund mismatch row 수 (S2) |
+| expireCount | expire_count | Int | default(0) | pending 만료 row 수 (S3) |
+| errorMessage | error_message | String? | - | 마지막 실행 예외 메시지 (null이면 정상) |
+| updatedAt | updated_at | DateTime (Timestamptz(3)) | @updatedAt | 갱신 시각 |
+
+**정책**:
+- 단일 row 보장: 마이그레이션 INSERT seed (`id='singleton'`, `last_run_at=NOW()-INTERVAL '24 hours'`, `ON CONFLICT DO NOTHING`)
+- 어댑터 fallback: row 미존재 시 default seed 반환 (lastRunAt = 24h 전, 모든 카운터 0)
+- update는 항상 upsert (where id='singleton')
+- cron 주기: `@Cron('0 */10 * * * *')` 10분 (cost-accountant 권고)
+
 ### chat_sessions
 
 | Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
@@ -277,6 +298,7 @@ Subscription (subscriberId + targetAuthorId — FK 없음, 구독 관계)
 Comment (authorId + episodeId — FK 없음, 소셜 기록)
 Payment (authorId — FK 없음, 결제 기록)
 WebhookEvent (eventId @unique — PG 웹훅 멱등성 박제, FK 없음)
+ReconciliationCheckpoint (id='singleton' — PG↔DB 정합성 cron checkpoint, 단일 row, FK 없음)
 UserSanction (authorId + adminId — 제재/정지 이력)
 Report (targetType + targetId — 신고 큐)
 SystemSetting (key-value — 동적 설정)

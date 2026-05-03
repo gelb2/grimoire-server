@@ -192,6 +192,45 @@ az containerapp revision list \
   -o table
 ```
 
+### 7-A. Cron 모니터링 — PaymentReconciliationJob (PAY-P0-2, 2026-05-03)
+
+10분 주기 cron이 정상 동작 중인지 Container Apps 로그에서 확인:
+
+```bash
+# PaymentReconciliationJob 로그 필터 (10분 주기 PG↔DB 정합성 검증)
+az containerapp logs show \
+  --name grimoire-server-dev \
+  --resource-group zenith-rg \
+  --tail 200 \
+  | grep "PaymentReconciliationJob"
+
+# 기대 로그 패턴 (정상 동작):
+# [PaymentReconciliationJob] PaymentReconciliationJob 시작 — since=2026-05-03T...
+# [PaymentReconciliationJob] PaymentReconciliationJob 완료 — processed=N boost=N mismatch=N expire=N
+#
+# 보정 발생 로그:
+# [PaymentReconciliationJob] [boost] paymentId=... credits=N authorId=...
+# [PaymentReconciliationJob] [refund_mismatch] paymentId=... PG=refunded DB=completed (수동 환수 필요)
+# [PaymentReconciliationJob] [expire] paymentId=... pending 24h 경과 만료 처리
+#
+# 예외 발생 로그 (운영자 즉시 점검):
+# [PaymentReconciliationJob] PaymentReconciliationJob 예외 — ...
+# [PaymentReconciliationJob] Polar list API 호출 실패 — ...
+```
+
+**cron 비활성화 (긴급 핫픽스)**:
+```bash
+# Container Apps 환경변수 추가 — 즉시 cron 진입 시 return
+az containerapp update \
+  --name grimoire-server-dev \
+  --resource-group zenith-rg \
+  --set-env-vars RECONCILIATION_DISABLED=1
+```
+
+**replicas 정책**:
+- 현재 replicas=1 가정 (Container Apps 기본 설정). 같은 process 내 in-memory `isRunning` lock으로 동시 실행 차단.
+- replicas ≥2 시점에는 `pg_try_advisory_lock` 보강 필요 (PAY-P1).
+
 ---
 
 ## 8. 방화벽 관리 (마이그레이션용)
