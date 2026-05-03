@@ -32,6 +32,7 @@
 | Discovery (검색/인기/최신 + 페이지네이션) | 구현 완료 |
 | Payment (Polar — 상품/웹훅/크레딧) | 구현 완료 |
 | Payment 웹훅 멱등성 (event_id @unique, PAY-P0-1) | 구현 완료 (2026-05-03) |
+| Payment PG↔DB 정합성 검증 cron (PAY-P0-2, 10분 주기) | 구현 완료 (2026-05-03) |
 | Admin (통계/사용자/콘텐츠/제재/신고/댓글/결제/접근로그/설정/감사로그 — 개수는 `docs/api-contract.md` 참조) | 구현 완료 |
 | Analysis (RAG 인덱싱/일관성 체크) | 구현 완료 |
 | Chat (AI 어시스턴트 — 세션/메시지/RAG) | 구현 완료 |

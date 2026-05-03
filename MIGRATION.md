@@ -272,6 +272,51 @@ PG (Polar 등) 웹훅 재전송 시 동일 `event_id`로 두 번째 호출이 �
 
 ---
 
+## 7-Z. 박제 이력: add_reconciliation_checkpoint (2026-05-03, PAY-P0-2)
+
+### 목적
+PG↔DB 정합성 검증 cron이 사용할 단일 row checkpoint 테이블 신설. cron이 매 실행 시 `lastRunAt` 기준으로 since 필터를 결정하고, 카운터(processed/boost/mismatch/expire)를 박제. **사용자 신고 의존 0건 + webhook 누락 자동 보정 보장**.
+
+### 변경 내용
+- DDL: `CREATE TABLE reconciliation_checkpoints` (TEXT PK default 'singleton' + 타임스탬프 + 4 카운터 + errorMessage + updatedAt)
+- DML: `INSERT INTO reconciliation_checkpoints VALUES ('singleton', NOW() - INTERVAL '24 hours') ON CONFLICT DO NOTHING` (singleton seed 1회)
+- 무중단 OK (기존 테이블 변경 0건)
+
+### 적용 환경
+- localhost ✓ (2026-05-03 검증, `\d reconciliation_checkpoints` PASS + SELECT 결과 1 row 박제)
+- development: 사용자 명시 후 배포 (다음 배포에서 자동 `migrate deploy`)
+- production: 사용자 명시 후 `RUN_MIGRATION=true`로 적용
+
+### 사전 백업 권장
+- localhost: 생략
+- dev/prod: 신규 테이블만 추가 — 기존 데이터 백업 불필요. 단 안전망으로 `pg_dump --table=payments --data-only > backup-payments-{ts}.sql` 권장 (cron의 boost/expire가 PROD payments status 변경 가능).
+
+### 롤백 정책
+일방향 마이그레이션 (down 미작성). 운영 사고 시:
+- cron 비활성화 (즉시): `RECONCILIATION_DISABLED=1` 환경변수 (Container Apps env 갱신 → 재배포 없이 cron 진입 즉시 return)
+- 데이터 정리: `DROP TABLE reconciliation_checkpoints;` (수동, 데이터 손실 허용 — 단일 row만 손실)
+
+### 핵심 정책
+- 단일 row 보장: id default 'singleton' + INSERT seed 1회 + ON CONFLICT DO NOTHING
+- cron 주기: `@Cron('0 */10 * * * *')` 10분 (cost-accountant 권고 — Polar `/v1` rate limit 분당 500회 default 그룹 → 사용률 1% 미만, 안전 마진 100배+)
+- 4 시나리오: S1 boost(PG=succeeded+DB=pending) / S2 mismatch(PG=refunded+DB=completed → P1-1 위임) / S3 expire(pending 24h+ stale 정리) / S4 정합(skip)
+- 모든 자동 보정 action은 AdminAuditLog에 `operator='system_reconciliation'` 박제 (3 action: reconciliation_boost / reconciliation_refund_mismatch / reconciliation_expire)
+- 동시 cron 차단: in-memory `isRunning` lock + try-finally 해제 (replicas ≥2 시점에는 advisory_lock 보강 — PAY-P1)
+
+### 관련 코드
+- `prisma/schema.prisma` — `model ReconciliationCheckpoint`
+- `src/domain/port/outbound/reconciliation-checkpoint-repository.port.ts` — 포트
+- `src/adapter/outbound/persistence/prisma-reconciliation-checkpoint.repository.ts` — 어댑터 (singleton upsert)
+- `src/application/payment/payment-reconciliation.job.ts` — `@Injectable @Cron` 본체
+- `src/adapter/outbound/payment/polar.adapter.ts` — `listRecentCheckouts` (Polar SDK page+limit+sorting)
+- `src/adapter/outbound/persistence/prisma-payment.repository.ts` — `findPendingPaymentsOlderThan` + `expirePayment`
+
+### 정본
+- `.claude/shared-contracts.md` §12 PaymentReconciliation
+- `reports/sprint-pay-p0-2-payment-reconciliation-cron-progress.md` (Sprint 단일 진실)
+
+---
+
 ## 8. 마이그레이션 변경 이력 문서화
 
 > 마이그레이션 파일(`prisma/migrations/`)은 git이 관리하지만, **왜 변경했는지**는 코드에 남지 않는다.

@@ -1,5 +1,57 @@
 # Changelog — grimoire-server
 
+## [0.32.0] - 2026-05-03
+
+### Feat — PG↔DB 정합성 검증 cron (PAY-P0-2, sprint-pay-p0-2-payment-reconciliation-cron)
+
+#### Added
+- `prisma/schema.prisma` — `model ReconciliationCheckpoint` 신설 (id default 'singleton', lastRunAt/processedCount/boostCount/mismatchCount/expireCount/errorMessage/updatedAt). 단일 row 보장
+- `prisma/migrations/20260503150000_add_reconciliation_checkpoint/migration.sql` — `reconciliation_checkpoints` 테이블 + INSERT singleton seed (lastRunAt = NOW() - 24h, ON CONFLICT DO NOTHING). 신규 테이블 추가만 — 무중단 OK
+- `domain/port/outbound/reconciliation-checkpoint-repository.port.ts` — ReconciliationCheckpointRepositoryPort 신설 (findSingleton + update)
+- `domain/port/outbound/payment-gateway.port.ts` — `NormalizedCheckout` 타입 + `listRecentCheckouts(since, limit)` 시그니처 신설
+- `domain/port/outbound/payment-repository.port.ts` — `findPendingPaymentsOlderThan(hours)` + `expirePayment(paymentId)` 신설
+- `adapter/outbound/persistence/prisma-reconciliation-checkpoint.repository.ts` — Prisma 어댑터 (singleton upsert, default seed fallback)
+- `adapter/outbound/persistence/prisma-reconciliation-checkpoint.repository.spec.ts` — findSingleton (정상/seed) + update (errorMessage 박제 / null 초기화)
+- `adapter/outbound/payment/polar.adapter.ts` — `listRecentCheckouts` 메서드 + `mapCheckoutStatus` 헬퍼. Polar SDK `polar.checkouts.list({ page, limit, sorting: ['-created_at'] })` 호출 + clientSide `since` 필터 + 페이지네이션 (since 도달/마지막 페이지 break). 안전 상한 page 20
+- `application/payment/payment-reconciliation.job.ts` — `@Injectable @Cron('0 */10 * * * *')` 신설. 4 시나리오 (S1 boost/S2 mismatch/S3 expire/S4 정합) + isRunning lock + try-finally 해제 + checkpoint update + 3 action AuditLog (operator='system_reconciliation') + RECONCILIATION_DISABLED env 게이트
+- `application/payment/payment-reconciliation.job.spec.ts` — 9 it 블록 (S1~S4 + 동시실행 lock + 예외 errorMessage + lastRunAt 갱신 + 빈 응답 + RECONCILIATION_DISABLED)
+
+#### Changed
+- `adapter/outbound/persistence/prisma-payment.repository.ts` — `findPendingPaymentsOlderThan` (status='pending' + createdAt < NOW() - hours) + `expirePayment` (updateMany WHERE status='pending' SET status='expired') 박제
+- `app.module.ts` — `ScheduleModule.forRoot()` import + `PaymentReconciliationJob` providers + `ReconciliationCheckpointRepositoryPort` DI 바인딩
+- `package.json` — `@nestjs/schedule@^6.1.3` 의존성 추가
+
+#### Tests
+- `application/payment/payment-reconciliation.job.spec.ts` — 9건 (4 시나리오 mock 정밀 검증 + 동시 실행 lock + 예외 errorMessage 박제 + checkpoint lastRunAt 갱신 + 빈 응답 안전 종료 + RECONCILIATION_DISABLED 게이트)
+- `adapter/outbound/payment/polar.adapter.spec.ts` — 7건 신규 it (page/limit/sorting/limit cap/정규화/since break/마지막페이지/SDK 실패/id 누락/status 매핑)
+- `adapter/outbound/persistence/prisma-reconciliation-checkpoint.repository.spec.ts` — 5건 (findSingleton 정상/seed 폴백, update upsert/errorMessage/null 초기화)
+- 전체 `npm test`: 532/532 PASS (40 suites, 신규 spec 22건)
+- `npx tsc --noEmit`: 0 errors
+- `npm run build`: 0 errors
+
+#### Docs
+- `docs/data-model.md` — reconciliation_checkpoints 테이블 박제
+- `SCHEMA.md` — ReconciliationCheckpoint Prisma 매핑 + singleton 정책 박제
+- `docs/api-contract.md` — 내부 cron 명세 박제 (HTTP 미노출)
+- `MIGRATION.md` §7-Z — 본 마이그레이션 절차 + INSERT singleton seed 박제
+- `TECH_STATUS.md` — PAY-P0-2 완료 박제
+- `INFRASTRUCTURE.md` — Container Apps cron 모니터링 안내 (PaymentReconciliationJob 로그 패턴)
+- `.claude/shared-contracts.md` §12 — PaymentReconciliation 인터페이스 정본 (claude-docs 사전 박제 완료)
+
+#### Rationale
+- 기존: PG 측 webhook 누락 발견 0건 (사용자 신고 의존). Polar 장애/네트워크 단절/Container Apps cold start 동안 webhook timeout 시 영구 누락 가능 → 사용자 "크레딧 안 들어왔다" CS 신고 전까지 운영자가 모름
+- 이번: 10분 주기 cron이 Polar checkouts.list로 PG 측 truth와 DB 비교 → S1 boost(자동 보정) / S2 mismatch(P1-1 위임 마크) / S3 expire(stale pending 정리) / S4 정합(skip). **사용자 신고 의존 0건** + **자동 보정 보장**
+- cron 주기 10분 결정 근거 (cost-accountant): Polar `/v1` rate limit 분당 500회 default 그룹 → 10분 cron 사용률 1% 미만 (안전 마진 100배+). §0 면제 (인프라 비용 ₩0 증분)
+- 책 Ch 16 Anthropic 3-에이전트 (Initializer → Generator → Evaluator) 묶음 II 4회차. 책 Ch 16 충돌 2번 해결책 (shared state via DB single-row checkpoint). CERTI_PROJ thermage-batch-api `@Cron('*/10 * * * * *')` 패턴 차용 → Grimoire 결제 규모에 맞춰 10분으로 완화. Sprint 계약 정본: `reports/sprint-pay-p0-2-payment-reconciliation-cron-progress.md`
+
+### DB 마이그레이션: add_reconciliation_checkpoint
+- **목적**: PG↔DB 정합성 cron checkpoint 박제 — 단일 row(id='singleton')로 cron lastRunAt + 카운터 추적
+- **변경 내용**: 신규 테이블 `reconciliation_checkpoints` (TEXT PK default 'singleton' + lastRunAt + 4 카운터 + errorMessage + updatedAt). 기존 테이블 변경 0건. INSERT seed 1회 (lastRunAt = NOW() - 24h, ON CONFLICT DO NOTHING)
+- **롤백 방법**: 일방향 (down 미작성). cron 비활성화: `RECONCILIATION_DISABLED=1` 환경변수 또는 `DROP TABLE reconciliation_checkpoints;` 핫픽스
+- **적용 환경**: localhost ✓ / development - / production -
+
+---
+
 ## [0.31.0] - 2026-05-03
 
 ### Feat — Webhook event_id 멱등성 게이트 (PAY-P0-1, sprint-pay-p0-1-webhook-event-id-idempotency)
