@@ -317,6 +317,56 @@ PG↔DB 정합성 검증 cron이 사용할 단일 row checkpoint 테이블 신�
 
 ---
 
+## 7-AB. 박제 이력: add_refund_log (2026-05-03, PAY-P1-1)
+
+### 목적
+Polar 환불 webhook 수신 시 크레딧 환수 트랜잭션의 영구 박제 테이블 신설. 현재 갭(payment.usecase 'cancel' 분기에서 status='refunded' 마킹만, 크레딧 환수 부재 → 적자 위험)을 차단. RefundPaymentUseCase가 `paymentRepo.refundPaymentAtomically` $transaction 내부에서 `Author.credits decrement(0 fix)` + `CreditLog 음수 amount` + `RefundLog` 박제 + `AdminAuditLog(operator='system_refund')` 후행. **잔액 부족 시 0 fix + deficit_credits 박제로 음수 잔액 절대 차단**.
+
+### 변경 내용
+- DDL: `CREATE TABLE refund_logs` (TEXT PK + payment_id + amount/credits/deficit_credits Int + reason + processed_at Timestamptz(3) + source)
+- INDEX: `CREATE INDEX refund_logs_payment_id_idx ON refund_logs(payment_id)` (Payment별 환불 이력 조회)
+- INSERT seed: 0건 (신규 테이블 — 시드 강제 0)
+- 무중단 OK (기존 테이블 변경 0건, 신규 테이블 추가만)
+
+### 적용 환경
+- localhost ✓ (2026-05-03 검증, `\d refund_logs` PASS — 8 컬럼 + PK + payment_id_idx)
+- development: 사용자 명시 후 배포 (다음 배포에서 자동 `migrate deploy`)
+- production: 사용자 명시 후 `RUN_MIGRATION=true`로 적용
+
+### 사전 백업 권장
+- localhost: 생략
+- dev/prod: 신규 테이블만 추가 — 기존 데이터 백업 불필요. 단 안전망으로 `pg_dump --table=payments --table=authors --table=credit_logs --data-only > backup-{ts}.sql` 권장 (refund 트랜잭션이 Author.credits + CreditLog 변경).
+
+### 롤백 정책
+일방향 마이그레이션 (down 미작성). 운영 사고 시:
+- 환불 처리 비활성화 (즉시): payment.usecase 'cancel' 분기 revert (단일 commit) — refundPaymentUseCase 호출 라인 제거 → status='refunded' 마킹만 (현재 갭 그대로 복원)
+- 데이터 정리: `DROP TABLE refund_logs;` (수동, 환불 박제 손실 허용 — payment.status='refunded' + Author.credits + CreditLog는 그대로 보존)
+- DB 차원 환수 결과(Author.credits decrement)는 commit 후 복원 불가 → DB dump 활용 또는 운영자 수동 보정
+
+### 핵심 정책
+- **잔액 부족 시 0 fix**: `actualDeducted = Math.min(currentBalance, credits)` + `deficitCredits = Math.max(0, credits - currentBalance)`. Author.credits = 0 floor 절대 차단.
+- **CreditLog 음수 박제 대칭**: 같은 $transaction 내부에서 `credit_logs.amount = -actualDeducted` (계정 잔액 합산 정합 — `completePaymentAtomically` 양수와 정합)
+- **AdminAuditLog 후행**: `operator='system_refund'`, `action='refund_normal' | 'refund_deficit'`. $transaction 외부 호출 → AuditLog 실패 시 환수는 commit 유지 + logger.warn만.
+- **3중 멱등성**:
+  - L1: PAY-P0-1 `webhook_events.eventId @unique` (재전송 차단)
+  - L2: payment.usecase 진입 시 `payment.status='completed'` 체크 (이미 환불된 payment skip)
+  - L3: `refund_logs` 박제 (조회 + 추적). 단 L3는 unique 미부여 → P2-1 부분 환불 호환성 확보
+- **'fail' webhook 환수 대상 0**: `event.status='cancel'` 분기에서만 refund usecase 호출. `event.status='fail'`은 단순 status='failed' 갱신.
+
+### 관련 코드
+- `prisma/schema.prisma` — `model RefundLog`
+- `src/domain/port/outbound/payment-repository.port.ts` — `refundPaymentAtomically` 시그니처
+- `src/adapter/outbound/persistence/prisma-payment.repository.ts` — `refundPaymentAtomically` $transaction 구현 (Payment.update + Author.findUnique + Author.update + creditLog.create + refundLog.create)
+- `src/application/payment/refund-payment.usecase.ts` — `RefundPaymentUseCase.execute` (정상/deficit 분기 + AuditLog 후행)
+- `src/application/payment/payment.usecase.ts` — `processWebhook` 'cancel' 분기에서 refund usecase 호출
+- `src/app.module.ts` — `RefundPaymentUseCase` providers 추가
+
+### 정본
+- `.claude/shared-contracts.md` §13 RefundPaymentAtomically
+- `reports/sprint-pay-p1-1-refund-atomicity-progress.md` (Sprint 단일 진실)
+
+---
+
 ## 8. 마이그레이션 변경 이력 문서화
 
 > 마이그레이션 파일(`prisma/migrations/`)은 git이 관리하지만, **왜 변경했는지**는 코드에 남지 않는다.

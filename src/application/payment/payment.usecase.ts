@@ -3,6 +3,7 @@ import { PaymentRepositoryPort } from '@domain/port/outbound/payment-repository.
 import { PaymentGatewayPort } from '@domain/port/outbound/payment-gateway.port'
 import { WebhookEventRepositoryPort } from '@domain/port/outbound/webhook-event-repository.port'
 import { CREDIT_PRODUCTS, Product } from '@domain/model/config'
+import { RefundPaymentUseCase } from './refund-payment.usecase'
 
 // re-export for backward compatibility
 export { CREDIT_PRODUCTS, type Product }
@@ -15,6 +16,7 @@ export class PaymentUseCase {
     @Inject('PaymentRepositoryPort') private readonly paymentRepo: PaymentRepositoryPort,
     @Inject('PaymentGatewayPort') private readonly paymentGateway: PaymentGatewayPort,
     @Inject('WebhookEventRepositoryPort') private readonly webhookEventRepo: WebhookEventRepositoryPort,
+    private readonly refundPaymentUseCase: RefundPaymentUseCase,
   ) {}
 
   /** 상품 목록 조회 */
@@ -122,8 +124,45 @@ export class PaymentUseCase {
         )
       }
       return { processed: true, credits: payment.credits }
+    } else if (event.status === 'cancel') {
+      // 환불 처리 (Sprint PAY-P1-1) — 크레딧 환수 트랜잭션 + RefundLog + AuditLog(operator='system_refund')
+      // refund-payment.usecase가 paymentRepo.refundPaymentAtomically $transaction 호출 (정본: shared-contracts §13)
+      let deficitCredits = 0
+      try {
+        const result = await this.refundPaymentUseCase.execute({
+          paymentId: payment.id,
+          authorId: payment.authorId,
+          credits: payment.credits,
+          refundedAmount: event.amount,
+          reason: `polar_webhook_${event.type}`,
+          source: 'webhook',
+        })
+        deficitCredits = result.deficitCredits
+      } catch (e: unknown) {
+        // 환수 실패 — webhook event를 'failed'로 박제 (Polar 재전송 시 다른 eventId 시도)
+        const message = e instanceof Error ? e.message : String(e)
+        await this.webhookEventRepo.createIfAbsent({
+          eventId: event.eventId,
+          source: 'polar',
+          eventType: event.type,
+          payload: event as unknown as object,
+          status: 'failed',
+          errorMessage: message.slice(0, 500),
+        })
+        throw e
+      }
+
+      await this.webhookEventRepo.createIfAbsent({
+        eventId: event.eventId,
+        source: 'polar',
+        eventType: event.type,
+        payload: event as unknown as object,
+        status: 'processed',
+      })
+      return { processed: true, credits: 0, deficitCredits }
     } else {
-      await this.paymentRepo.updateStatus(payment.id, event.status === 'cancel' ? 'refunded' : 'failed')
+      // event.status === 'fail' — 결제 실패 (크레딧 환수 대상 아님 — pending → failed만)
+      await this.paymentRepo.updateStatus(payment.id, 'failed')
       await this.webhookEventRepo.createIfAbsent({
         eventId: event.eventId,
         source: 'polar',

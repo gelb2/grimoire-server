@@ -1,5 +1,52 @@
 # Changelog — grimoire-server
 
+## [0.33.0] - 2026-05-03
+
+### Feat — Refund 정밀 처리 + 크레딧 환수 트랜잭션 (PAY-P1-1, sprint-pay-p1-1-refund-atomicity)
+
+#### Added
+- `prisma/schema.prisma` — `model RefundLog` 신설 (id/paymentId/amount/credits/deficitCredits @default(0)/reason/processedAt/source + @@index([paymentId]) + @@map("refund_logs"))
+- `prisma/migrations/20260503160000_add_refund_log/migration.sql` — `refund_logs` 테이블 + INDEX(payment_id). INSERT seed 0건. 무중단 OK (신규 테이블 추가만)
+- `domain/port/outbound/payment-repository.port.ts` — `refundPaymentAtomically(input): Promise<{ actualDeducted, deficitCredits }>` 시그니처 추가 (객체 인자 1개 + 반환 객체)
+- `adapter/outbound/persistence/prisma-payment.repository.ts` — `refundPaymentAtomically` $transaction 구현. 처리 순서: tx.payment.update(status='refunded') → tx.author.findUnique(잔액) → actualDeducted/deficitCredits 계산(Math.min/Math.max) → tx.author.update(decrement) → tx.creditLog.create(amount=-actualDeducted) → tx.refundLog.create. 음수 잔액 절대 차단(0 fix).
+- `application/payment/refund-payment.usecase.ts` — `RefundPaymentUseCase` 신설. paymentRepo.refundPaymentAtomically 호출 후 auditLogService.log('system_refund', deficitCredits>0 ? 'refund_deficit' : 'refund_normal', paymentId, detail) 후행. AuditLog 실패는 환수 commit에 영향 없음(logger.warn만).
+- `application/payment/refund-payment.usecase.spec.ts` — 9 it 블록 (정상 환수 / source=manual reason 박제 / deficit 분기 잔액 30 / 잔액 0 / boundary 잔액=credits / 음수 입력 BadRequest / repo throw 위임 / AuditLog 실패 후 환수 결과 반환 / reason 박제 정합)
+- `application/payment/payment.usecase.spec.ts` — PAY-P1-1 회귀 4 it 신규 (cancel → refund usecase 1회 호출 + 입력 정합 / fail → refund usecase 호출 0회 / cancel + deficit 응답 박제 / cancel + refund 트랜잭션 실패 시 webhook event 'failed' 박제 + throw)
+
+#### Changed
+- `application/payment/payment.usecase.ts` — `processWebhook` 'cancel' 분기 신설. `event.status === 'cancel'`일 때 RefundPaymentUseCase.execute 호출(paymentId/authorId/credits/refundedAmount/reason='polar_webhook_${type}'/source='webhook'). 응답에 deficitCredits 포함. refund 실패 시 webhook event 'failed' 박제 후 throw. `event.status === 'fail'`은 기존 status='failed' 갱신만 유지(환수 대상 아님).
+- `app.module.ts` — `RefundPaymentUseCase` providers 추가 (DI)
+- `payment.usecase.spec.ts` — PaymentUseCase 생성자 시그니처 변경(refundPaymentUseCase 인자 추가) 정합 갱신
+
+#### Tests
+- `npm test`: 543/543 PASS (41 suites, 신규 spec +11건 — refund usecase 9 + payment usecase 4 회귀 - 1 기존 'cancel' it 갱신)
+- `npx tsc --noEmit`: 0 errors
+- `npm run build`: 0 errors
+
+#### Docs
+- `docs/data-model.md` — refund_logs 테이블 박제 (테이블 23개)
+- `SCHEMA.md` — RefundLog Prisma 매핑 + 잔액 부족 0 fix 정책 + 3중 멱등성 박제
+- `MIGRATION.md` §7-AB — add_refund_log 마이그레이션 절차 + 롤백 정책 + 핵심 정책(0 fix / CreditLog 음수 대칭 / AuditLog 후행 / 3중 멱등성 / 'fail' 환수 대상 0)
+- `TECH_STATUS.md` — Payment 환불 정밀 처리 (PAY-P1-1) 박제
+- `.claude/shared-contracts.md` §13 — RefundPaymentAtomically 인터페이스 정본 (planner Initializer 사전 박제 완료)
+- `eval/tasks/regression-55-refund-atomicity.json` — 9 eval_criteria
+- `.claude/scripts/sensor-refund-atomicity.sh` — 10 검증 항목 (PASS 10/10)
+- `research/HARNESS_ENGINEERING.md` §14.4 — Sensors 28 → 29 갱신 + sensor-refund-atomicity 행 박제 (drift 0)
+
+#### Rationale
+- 기존 갭(PAYMENT_SYSTEM_PLAN §1-5 #4): payment.usecase 'cancel' 분기에서 `paymentRepo.updateStatus(payment.id, 'refunded')` 마킹만 호출. **크레딧 환수 트랜잭션 부재** → 환불 시 사용자가 크레딧 그대로 보유 + 환불금 수령 → 적자 위험.
+- 이번: Polar 환불 webhook 수신 시 RefundPaymentUseCase가 단일 $transaction(Payment.status='refunded' + Author.credits decrement + CreditLog 음수 + RefundLog 박제) + AuditLog 후행. 잔액 부족 시 0 fix + deficitCredits 박제 → 운영자가 RefundLog 조회 후 외상 회수/손실/사용자 협상 정책 결정.
+- 3중 멱등성: PAY-P0-1 webhook_events.eventId @unique(L1) + payment.status='completed' 사전 체크(L2) + RefundLog 박제(L3). L3는 unique 미부여 → P2-1 부분 환불 호환성 확보.
+- 책 Ch 16 Anthropic 3-에이전트(Initializer→Generator→Evaluator) 묶음 II 6회차. Sprint 계약 정본: `reports/sprint-pay-p1-1-refund-atomicity-progress.md`. cost-accountant 면제(AI 호출 0건) + VCK 면제(시각 정본 변경 0건).
+
+### DB 마이그레이션: add_refund_log
+- **목적**: 환불 webhook 시 크레딧 환수 트랜잭션의 영구 박제 + 잔액 부족 추적(deficit_credits)
+- **변경 내용**: 신규 테이블 `refund_logs` (TEXT PK + payment_id + amount/credits/deficit_credits Int + reason + processed_at Timestamptz(3) + source) + INDEX(payment_id). 기존 테이블 변경 0건. INSERT seed 0건.
+- **롤백 방법**: 일방향 (down 미작성). 환불 처리 비활성화: payment.usecase 'cancel' 분기 revert (단일 commit). 데이터 정리: `DROP TABLE refund_logs;` (수동, 환불 박제 손실 허용 — Author.credits + CreditLog는 보존)
+- **적용 환경**: localhost ✓ (2026-05-03 검증, `\d refund_logs` PASS) / development - / production -
+
+---
+
 ## [0.32.0] - 2026-05-03
 
 ### Feat — PG↔DB 정합성 검증 cron (PAY-P0-2, sprint-pay-p0-2-payment-reconciliation-cron)
