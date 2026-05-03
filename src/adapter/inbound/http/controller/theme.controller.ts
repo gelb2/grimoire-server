@@ -23,6 +23,7 @@ import { BakeThemeUseCase } from '@application/theme/bake-theme.usecase'
 import { ThemeSlotUseCase } from '@application/theme/theme-slot.usecase'
 import { GenerateThemeDto } from '../dto/theme.dto'
 import { bakeThemeToCSS } from '@lib/theme-baker'
+import { resolveBakedCssUrl, getPublicApiBaseUrl } from '@lib/url-resolver'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 
 @Controller('themes')
@@ -133,14 +134,18 @@ export class ThemeController {
     return { ...safe, theme: theme.overrides }
   }
 
-  /** 테마를 CSS로 베이킹 */
+  /** 테마를 CSS로 베이킹.
+   * 응답의 cssUrl은 항상 절대 URL — Blob 비활성/실패로 DB가 NULL이어도 server가 동적 절대화한다 (P1-#7).
+   */
   @Post('publish/:authorSlug')
   @UseGuards(JwtAuthGuard)
   async publish(@Req() req: AuthenticatedRequest, @Param('authorSlug') authorSlug: string) {
     if (req.user.slug !== authorSlug) {
       throw new ForbiddenException('본인의 테마만 퍼블리시할 수 있습니다')
     }
-    return this.bakeTheme.execute(authorSlug)
+    const result = await this.bakeTheme.execute(authorSlug)
+    const cssUrl = resolveBakedCssUrl(result.cssUrl, authorSlug, getPublicApiBaseUrl())
+    return { cssUrl, css: result.css, bakedCssUrl: cssUrl }
   }
 
   /** 테마 CSS 반환 */
@@ -158,21 +163,33 @@ export class ThemeController {
     res.type('text/css').send(css)
   }
 
-  /** 작품별 테마 resolve (public) */
+  /** 작품별 테마 resolve (public).
+   * bakedCssUrl은 항상 절대 URL로 응답 (P1-#7).
+   */
   @Get('resolve/:authorSlug')
   async resolveTheme(
     @Param('authorSlug') authorSlug: string,
     @Query('work') workSlug?: string,
   ) {
     const theme = await this.getTheme.resolve(authorSlug, workSlug)
-    return theme ?? {}
+    if (!theme) return {}
+    return {
+      ...theme,
+      bakedCssUrl: resolveBakedCssUrl(theme.bakedCssUrl, authorSlug, getPublicApiBaseUrl()),
+    }
   }
 
-  /** 작가 기본 테마 조회 — overrides가 곧 완전한 테마 */
+  /** 작가 기본 테마 조회 — overrides가 곧 완전한 테마.
+   * bakedCssUrl은 항상 절대 URL로 응답 (P1-#7).
+   */
   @Get(':authorSlug')
   async findByAuthorSlug(@Param('authorSlug') authorSlug: string) {
     const theme = await this.getTheme.execute(authorSlug)
     const { authorId, ...safe } = theme as any
-    return { ...safe, theme: theme.overrides }
+    return {
+      ...safe,
+      theme: theme.overrides,
+      bakedCssUrl: resolveBakedCssUrl(theme.bakedCssUrl, authorSlug, getPublicApiBaseUrl()),
+    }
   }
 }

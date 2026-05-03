@@ -106,6 +106,9 @@
 - AI 채팅 스트리밍 (SSE)
 - HTML 파서 (최후순위)
 
+### 최근 완료 (P1)
+- **P1-#7 publishTheme bakedCssUrl 절대화 (2026-05-03)** — Blob 비활성/실패 시 NULL 박제 + 응답 시점 server 동적 절대화. 환경 전환 시 stale 박제 0건 보장. 마이그레이션 `20260503130451_baked_css_url_clear_relative` localhost 검증 완료. dev/prod는 사용자 명시 후 배포 — `MIGRATION.md` §7-Z 참조.
+
 ---
 
 ## 5. 참조 문서

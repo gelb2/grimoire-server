@@ -194,6 +194,42 @@ npx prisma migrate resolve --applied {마이그레이션_이름}
 
 ---
 
+## 7-Z. 박제 이력: baked_css_url_clear_relative (2026-05-03, P1-#7)
+
+### 목적
+`themes.baked_css_url`에 박제된 stale 상대 경로(`/api/themes/css/...`)를 NULL로 정리. 응답 시점에 server가 환경별 `PUBLIC_API_BASE_URL`로 동적 절대화하는 정책으로 전환.
+
+### 변경 내용
+- DDL: 없음 (`bakedCssUrl: String?` 이미 NULL 허용 — schema.prisma 변경 0건)
+- DML: `UPDATE themes SET baked_css_url = NULL WHERE baked_css_url LIKE '/api/themes/css/%' OR baked_css_url = ''`
+- 무중단 OK (DDL 잠금 없음, NULL 일괄 업데이트만)
+
+### 적용 환경
+- localhost ✓ (2026-05-03 검증, stale row 0건)
+- development: 사용자 명시 후 배포 (다음 배포에서 자동 `migrate deploy`)
+- production: 사용자 명시 후 `RUN_MIGRATION=true`로 적용
+
+### 사전 백업 권장
+- localhost: 생략
+- dev/prod: `pg_dump --table=themes -d {DATABASE} > themes-backup-{ts}.sql` (1MB 미만)
+
+### 롤백 정책
+일방향 마이그레이션 (down 미작성). 운영 사고 시 publishTheme 재호출로 자동 재박제됨.
+메타만 정리 시 `npx prisma migrate resolve --rolled-back baked_css_url_clear_relative`.
+
+### 관련 환경변수
+- `PUBLIC_API_BASE_URL` 필수 (env.validation.ts에서 부팅 시 절대 URL 강제 검증)
+  - localhost: `http://localhost:3000/api`
+  - development: `https://dev-api.grimoire-book.com/api`
+  - production: `https://api.grimoire-book.com/api`
+
+### 관련 코드
+- `src/application/theme/bake-theme.usecase.ts` — Blob 비활성/실패 시 NULL 박제
+- `src/lib/url-resolver.ts` — 응답 절대화 헬퍼
+- `src/adapter/inbound/http/controller/theme.controller.ts` — publish/resolve/findByAuthorSlug 응답 절대화 적용
+
+---
+
 ## 8. 마이그레이션 변경 이력 문서화
 
 > 마이그레이션 파일(`prisma/migrations/`)은 git이 관리하지만, **왜 변경했는지**는 코드에 남지 않는다.
