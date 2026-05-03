@@ -1,12 +1,14 @@
 import { PaymentUseCase, CREDIT_PRODUCTS } from './payment.usecase'
 import { BadRequestException } from '@nestjs/common'
 import type { NormalizedWebhookEvent } from '@domain/port/outbound/payment-gateway.port'
+import type { WebhookEventRecord } from '@domain/port/outbound/webhook-event-repository.port'
 
 describe('PaymentUseCase', () => {
   let useCase: PaymentUseCase
   let mockPrisma: any
   let mockCreditUseCase: any
   let mockPaymentGateway: any
+  let mockWebhookEventRepo: any
 
   const mockPayment = {
     id: 'pay-1',
@@ -27,10 +29,24 @@ describe('PaymentUseCase', () => {
   const makeEvent = (
     overrides: Partial<NormalizedWebhookEvent> = {},
   ): NormalizedWebhookEvent => ({
+    eventId: 'evt_test_001',
     type: 'order.paid',
     tradeNo: 'TRADE-001',
     amount: 2000,
     status: 'success',
+    ...overrides,
+  })
+
+  const makeWebhookRecord = (
+    eventId: string,
+    overrides: Partial<WebhookEventRecord> = {},
+  ): WebhookEventRecord => ({
+    id: `whe-${eventId}`,
+    eventId,
+    source: 'polar',
+    eventType: 'order.paid',
+    status: 'processed',
+    processedAt: new Date(),
     ...overrides,
   })
 
@@ -41,12 +57,6 @@ describe('PaymentUseCase', () => {
       update: jest.fn().mockResolvedValue({ ...mockPayment, externalTransactionId: 'TRADE-001' }),
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([mockPayment]),
-    }
-    const authorMock = {
-      update: jest.fn().mockResolvedValue({ id: 'author-1', credits: 8 }),
-    }
-    const creditLogMock = {
-      create: jest.fn().mockResolvedValue({ id: 'log-1' }),
     }
 
     const mockPaymentRepo = {
@@ -72,7 +82,18 @@ describe('PaymentUseCase', () => {
       verifyAndParseWebhook: jest.fn().mockReturnValue(makeEvent()),
     }
 
-    useCase = new PaymentUseCase(mockPaymentRepo as any, mockPaymentGateway)
+    mockWebhookEventRepo = {
+      findByEventId: jest.fn().mockResolvedValue(null),
+      createIfAbsent: jest.fn().mockImplementation(async (input) =>
+        makeWebhookRecord(input.eventId, {
+          eventType: input.eventType,
+          status: input.status ?? 'processed',
+        }),
+      ),
+      markStatus: jest.fn().mockResolvedValue(undefined),
+    }
+
+    useCase = new PaymentUseCase(mockPaymentRepo as any, mockPaymentGateway, mockWebhookEventRepo)
   })
 
   describe('getProducts', () => {
@@ -146,18 +167,28 @@ describe('PaymentUseCase', () => {
 
       expect(result.processed).toBe(false)
       expect(result.reason).toBe('invalid_or_ignored')
+      // null 반환 시 멱등성 조회도 호출하지 않음
+      expect(mockWebhookEventRepo.findByEventId).not.toHaveBeenCalled()
     })
 
-    it('tradeNo에 해당하는 결제가 없으면 무시한다 (멱등성)', async () => {
+    it('tradeNo에 해당하는 결제가 없으면 무시하고 webhook event를 skipped로 박제한다', async () => {
       mockPrisma.findByExternalTransactionId.mockResolvedValue(null)
 
       const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
       expect(result.processed).toBe(false)
       expect(result.reason).toBe('unknown_trade')
+      expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventId: 'evt_test_001',
+          source: 'polar',
+          status: 'skipped',
+          errorMessage: 'unknown_trade',
+        }),
+      )
     })
 
-    it('이미 completed인 결제는 무시한다 (중복 웹훅 방지)', async () => {
+    it('이미 completed인 결제는 무시한다 (약식 멱등성 + webhook event 박제)', async () => {
       mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         status: 'completed',
@@ -169,9 +200,16 @@ describe('PaymentUseCase', () => {
       expect(result.processed).toBe(false)
       expect(result.reason).toBe('already_completed')
       expect(mockCreditUseCase.grant).not.toHaveBeenCalled()
+      expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventId: 'evt_test_001',
+          status: 'skipped',
+          errorMessage: 'already_completed',
+        }),
+      )
     })
 
-    it('성공 웹훅 시 원자적 트랜잭션으로 크레딧 부여 + 상태 변경한다', async () => {
+    it('성공 웹훅 시 원자적 트랜잭션으로 크레딧 부여 + 상태 변경 + webhook event를 processed로 박제한다', async () => {
       mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
@@ -182,6 +220,15 @@ describe('PaymentUseCase', () => {
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(5)
       expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledWith('pay-1', 'author-1', 5, 'credit-5')
+      expect(mockWebhookEventRepo.findByEventId).toHaveBeenCalledWith('evt_test_001')
+      expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventId: 'evt_test_001',
+          source: 'polar',
+          eventType: 'order.paid',
+          status: 'processed',
+        }),
+      )
     })
 
     it('실패 웹훅 시 상태를 failed로 변경하고 크레딧을 부여하지 않는다', async () => {
@@ -196,6 +243,9 @@ describe('PaymentUseCase', () => {
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(0)
       expect(mockPrisma.updateStatus).toHaveBeenCalledWith('pay-1', 'failed')
+      expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+        expect.objectContaining({ eventId: 'evt_test_001', status: 'processed' }),
+      )
     })
 
     it('취소(환불) 웹훅 시 상태를 refunded로 변경한다', async () => {
@@ -212,6 +262,93 @@ describe('PaymentUseCase', () => {
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(0)
       expect(mockPrisma.updateStatus).toHaveBeenCalledWith('pay-1', 'refunded')
+    })
+
+    // ============================================================================
+    // Sprint PAY-P0-1: WebhookEvent 멱등성 게이트 신규 검증
+    // ============================================================================
+
+    describe('PAY-P0-1: 동일 eventId 멱등성 게이트', () => {
+      it('동일 eventId로 webhook 두 번 호출 시 첫 호출만 completePaymentAtomically 실행한다', async () => {
+        mockPrisma.findByExternalTransactionId.mockResolvedValue({
+          ...mockPayment,
+          externalTransactionId: 'TRADE-001',
+        })
+
+        // 첫 호출: findByEventId → null (신규), createIfAbsent → 박제 성공
+        // 두 번째 호출: findByEventId → 기존 record 반환 (이미 박제됨)
+        mockWebhookEventRepo.findByEventId
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(makeWebhookRecord('evt_test_001'))
+
+        const first = await useCase.processWebhook(dummyBody, dummyHeaders)
+        const second = await useCase.processWebhook(dummyBody, dummyHeaders)
+
+        expect(first.processed).toBe(true)
+        expect(first.credits).toBe(5)
+        expect(second.processed).toBe(false)
+        expect(second.reason).toBe('duplicate_event')
+
+        // 핵심: completePaymentAtomically는 단 1회만 호출되어야 한다
+        expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledTimes(1)
+        expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledWith('pay-1', 'author-1', 5, 'credit-5')
+
+        // findByEventId는 두 번 모두 호출됨 (게이트 진입)
+        expect(mockWebhookEventRepo.findByEventId).toHaveBeenCalledTimes(2)
+        expect(mockWebhookEventRepo.findByEventId).toHaveBeenNthCalledWith(1, 'evt_test_001')
+        expect(mockWebhookEventRepo.findByEventId).toHaveBeenNthCalledWith(2, 'evt_test_001')
+      })
+
+      it('첫 호출이 박제(createIfAbsent) 직전 race로 다른 worker가 INSERT 완료 시에도 안전하게 처리된다', async () => {
+        mockPrisma.findByExternalTransactionId.mockResolvedValue({
+          ...mockPayment,
+          externalTransactionId: 'TRADE-001',
+        })
+
+        // findByEventId는 null (신규)이지만, createIfAbsent에서 P2002 → null 반환 (race detected)
+        mockWebhookEventRepo.findByEventId.mockResolvedValueOnce(null)
+        mockWebhookEventRepo.createIfAbsent.mockResolvedValueOnce(null)
+
+        const result = await useCase.processWebhook(dummyBody, dummyHeaders)
+
+        // race가 감지되어도 첫 worker는 정상 응답 (둘 중 하나만 처리되면 OK)
+        expect(result.processed).toBe(true)
+        expect(result.credits).toBe(5)
+        expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledTimes(1)
+      })
+
+      it('completePaymentAtomically 실패 시 webhook event를 failed로 박제하고 throw한다', async () => {
+        mockPrisma.findByExternalTransactionId.mockResolvedValue({
+          ...mockPayment,
+          externalTransactionId: 'TRADE-001',
+        })
+        mockPrisma.completePaymentAtomically.mockRejectedValueOnce(new Error('DB connection lost'))
+
+        await expect(useCase.processWebhook(dummyBody, dummyHeaders)).rejects.toThrow('DB connection lost')
+
+        expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventId: 'evt_test_001',
+            status: 'failed',
+            errorMessage: expect.stringContaining('DB connection lost'),
+          }),
+        )
+      })
+
+      it('eventId가 빈 문자열이어도 게이트 진입 자체는 발생 (어댑터에서 null 반환되어야 정상)', async () => {
+        // 어댑터가 비어있는 eventId로 event를 반환하는 비정상 시나리오 — usecase는 그대로 진행하지만
+        // findByEventId('') 결과에 따라 분기. 본 케이스는 어댑터 책임 검증이지만 usecase 안전성도 확인.
+        mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(makeEvent({ eventId: '' }))
+        mockPrisma.findByExternalTransactionId.mockResolvedValue({
+          ...mockPayment,
+          externalTransactionId: 'TRADE-001',
+        })
+
+        await useCase.processWebhook(dummyBody, dummyHeaders)
+
+        // 빈 eventId로 findByEventId 호출됨 — 어댑터에서 차단하는 게 정본 (polar.adapter.spec에서 검증)
+        expect(mockWebhookEventRepo.findByEventId).toHaveBeenCalledWith('')
+      })
     })
   })
 

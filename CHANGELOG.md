@@ -1,5 +1,53 @@
 # Changelog — grimoire-server
 
+## [0.31.0] - 2026-05-03
+
+### Feat — Webhook event_id 멱등성 게이트 (PAY-P0-1, sprint-pay-p0-1-webhook-event-id-idempotency)
+
+#### Added
+- `prisma/schema.prisma` — `model WebhookEvent` 신설 (event_id @unique, source/event_type/payload/status/error_message/processed_at)
+- `prisma/migrations/20260503143403_add_webhook_event_idempotency/migration.sql` — `webhook_events` 테이블 + UNIQUE INDEX (event_id) + INDEX (event_type, processed_at). 신규 테이블 추가만 — 무중단 OK, 기존 테이블 변경 0건
+- `domain/port/outbound/webhook-event-repository.port.ts` — WebhookEventRepositoryPort 신설 (findByEventId / createIfAbsent / markStatus). createIfAbsent는 P2002 시 null 반환 (race 안전)
+- `adapter/outbound/persistence/prisma-webhook-event.repository.ts` — Prisma 어댑터. P2002 unique 제약 위반 시 null 반환
+- `adapter/outbound/persistence/prisma-webhook-event.repository.spec.ts` — 8건 (findByEventId 정상/null, createIfAbsent 정상/P2002/기타예외/기본값/errorMessage, markStatus 2건)
+
+#### Changed
+- `domain/port/outbound/payment-gateway.port.ts` — NormalizedWebhookEvent에 `eventId: string` 필드 신설. 어댑터가 PG 발급 unique ID를 박제 (Polar의 `webhook-id` 헤더)
+- `adapter/outbound/payment/polar.adapter.ts` — `extractWebhookId` 헬퍼 신설 (`webhook-id` 소문자 + 대문자 fallback). 헤더 누락/빈 문자열 시 null 반환 (멱등성 보장 불가 → 안전 거부)
+- `application/payment/payment.usecase.ts` — `processWebhook`에 멱등성 게이트 박제. 흐름: verifyAndParseWebhook → findByEventId(중복 → duplicate_event skip) → findByExternalTransactionId → completePaymentAtomically → createIfAbsent(processed). 실패/스킵 케이스도 webhook event 박제 (status='skipped' 또는 'failed')
+- `app.module.ts` — `WebhookEventRepositoryPort` DI 바인딩 추가
+
+#### Tests
+- `application/payment/payment.usecase.spec.ts` — 4건 신규 it 추가:
+  1. 동일 eventId 두 번 호출 시 첫 호출만 completePaymentAtomically (`toHaveBeenCalledTimes(1)` 검증)
+  2. createIfAbsent race(null 반환) 시에도 정상 처리
+  3. completePaymentAtomically 실패 시 webhook event를 'failed' 박제 후 throw
+  4. 빈 eventId 안전성 검증
+  + 기존 unknown_trade / already_completed 테스트에 webhook event 박제 검증 추가
+- `adapter/outbound/payment/polar.adapter.spec.ts` — 3건 신규 it: webhook-id 헤더 누락/빈 문자열/대문자 fallback
+- 전체 `npm test`: 510/510 PASS (38 suites, 신규 spec 16건 포함)
+
+#### Docs
+- `docs/data-model.md` — webhook_events 테이블 박제 (테이블 22개로 갱신)
+- `SCHEMA.md` — webhook_events Prisma 매핑 + 관계 다이어그램에 WebhookEvent 추가
+- `docs/api-contract.md` — POST /api/payments/webhook 응답 reason 박제 (`duplicate_event` 신규 + 기존 reason 명세)
+- `MIGRATION.md` §7-AA — 본 마이그레이션 절차 + 롤백 정책 + 핵심 정책 박제
+- `TECH_STATUS.md` — Payment 웹훅 멱등성 항목 추가
+- `.claude/shared-contracts.md` §11 — WebhookEventIdempotency 인터페이스 정본 신설 (claude-docs Generator 단계 박제 예정)
+
+#### Rationale
+- 기존: `payment.status === 'completed'` 약식 멱등성은 같은 payment 중복 처리는 막지만, **Polar 측 webhook 재전송 큐**가 동일 eventId로 빠르게 두 번 보내는 race condition에서 둘 다 status='pending' 본 후 `completePaymentAtomically` 두 번 실행 가능 → **돈은 1회 결제했는데 크레딧 2배 부여 사고 위험**
+- 이번: DB `event_id` UNIQUE 제약으로 race 원천 차단 (P2002 → safe skip → null 반환). 첫 호출만 `completePaymentAtomically` 실행 보장. **돈은 냈는데 크레딧 두 번 들어가는 사고 0건** 보장
+- 책 Ch 16 Anthropic 3-에이전트 패턴 (Initializer → Generator → Evaluator) 묶음 II 3회차. 책 Ch 16 충돌 2번 해결책 (shared state via DB unique constraint) 정합. Sprint 계약 정본: `reports/sprint-pay-p0-1-webhook-event-id-idempotency-progress.md`
+
+### DB 마이그레이션: add_webhook_event_idempotency
+- **목적**: PG 웹훅 재전송 멱등성 박제 — 동일 eventId 두 번째 호출 시 completePaymentAtomically 0회 실행 보장
+- **변경 내용**: 신규 테이블 `webhook_events` (UUID PK + event_id UNIQUE + (event_type, processed_at) INDEX). 기존 테이블 변경 0건
+- **롤백 방법**: 일방향 (down 미작성). 운영 사고 시 `DROP TABLE webhook_events;` 또는 게이트 비활성화 핫픽스
+- **적용 환경**: localhost ✓ / development - / production -
+
+---
+
 ## [0.30.0] - 2026-05-03
 
 ### Feat — publishTheme bakedCssUrl 절대화 (P1-#7, sprint-baked-css-url-absolute)

@@ -230,6 +230,48 @@ npx prisma migrate resolve --applied {마이그레이션_이름}
 
 ---
 
+## 7-AA. 박제 이력: add_webhook_event_idempotency (2026-05-03, PAY-P0-1)
+
+### 목적
+PG (Polar 등) 웹훅 재전송 시 동일 `event_id`로 두 번째 호출이 들어와도 `completePaymentAtomically`가 단 1회만 실행되도록 멱등성 박제 테이블 신설. **돈은 냈는데 크레딧 두 번 들어가는 사고 0건** 보장.
+
+### 변경 내용
+- DDL: `CREATE TABLE webhook_events` + UNIQUE INDEX (`event_id`) + INDEX (`event_type`, `processed_at`)
+- DML: 없음 (신규 테이블 — 데이터 backfill 불필요)
+- 무중단 OK (기존 테이블 변경 0건)
+
+### 적용 환경
+- localhost ✓ (2026-05-03 검증, `\d webhook_events` PASS)
+- development: 사용자 명시 후 배포 (다음 배포에서 자동 `migrate deploy`)
+- production: 사용자 명시 후 `RUN_MIGRATION=true`로 적용
+
+### 사전 백업 권장
+- localhost: 생략
+- dev/prod: 신규 테이블만 추가 — 기존 데이터 백업 불필요. 단 안전망으로 `pg_dump --table=payments --data-only > backup-payments-{ts}.sql` 권장.
+
+### 롤백 정책
+일방향 마이그레이션 (down 미작성). 운영 사고 시:
+- 멱등성 게이트 비활성화: `webhookEventRepo.findByEventId` 결과 무시 패치 (긴급 핫픽스)
+- 데이터 정리: `DROP TABLE webhook_events;` (수동, 데이터 손실 허용)
+
+### 핵심 정책
+- `event_id` UNIQUE 제약으로 race condition 차단 (Prisma P2002 → safe skip → null 반환)
+- Polar `webhook-id` 헤더가 멱등성 키. 헤더 누락 시 어댑터가 null 반환 (안전 거부)
+- 처리 결과 박제: 'processed' / 'skipped' (already_completed, unknown_trade) / 'failed' (예외)
+
+### 관련 코드
+- `prisma/schema.prisma` — `model WebhookEvent`
+- `src/domain/port/outbound/webhook-event-repository.port.ts` — 포트
+- `src/adapter/outbound/persistence/prisma-webhook-event.repository.ts` — 어댑터 (P2002 catch)
+- `src/application/payment/payment.usecase.ts` — `processWebhook` 멱등성 게이트
+- `src/adapter/outbound/payment/polar.adapter.ts` — `webhook-id` 헤더 추출
+
+### 정본
+- `.claude/shared-contracts.md` §11 WebhookEventIdempotency
+- `reports/sprint-pay-p0-1-webhook-event-id-idempotency-progress.md` (Sprint 단일 진실)
+
+---
+
 ## 8. 마이그레이션 변경 이력 문서화
 
 > 마이그레이션 파일(`prisma/migrations/`)은 git이 관리하지만, **왜 변경했는지**는 코드에 남지 않는다.

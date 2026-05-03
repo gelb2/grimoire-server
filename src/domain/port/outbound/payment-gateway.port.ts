@@ -27,6 +27,12 @@ export interface PaymentInitResponse {
 
 /** 웹훅 이벤트 정규화 결과 — 어댑터가 파싱해서 반환 */
 export interface NormalizedWebhookEvent {
+  /**
+   * PG가 발급하는 unique 이벤트 식별자 (Polar의 경우 `webhook-id` 헤더).
+   * WebhookEvent 멱등성 게이트(Sprint PAY-P0-1)에서 중복 차단 키로 사용.
+   * 어댑터가 헤더를 추출 못하면 이벤트 자체를 무시(null 반환) — 멱등성 보장 불가 시 안전 거부.
+   */
+  eventId: string
   /** 이벤트 타입 — 'order.paid' / 'order.refunded' / 'checkout.updated' 등 */
   type: string
   /** 우리가 DB에 저장한 tradeNo와 매칭할 외부 거래 ID */

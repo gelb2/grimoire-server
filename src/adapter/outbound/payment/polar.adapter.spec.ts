@@ -149,7 +149,7 @@ describe('PolarAdapter', () => {
       'webhook-signature': 'v1,abc',
     }
 
-    it('order.paid 이벤트를 성공으로 정규화한다', () => {
+    it('order.paid 이벤트를 성공으로 정규화한다 (eventId 박제 포함, PAY-P0-1)', () => {
       mockValidateEvent.mockReturnValue({
         type: 'order.paid',
         data: {
@@ -164,12 +164,86 @@ describe('PolarAdapter', () => {
       const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
 
       expect(result).toEqual({
+        eventId: 'msg_123', // dummyHeaders['webhook-id']
         type: 'order.paid',
         tradeNo: 'checkout-abc',
         amount: 2000, // 199센트 → ₩2,000 (credit-5 상품 매핑, F1 2026-04-19 인상, Polar 패턴 $X.99=₩X,000)
         status: 'success',
         userId: 'author-1',
       })
+    })
+
+    // ============================================================================
+    // Sprint PAY-P0-1: webhook-id 헤더 추출 신규 검증
+    // ============================================================================
+
+    it('PAY-P0-1: webhook-id 헤더 누락 시 null 반환 (멱등성 보장 불가 → 안전 거부)', () => {
+      mockValidateEvent.mockReturnValue({
+        type: 'order.paid',
+        data: {
+          id: 'order-noeventid',
+          checkoutId: 'checkout-noeventid',
+          totalAmount: 199,
+          status: 'paid',
+          metadata: { authorId: 'author-1' },
+        },
+      })
+
+      const headersWithoutWebhookId = {
+        'webhook-timestamp': '1712345678',
+        'webhook-signature': 'v1,abc',
+        // webhook-id 누락
+      }
+
+      const result = adapter.verifyAndParseWebhook(dummyBody, headersWithoutWebhookId)
+
+      expect(result).toBeNull()
+    })
+
+    it('PAY-P0-1: webhook-id 헤더가 빈 문자열이면 null 반환', () => {
+      mockValidateEvent.mockReturnValue({
+        type: 'order.paid',
+        data: {
+          id: 'order-emptyid',
+          checkoutId: 'checkout-emptyid',
+          totalAmount: 199,
+          status: 'paid',
+          metadata: { authorId: 'author-1' },
+        },
+      })
+
+      const headersEmptyId = {
+        'webhook-id': '   ',
+        'webhook-timestamp': '1712345678',
+        'webhook-signature': 'v1,abc',
+      }
+
+      const result = adapter.verifyAndParseWebhook(dummyBody, headersEmptyId)
+
+      expect(result).toBeNull()
+    })
+
+    it('PAY-P0-1: 대문자 Webhook-Id fallback도 추출 가능 (프록시 정규화 안전망)', () => {
+      mockValidateEvent.mockReturnValue({
+        type: 'order.paid',
+        data: {
+          id: 'order-uppercase',
+          checkoutId: 'checkout-uppercase',
+          totalAmount: 199,
+          status: 'paid',
+          metadata: { authorId: 'author-1' },
+        },
+      })
+
+      const headersUpperCase = {
+        'Webhook-Id': 'msg_uppercase',
+        'webhook-timestamp': '1712345678',
+        'webhook-signature': 'v1,abc',
+      }
+
+      const result = adapter.verifyAndParseWebhook(dummyBody, headersUpperCase)
+
+      expect(result?.eventId).toBe('msg_uppercase')
     })
 
     it('checkoutId가 없으면 order id를 tradeNo로 폴백', () => {

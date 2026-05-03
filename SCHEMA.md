@@ -189,6 +189,23 @@
 | createdAt | created_at | DateTime | default(now()) | 결제 요청일 |
 | completedAt | completed_at | DateTime? | - | 결제 완료일 |
 
+### webhook_events (Sprint PAY-P0-1, 2026-05-03)
+
+PG 웹훅 재전송 멱등성 박제 — `event_id` UNIQUE 제약으로 race condition 차단. 정본: `.claude/shared-contracts.md` §11.
+
+| Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
+|-------------|---------|------|------|------|
+| id | id | String (uuid) | PK | 박제 식별자 |
+| eventId | event_id | String | unique | PG 발급 이벤트 ID (Polar `webhook-id` 헤더) |
+| source | source | String | default("polar") | PG 식별 |
+| eventType | event_type | String | - | 이벤트 타입 ('order.paid' 등) |
+| payload | payload | Json | - | NormalizedWebhookEvent 박제 (디버깅용) |
+| status | status | String | default("processed") | 'processed' \| 'skipped' \| 'failed' |
+| errorMessage | error_message | String? | - | 실패/스킵 사유 |
+| processedAt | processed_at | DateTime | default(now()) | 박제 시각 |
+
+@@index: `[eventType, processedAt]` — 최근 이벤트 조회 성능
+
 ### chat_sessions
 
 | Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
@@ -259,6 +276,7 @@ Like (authorId + episodeId — FK 없음, 독자 행위 기록)
 Subscription (subscriberId + targetAuthorId — FK 없음, 구독 관계)
 Comment (authorId + episodeId — FK 없음, 소셜 기록)
 Payment (authorId — FK 없음, 결제 기록)
+WebhookEvent (eventId @unique — PG 웹훅 멱등성 박제, FK 없음)
 UserSanction (authorId + adminId — 제재/정지 이력)
 Report (targetType + targetId — 신고 큐)
 SystemSetting (key-value — 동적 설정)

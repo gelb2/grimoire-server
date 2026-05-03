@@ -1,6 +1,7 @@
-import { Injectable, Inject, BadRequestException } from '@nestjs/common'
+import { Injectable, Inject, BadRequestException, Logger } from '@nestjs/common'
 import { PaymentRepositoryPort } from '@domain/port/outbound/payment-repository.port'
 import { PaymentGatewayPort } from '@domain/port/outbound/payment-gateway.port'
+import { WebhookEventRepositoryPort } from '@domain/port/outbound/webhook-event-repository.port'
 import { CREDIT_PRODUCTS, Product } from '@domain/model/config'
 
 // re-export for backward compatibility
@@ -8,9 +9,12 @@ export { CREDIT_PRODUCTS, type Product }
 
 @Injectable()
 export class PaymentUseCase {
+  private readonly logger = new Logger(PaymentUseCase.name)
+
   constructor(
     @Inject('PaymentRepositoryPort') private readonly paymentRepo: PaymentRepositoryPort,
     @Inject('PaymentGatewayPort') private readonly paymentGateway: PaymentGatewayPort,
+    @Inject('WebhookEventRepositoryPort') private readonly webhookEventRepo: WebhookEventRepositoryPort,
   ) {}
 
   /** 상품 목록 조회 */
@@ -39,21 +43,94 @@ export class PaymentUseCase {
     return { paymentId: payment.id, paymentUrl: result.paymentUrl, tradeNo: result.tradeNo }
   }
 
-  /** 웹훅 처리 — 서명 검증 + 크레딧 부여 */
+  /**
+   * 웹훅 처리 — 서명 검증 + 멱등성 게이트(Sprint PAY-P0-1) + 크레딧 부여
+   *
+   * 게이트 순서:
+   * 1. verifyAndParseWebhook → eventId 포함된 NormalizedWebhookEvent 반환
+   * 2. eventId 멱등성 게이트: webhookEventRepo.findByEventId — 이미 박제 시 즉시 skip
+   * 3. tradeNo로 Payment 조회 + 약식 게이트(already_completed)
+   * 4. completePaymentAtomically (성공) / updateStatus (실패/취소)
+   * 5. webhookEventRepo.createIfAbsent — race 차단 (P2002 → null로 안전 skip)
+   */
   async processWebhook(rawBody: Buffer | string, headers: Record<string, string>) {
     const event = this.paymentGateway.verifyAndParseWebhook(rawBody, headers)
     if (!event) return { processed: false, reason: 'invalid_or_ignored' }
 
+    // 1차 게이트: eventId 멱등성 — DB에 이미 박제된 event는 즉시 skip (completePaymentAtomically 0회)
+    const existing = await this.webhookEventRepo.findByEventId(event.eventId)
+    if (existing) {
+      this.logger.warn(`중복 webhook 감지 (eventId=${event.eventId}, status=${existing.status}) — skip`)
+      return { processed: false, reason: 'duplicate_event' }
+    }
+
     const payment = await this.paymentRepo.findByExternalTransactionId(event.tradeNo)
-    if (!payment) return { processed: false, reason: 'unknown_trade' }
-    if (payment.status === 'completed') return { processed: false, reason: 'already_completed' }
+    if (!payment) {
+      // unknown_trade여도 webhook event 박제 (재전송 시 동일 응답 보장)
+      await this.webhookEventRepo.createIfAbsent({
+        eventId: event.eventId,
+        source: 'polar',
+        eventType: event.type,
+        payload: event as unknown as object,
+        status: 'skipped',
+        errorMessage: 'unknown_trade',
+      })
+      return { processed: false, reason: 'unknown_trade' }
+    }
+    if (payment.status === 'completed') {
+      // 약식 게이트 (이전 webhook 박제 누락된 PROD 데이터 안전망)
+      await this.webhookEventRepo.createIfAbsent({
+        eventId: event.eventId,
+        source: 'polar',
+        eventType: event.type,
+        payload: event as unknown as object,
+        status: 'skipped',
+        errorMessage: 'already_completed',
+      })
+      return { processed: false, reason: 'already_completed' }
+    }
 
     if (event.status === 'success') {
-      // 원자 처리: payment 상태 + 크레딧 증가 + 로그 기록 (단일 트랜잭션)
-      await this.paymentRepo.completePaymentAtomically(payment.id, payment.authorId, payment.credits, payment.productId)
+      try {
+        // 원자 처리: payment 상태 + 크레딧 증가 + 로그 기록 (단일 트랜잭션)
+        await this.paymentRepo.completePaymentAtomically(payment.id, payment.authorId, payment.credits, payment.productId)
+      } catch (e: unknown) {
+        // 처리 중 오류 — webhook event를 'failed'로 박제 (Polar 재전송 시 다른 eventId로 다시 시도 가능)
+        const message = e instanceof Error ? e.message : String(e)
+        await this.webhookEventRepo.createIfAbsent({
+          eventId: event.eventId,
+          source: 'polar',
+          eventType: event.type,
+          payload: event as unknown as object,
+          status: 'failed',
+          errorMessage: message.slice(0, 500),
+        })
+        throw e
+      }
+
+      // 성공 박제 — race 시 (다른 worker가 먼저 INSERT) null 반환되어도 무시 (둘 다 같은 결과)
+      const created = await this.webhookEventRepo.createIfAbsent({
+        eventId: event.eventId,
+        source: 'polar',
+        eventType: event.type,
+        payload: event as unknown as object,
+        status: 'processed',
+      })
+      if (!created) {
+        this.logger.warn(
+          `webhook event race detected (eventId=${event.eventId}) — completePaymentAtomically already executed`,
+        )
+      }
       return { processed: true, credits: payment.credits }
     } else {
       await this.paymentRepo.updateStatus(payment.id, event.status === 'cancel' ? 'refunded' : 'failed')
+      await this.webhookEventRepo.createIfAbsent({
+        eventId: event.eventId,
+        source: 'polar',
+        eventType: event.type,
+        payload: event as unknown as object,
+        status: 'processed',
+      })
       return { processed: true, credits: 0 }
     }
   }
