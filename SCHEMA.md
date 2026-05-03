@@ -45,7 +45,7 @@
 | preset | preset | String | default("midnight") | 프리셋명 (파생 출처 기록용) |
 | overrides | overrides | Json? | - | AuthorTheme 전체 값 (`docs/theme-spec.md` 참조) |
 | rawDescription | raw_description | String? | - | 작가 원본 구술 텍스트 |
-| bakedCssUrl | baked_css_url | String? | - | Baking된 CSS 파일 URL |
+| bakedCssUrl | baked_css_url | String? | - | Baking된 CSS 파일 URL. **항상 절대 URL(Blob CDN) OR NULL**. NULL이면 응답 시점에 server가 `PUBLIC_API_BASE_URL`로 동적 절대화 (P1-#7, 2026-05-03). 상대 경로(`/api/themes/css/...`) 박제 금지 — 환경 전환 stale 방지 |
 | isSlotted | is_slotted | Boolean | default(true) | 활성 슬롯 배치 여부 |
 | source | source | String | default("user") | 테마 출처 (system/ai/user) |
 | updatedAt | updated_at | DateTime | @updatedAt | 수정일 |

@@ -32,16 +32,16 @@ describe('BakeThemeUseCase', () => {
     useCase = new BakeThemeUseCase(mockThemeRepo as any, mockBlobStorage as any)
   })
 
-  it('Blob 미설정 시 API 폴백 URL을 반환한다', async () => {
+  it('Blob 미설정 시 cssUrl=null을 반환하고 DB에 NULL을 박제한다 (P1-#7)', async () => {
     const result = await useCase.execute('deerdevil')
 
-    expect(result.cssUrl).toBe('/api/themes/css/deerdevil')
+    expect(result.cssUrl).toBeNull()
     expect(result.css.length).toBeGreaterThan(0)
-    expect(mockThemeRepo.updateBakedCssUrl).toHaveBeenCalledWith('theme-1', '/api/themes/css/deerdevil')
+    expect(mockThemeRepo.updateBakedCssUrl).toHaveBeenCalledWith('theme-1', null)
     expect(mockBlobStorage.uploadThemeCss).not.toHaveBeenCalled()
   })
 
-  it('Blob 활성화 시 CDN URL을 반환한다', async () => {
+  it('Blob 활성화 시 CDN 절대 URL을 반환한다', async () => {
     mockBlobStorage.isEnabled.mockReturnValue(true)
     mockBlobStorage.uploadThemeCss.mockResolvedValue('https://storage.blob.core.windows.net/themes/deerdevil.css')
 
@@ -55,13 +55,33 @@ describe('BakeThemeUseCase', () => {
     )
   })
 
-  it('CDN 업로드 실패 시 API 폴백으로 처리한다', async () => {
+  it('CDN 업로드 실패 시 NULL 박제 (응답 시 server가 폴백 절대화) (P1-#7)', async () => {
     mockBlobStorage.isEnabled.mockReturnValue(true)
     mockBlobStorage.uploadThemeCss.mockRejectedValue(new Error('upload failed'))
 
     const result = await useCase.execute('deerdevil')
 
-    expect(result.cssUrl).toBe('/api/themes/css/deerdevil')
+    expect(result.cssUrl).toBeNull()
+    expect(mockThemeRepo.updateBakedCssUrl).toHaveBeenCalledWith('theme-1', null)
+  })
+
+  it('상대 경로(/api/themes/css/...) 박제는 더 이상 발생하지 않는다 (회귀 차단)', async () => {
+    // Blob 미설정
+    await useCase.execute('deerdevil')
+    expect(mockThemeRepo.updateBakedCssUrl).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringMatching(/^\/api\/themes\/css\//),
+    )
+
+    // Blob 업로드 실패
+    mockThemeRepo.updateBakedCssUrl.mockClear()
+    mockBlobStorage.isEnabled.mockReturnValue(true)
+    mockBlobStorage.uploadThemeCss.mockRejectedValue(new Error('fail'))
+    await useCase.execute('deerdevil')
+    expect(mockThemeRepo.updateBakedCssUrl).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringMatching(/^\/api\/themes\/css\//),
+    )
   })
 
   it('테마가 없으면 NotFoundException을 던진다', async () => {

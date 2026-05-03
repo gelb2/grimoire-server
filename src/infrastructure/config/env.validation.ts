@@ -4,10 +4,18 @@ import { getAppEnv, isRemoteEnv } from './app-env'
 export function validateEnv(): void {
   // 필수 — 없으면 서버 부팅 차단
   // ANTHROPIC_API_KEY는 로컬 개발 시 없어도 서버 부팅 가능 (AI 기능만 비활성)
-  const required = ['DATABASE_URL', 'JWT_SECRET', 'CORS_ORIGIN']
+  // PUBLIC_API_BASE_URL은 응답 시 bakedCssUrl 절대화에 사용 (P1-#7, 2026-05-03)
+  const required = ['DATABASE_URL', 'JWT_SECRET', 'CORS_ORIGIN', 'PUBLIC_API_BASE_URL']
   const missing = required.filter((key) => !process.env[key])
   if (missing.length > 0) {
     console.error(`필수 환경 변수 누락: ${missing.join(', ')}`)
+    process.exit(1)
+  }
+
+  // PUBLIC_API_BASE_URL 형식 검증 — 절대 URL이어야 응답 절대화 정합 보장
+  const publicApiBase = process.env.PUBLIC_API_BASE_URL ?? ''
+  if (!/^https?:\/\//.test(publicApiBase)) {
+    console.error(`PUBLIC_API_BASE_URL은 절대 URL이어야 합니다 (현재 값: "${publicApiBase}")`)
     process.exit(1)
   }
 

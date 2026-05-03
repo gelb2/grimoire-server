@@ -1,5 +1,43 @@
 # Changelog — grimoire-server
 
+## [0.30.0] - 2026-05-03
+
+### Feat — publishTheme bakedCssUrl 절대화 (P1-#7, sprint-baked-css-url-absolute)
+
+#### Changed
+- `application/theme/bake-theme.usecase.ts` — Blob 비활성/실패 시 `cssUrl = null` 박제 (이전: `/api/themes/css/{slug}` 상대 경로 박제). 반환 시그니처 `Promise<{ cssUrl: string | null; css: string }>`
+- `domain/port/outbound/theme-repository.port.ts` — `updateBakedCssUrl(themeId, url: string | null)`로 시그니처 확장
+- `adapter/outbound/persistence/prisma-theme.repository.ts` — 시그니처 확장 반영 (Prisma update는 이미 `string | null` 허용)
+- `adapter/inbound/http/controller/theme.controller.ts` — `publish` / `findByAuthorSlug` / `resolveTheme` 응답에 `resolveBakedCssUrl()` 적용. 응답 `bakedCssUrl`은 항상 절대 URL (Blob URL 또는 `${PUBLIC_API_BASE_URL}/themes/css/{slug}` 폴백)
+- `infrastructure/config/env.validation.ts` — `PUBLIC_API_BASE_URL` 필수 환경변수 + 절대 URL 형식 검증 (미설정/비절대 URL 시 부팅 차단)
+
+#### Added
+- `lib/url-resolver.ts` — `resolveBakedCssUrl(dbValue, slug, baseUrl)` 헬퍼. NULL/상대경로/빈문자 → 환경별 폴백 절대 URL, 절대 URL → 그대로 반환
+- `lib/url-resolver.spec.ts` — 8건 (NULL/절대/트레일링슬래시/빈문자/상대경로/특수문자)
+- `infrastructure/config/env.validation.spec.ts` — 5건 (필수 통과/누락/비절대 URL/누락 다른 키)
+- `prisma/migrations/20260503130451_baked_css_url_clear_relative/migration.sql` — stale 상대 경로 row를 NULL로 일괄 정리 (DDL 0건, DML 단발, 무중단 OK)
+
+#### Tests
+- `application/theme/bake-theme.usecase.spec.ts` — Blob 미설정/업로드 실패 시 `cssUrl=null` + DB null 박제 검증 + 상대 경로 박제 회귀 차단 검증
+- 전체 `npm test`: 494/494 PASS
+
+#### Docs
+- `docs/data-model.md` / `SCHEMA.md` — `themes.baked_css_url` 박제 정책 명시 ("절대 URL OR NULL", 상대 경로 박제 금지)
+- `docs/environments.md` — `PUBLIC_API_BASE_URL` 환경변수 + 환경별 값 박제
+- `docs/api-contract.md` — `GET /api/themes/{slug}` / `POST /api/themes/publish/{slug}` / `GET /api/themes/resolve/{slug}` 응답 `bakedCssUrl` 절대 URL 명세
+- `MIGRATION.md` §7-Z — 본 마이그레이션 절차 + 롤백 정책 박제
+
+#### Rationale
+- 기존: localhost ↔ dev ↔ prod 환경 전환 시 DB의 상대 경로(`/api/themes/css/...`) 박제가 BFF hop을 강제 + CDN 캐싱 무효 + stale URL 잔존 위험
+- 이번: server 단일 환경변수(`PUBLIC_API_BASE_URL`)로 응답 절대화 → DB는 절대 URL 또는 NULL만 박제, 환경 분리 강제. CDN 가용성 보존 (Blob 활성 시 절대 URL 그대로)
+- 책 Ch 16 Anthropic 3-에이전트 패턴 (Initializer → Generator → Evaluator) 묶음 II 2회차 시범. Sprint 계약 정본: `reports/sprint-baked-css-url-absolute-progress.md`
+
+### DB 마이그레이션: baked_css_url_clear_relative
+- **목적**: stale 상대 경로 박제(`/api/themes/css/...`)를 NULL로 정리. 응답 시 server가 환경별 절대화 정책 전환
+- **변경 내용**: DDL 없음 (스키마 무변경). DML 단발 — `UPDATE themes SET baked_css_url = NULL WHERE baked_css_url LIKE '/api/themes/css/%' OR baked_css_url = ''`
+- **롤백 방법**: 일방향 (down 미작성). publishTheme 재호출로 자동 재박제 가능
+- **적용 환경**: localhost ✓ / development - / production -
+
 ## [0.29.2] - 2026-04-26
 
 ### Feat — Anthropic SDK signal 완전 전파 (HARNESS §10 Phase 4)
