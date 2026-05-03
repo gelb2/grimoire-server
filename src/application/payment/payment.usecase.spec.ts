@@ -9,6 +9,7 @@ describe('PaymentUseCase', () => {
   let mockCreditUseCase: any
   let mockPaymentGateway: any
   let mockWebhookEventRepo: any
+  let mockRefundPaymentUseCase: any
 
   const mockPayment = {
     id: 'pay-1',
@@ -66,6 +67,7 @@ describe('PaymentUseCase', () => {
       findByAuthorId: paymentMock.findMany,
       completePaymentAtomically: jest.fn().mockResolvedValue(undefined),
       updateStatus: jest.fn().mockResolvedValue(undefined),
+      refundPaymentAtomically: jest.fn().mockResolvedValue({ actualDeducted: 0, deficitCredits: 0 }),
     }
     mockPrisma = mockPaymentRepo // alias for backward test compatibility
 
@@ -93,7 +95,17 @@ describe('PaymentUseCase', () => {
       markStatus: jest.fn().mockResolvedValue(undefined),
     }
 
-    useCase = new PaymentUseCase(mockPaymentRepo as any, mockPaymentGateway, mockWebhookEventRepo)
+    // Sprint PAY-P1-1: refund usecase mock — 'cancel' 분기에서만 호출되어야 함
+    mockRefundPaymentUseCase = {
+      execute: jest.fn().mockResolvedValue({ actualDeducted: 0, deficitCredits: 0 }),
+    }
+
+    useCase = new PaymentUseCase(
+      mockPaymentRepo as any,
+      mockPaymentGateway,
+      mockWebhookEventRepo,
+      mockRefundPaymentUseCase,
+    )
   })
 
   describe('getProducts', () => {
@@ -231,7 +243,7 @@ describe('PaymentUseCase', () => {
       )
     })
 
-    it('실패 웹훅 시 상태를 failed로 변경하고 크레딧을 부여하지 않는다', async () => {
+    it('실패(fail) 웹훅 시 상태를 failed로 변경하고 refund usecase는 호출하지 않는다 (PAY-P1-1 회귀)', async () => {
       mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
@@ -246,9 +258,51 @@ describe('PaymentUseCase', () => {
       expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
         expect.objectContaining({ eventId: 'evt_test_001', status: 'processed' }),
       )
+      // PAY-P1-1: 'fail'은 환수 대상 아님 — refundPaymentUseCase 호출 0회
+      expect(mockRefundPaymentUseCase.execute).not.toHaveBeenCalled()
     })
 
-    it('취소(환불) 웹훅 시 상태를 refunded로 변경한다', async () => {
+    it('취소(cancel) 웹훅 시 refund usecase 1회 호출 + status="refunded" + deficitCredits 응답 포함 (PAY-P1-1)', async () => {
+      mockPrisma.findByExternalTransactionId.mockResolvedValue({
+        ...mockPayment,
+        externalTransactionId: 'TRADE-001',
+      })
+      mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(
+        makeEvent({ type: 'order.refunded', status: 'cancel', amount: 2000 }),
+      )
+      mockRefundPaymentUseCase.execute.mockResolvedValueOnce({
+        actualDeducted: 5,
+        deficitCredits: 0,
+      })
+
+      const result = await useCase.processWebhook(dummyBody, dummyHeaders)
+
+      // PAY-P1-1: refund usecase 정확히 1회 호출 + 입력 정합 검증
+      expect(mockRefundPaymentUseCase.execute).toHaveBeenCalledTimes(1)
+      expect(mockRefundPaymentUseCase.execute).toHaveBeenCalledWith({
+        paymentId: 'pay-1',
+        authorId: 'author-1',
+        credits: 5,
+        refundedAmount: 2000,
+        reason: 'polar_webhook_order.refunded',
+        source: 'webhook',
+      })
+
+      // updateStatus는 호출 0회 — refund usecase 내부의 $transaction이 status='refunded'를 처리
+      expect(mockPrisma.updateStatus).not.toHaveBeenCalled()
+
+      // 응답에 deficitCredits 포함 (정상 환수 시 0)
+      expect(result.processed).toBe(true)
+      expect(result.credits).toBe(0)
+      expect(result).toHaveProperty('deficitCredits', 0)
+
+      // webhook event 박제
+      expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+        expect.objectContaining({ eventId: 'evt_test_001', status: 'processed' }),
+      )
+    })
+
+    it('취소(cancel) 웹훅 + 잔액 부족 시 deficitCredits 양수로 응답에 박제 (PAY-P1-1 deficit 분기)', async () => {
       mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
@@ -256,12 +310,39 @@ describe('PaymentUseCase', () => {
       mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(
         makeEvent({ type: 'order.refunded', status: 'cancel' }),
       )
+      mockRefundPaymentUseCase.execute.mockResolvedValueOnce({
+        actualDeducted: 3,
+        deficitCredits: 2,
+      })
 
       const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
-      expect(result.processed).toBe(true)
-      expect(result.credits).toBe(0)
-      expect(mockPrisma.updateStatus).toHaveBeenCalledWith('pay-1', 'refunded')
+      expect(result).toEqual(expect.objectContaining({
+        processed: true,
+        credits: 0,
+        deficitCredits: 2,
+      }))
+    })
+
+    it('취소(cancel) 웹훅 + refund 트랜잭션 실패 시 webhook event를 failed로 박제하고 throw (PAY-P1-1)', async () => {
+      mockPrisma.findByExternalTransactionId.mockResolvedValue({
+        ...mockPayment,
+        externalTransactionId: 'TRADE-001',
+      })
+      mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(
+        makeEvent({ type: 'order.refunded', status: 'cancel' }),
+      )
+      mockRefundPaymentUseCase.execute.mockRejectedValueOnce(new Error('refund_db_lost'))
+
+      await expect(useCase.processWebhook(dummyBody, dummyHeaders)).rejects.toThrow('refund_db_lost')
+
+      expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventId: 'evt_test_001',
+          status: 'failed',
+          errorMessage: expect.stringContaining('refund_db_lost'),
+        }),
+      )
     })
 
     // ============================================================================

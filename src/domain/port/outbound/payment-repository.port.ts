@@ -37,4 +37,32 @@ export interface PaymentRepositoryPort {
    * - PG record가 NotFound인 pending payment 정리용
    */
   expirePayment(paymentId: string): Promise<void>
+
+  /**
+   * 환불 원자 처리 — payment 상태 + 크레딧 환수 + CreditLog 음수 + RefundLog를 단일 트랜잭션으로 실행
+   * (Sprint PAY-P1-1, 2026-05-03 — 정본: `.claude/shared-contracts.md` §13)
+   *
+   * 분기:
+   * - Author.credits >= credits: 정상 환수 (actualDeducted=credits, deficitCredits=0)
+   * - Author.credits < credits: 0 fix (actualDeducted=잔액, deficitCredits=credits-잔액). 음수 절대 차단.
+   *
+   * @param input.paymentId 환불 대상 Payment id
+   * @param input.authorId 환수 대상 Author id
+   * @param input.credits 환수할 크레딧 (양수 입력)
+   * @param input.refundedAmount PG 환불 금액 (KRW)
+   * @param input.reason 환불 사유 (예: 'polar_webhook_order.refunded')
+   * @param input.source 'webhook' | 'manual'
+   * @returns actualDeducted (실제 차감 크레딧), deficitCredits (잔액 부족분)
+   */
+  refundPaymentAtomically(input: {
+    paymentId: string
+    authorId: string
+    credits: number
+    refundedAmount: number
+    reason: string
+    source: 'webhook' | 'manual'
+  }): Promise<{
+    actualDeducted: number
+    deficitCredits: number
+  }>
 }

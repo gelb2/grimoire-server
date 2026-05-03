@@ -412,3 +412,24 @@ model ReconciliationCheckpoint {
 
   @@map("reconciliation_checkpoints")
 }
+
+/// 환불 정밀 처리 박제 (Sprint PAY-P1-1, 2026-05-03)
+/// - paymentId: 환불 대상 Payment FK (1:N — 향후 부분 환불 호환 위해 unique 미부여)
+/// - amount: PG 환불 금액 (KRW)
+/// - credits: 요청 환수 크레딧 (Author.credits 잔액 충분 시 = 실제 차감, 부족 시 actualDeducted = 잔액)
+/// - deficitCredits: 잔액 부족분 (양수 = 외상, 0 = 정상 환수). 운영자 회수 정책 결정 입력.
+/// - source: 'webhook' (Polar 자동) / 'manual' (운영자 수동, P2)
+/// 정본: `.claude/shared-contracts.md` §13 RefundPaymentAtomically
+model RefundLog {
+  id             String   @id @default(uuid())
+  paymentId      String   @map("payment_id")
+  amount         Int                                                    // PG 환불 금액 (KRW)
+  credits        Int                                                    // 실제 환수 크레딧 (actualDeducted)
+  deficitCredits Int      @default(0) @map("deficit_credits")           // 잔액 부족분 (외상)
+  reason         String
+  processedAt    DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+  source         String                                                 // 'webhook' | 'manual'
+
+  @@index([paymentId])
+  @@map("refund_logs")
+}
