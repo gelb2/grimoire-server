@@ -2,7 +2,7 @@
  * PG↔DB 정합성 검증 cron checkpoint Port — Sprint PAY-P0-2 (2026-05-03).
  *
  * 단일 row 보장 (id='singleton'). cron 실행마다 동일 row를 upsert.
- * CERTI_PROJ thermage-batch-api 패턴 차용 (DB single-row checkpoint, 책 Ch 16 shared state via DB).
+ * 책 Ch 16 "shared state via DB single-row checkpoint" 패턴 차용.
  */
 
 export interface ReconciliationCheckpointRecord {

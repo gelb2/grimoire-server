@@ -1,6 +1,6 @@
 -- CreateTable: ReconciliationCheckpoint (Sprint PAY-P0-2, 2026-05-03)
 -- 단일 row 보장 — id='singleton' 고정. cron이 항상 같은 row를 upsert.
--- CERTI_PROJ thermage-batch-api 패턴 차용 (DB single-row checkpoint).
+-- 책 Ch 16 "shared state via DB single-row checkpoint" 패턴.
 CREATE TABLE "reconciliation_checkpoints" (
     "id" TEXT NOT NULL DEFAULT 'singleton',
     "last_run_at" TIMESTAMPTZ(3) NOT NULL,
