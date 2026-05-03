@@ -96,6 +96,7 @@ export class PolarAdapter implements PaymentGatewayPort {
    * - Standard Webhooks 서명 검증 (webhook-id / webhook-timestamp / webhook-signature)
    * - 처리 대상 이벤트: order.paid, order.refunded
    * - 그 외 이벤트는 null 반환 (무시)
+   * - eventId 박제 (Sprint PAY-P0-1): `webhook-id` 헤더 추출, 누락 시 null 반환 (멱등성 보장 불가 → 안전 거부)
    */
   verifyAndParseWebhook(
     rawBody: Buffer | string,
@@ -123,6 +124,15 @@ export class PolarAdapter implements PaymentGatewayPort {
       return null
     }
 
+    // Standard Webhooks 스펙: `webhook-id` (소문자) 헤더가 PG 발급 unique 식별자.
+    // 일부 프록시는 헤더명을 정규화하므로 대소문자 fallback 모두 시도.
+    const eventId = this.extractWebhookId(headers)
+    if (!eventId) {
+      // eventId 누락 시 멱등성 게이트가 동작 못함 → 안전 거부 (Polar는 재전송 시 다른 webhook-id 사용 가능).
+      this.logger.warn('Polar 웹훅 webhook-id 헤더 누락 — 멱등성 보장 불가, 거부')
+      return null
+    }
+
     // Polar SDK 타입은 camelCase(checkoutId, totalAmount 등) 사용.
     // 웹훅 페이로드 구조는 이벤트별로 다르지만 최소 공통 필드로만 접근.
     const data = event.data as unknown as {
@@ -141,6 +151,7 @@ export class PolarAdapter implements PaymentGatewayPort {
       case 'order.updated': {
         const tradeNo = data.checkoutId ?? data.id ?? ''
         return {
+          eventId,
           type: event.type,
           tradeNo,
           amount: this.convertToKrw(data.totalAmount ?? data.netAmount ?? data.amount ?? 0),
@@ -150,6 +161,7 @@ export class PolarAdapter implements PaymentGatewayPort {
       }
       case 'order.refunded': {
         return {
+          eventId,
           type: event.type,
           tradeNo: data.checkoutId ?? data.id ?? '',
           amount: this.convertToKrw(data.totalAmount ?? data.netAmount ?? data.amount ?? 0),
@@ -161,6 +173,7 @@ export class PolarAdapter implements PaymentGatewayPort {
         // Checkout 상태 업데이트 — 완료/실패 시점 폴백
         if (data.status === 'succeeded') {
           return {
+            eventId,
             type: event.type,
             tradeNo: data.id ?? '',
             amount: this.convertToKrw(data.totalAmount ?? 0),
@@ -170,6 +183,7 @@ export class PolarAdapter implements PaymentGatewayPort {
         }
         if (data.status === 'failed' || data.status === 'expired') {
           return {
+            eventId,
             type: event.type,
             tradeNo: data.id ?? '',
             amount: this.convertToKrw(data.totalAmount ?? 0),
@@ -183,6 +197,20 @@ export class PolarAdapter implements PaymentGatewayPort {
         // 그 외 이벤트는 무시 (구독 관련은 추후 확장)
         return null
     }
+  }
+
+  /**
+   * `webhook-id` 헤더 추출 — Standard Webhooks 스펙은 소문자가 정본이지만,
+   * 일부 프록시 (Express raw 등)가 대소문자를 보존하므로 fallback 시도.
+   */
+  private extractWebhookId(headers: Record<string, string>): string | null {
+    const raw =
+      headers['webhook-id'] ??
+      headers['Webhook-Id'] ??
+      headers['WEBHOOK-ID'] ??
+      null
+    if (!raw || typeof raw !== 'string' || raw.trim() === '') return null
+    return raw
   }
 
   /** Polar metadata는 unknown 값 타입을 가짐 — string으로 안전 추출 */

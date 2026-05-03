@@ -64,6 +64,7 @@ import { PrismaAuthTokenRepository } from '@adapter/outbound/persistence/prisma-
 import { PrismaSignupHistoryRepository } from '@adapter/outbound/persistence/prisma-signup-history.repository'
 import { PrismaAdminRepository } from '@adapter/outbound/persistence/prisma-admin.repository'
 import { PrismaPaymentRepository } from '@adapter/outbound/persistence/prisma-payment.repository'
+import { PrismaWebhookEventRepository } from '@adapter/outbound/persistence/prisma-webhook-event.repository'
 import { PrismaAnalysisReportRepository } from '@adapter/outbound/persistence/prisma-analysis-report.repository'
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
 import { OpenAIEmbeddingAdapter } from '@adapter/outbound/embedding/openai-embedding.adapter'
@@ -156,6 +157,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'SignupHistoryRepositoryPort', useClass: PrismaSignupHistoryRepository },
     { provide: 'AdminRepositoryPort', useClass: PrismaAdminRepository },
     { provide: 'PaymentRepositoryPort', useClass: PrismaPaymentRepository },
+    { provide: 'WebhookEventRepositoryPort', useClass: PrismaWebhookEventRepository },
     { provide: 'AnalysisReportRepositoryPort', useClass: PrismaAnalysisReportRepository },
   ],
 })
