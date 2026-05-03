@@ -42,7 +42,7 @@
 - 기존: PG 측 webhook 누락 발견 0건 (사용자 신고 의존). Polar 장애/네트워크 단절/Container Apps cold start 동안 webhook timeout 시 영구 누락 가능 → 사용자 "크레딧 안 들어왔다" CS 신고 전까지 운영자가 모름
 - 이번: 10분 주기 cron이 Polar checkouts.list로 PG 측 truth와 DB 비교 → S1 boost(자동 보정) / S2 mismatch(P1-1 위임 마크) / S3 expire(stale pending 정리) / S4 정합(skip). **사용자 신고 의존 0건** + **자동 보정 보장**
 - cron 주기 10분 결정 근거 (cost-accountant): Polar `/v1` rate limit 분당 500회 default 그룹 → 10분 cron 사용률 1% 미만 (안전 마진 100배+). §0 면제 (인프라 비용 ₩0 증분)
-- 책 Ch 16 Anthropic 3-에이전트 (Initializer → Generator → Evaluator) 묶음 II 4회차. 책 Ch 16 충돌 2번 해결책 (shared state via DB single-row checkpoint). CERTI_PROJ thermage-batch-api `@Cron('*/10 * * * * *')` 패턴 차용 → Grimoire 결제 규모에 맞춰 10분으로 완화. Sprint 계약 정본: `reports/sprint-pay-p0-2-payment-reconciliation-cron-progress.md`
+- 책 Ch 16 Anthropic 3-에이전트 (Initializer → Generator → Evaluator) 묶음 II 4회차. 책 Ch 16 충돌 2번 해결책 (shared state via DB single-row checkpoint). 의료 결제 시스템의 `@Cron('*/10 * * * * *')` 정합성 검증 패턴 참고 → Grimoire 결제 규모에 맞춰 10분으로 완화. Sprint 계약 정본: `reports/sprint-pay-p0-2-payment-reconciliation-cron-progress.md`
 
 ### DB 마이그레이션: add_reconciliation_checkpoint
 - **목적**: PG↔DB 정합성 cron checkpoint 박제 — 단일 row(id='singleton')로 cron lastRunAt + 카운터 추적
