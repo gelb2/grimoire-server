@@ -34,7 +34,7 @@
 **문서 현행화**
 - [ ] 루트 `CLAUDE.md` §14 "미도입" 목록 실측 반영 — sensor-*.sh, `.claude/knowledge/` 실제 도입됨 vs 문서는 "미도입"으로 박제됨. `TASK_QUEUE.json`, `AUTOMATION.md`만 진짜 미도입
 - [ ] db-sync.ts에 "admin/test 계정 마스킹 예외" 옵션 추가 — 현재는 전 계정 비번을 고정 해시로 덮어써서 dev 로그인 테스트 불가 (2026-04-19 세션에서 수동으로 deerdevil만 복원)
-- [ ] `grimoire-web/src/app/login/page.tsx`의 "테스트 계정으로 채우기" 하드코딩 이메일 `test@grimoire.app`이 dev DB에 없음 → dev 실존 계정으로 교체
+- [x] **해소 (2026-05-04 EMAIL-P0-1)** — `grimoire-web/src/app/login/page.tsx`에서 "테스트 계정으로 채우기" 버튼 자체 이미 제거 확인. e2e/auth.spec.ts의 broken 테스트도 본 sprint에서 삭제. 시드 스크립트 도메인 `@grimoire.app` → `@example.com` 일괄 치환 (RFC 2606). 운영 DB 12~15 row 정리는 사용자 영역 (EMAIL-P0-2 SQL).
 
 ## 중기 (Phase 2)
 

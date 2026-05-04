@@ -73,7 +73,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '사슴악마',
     slug: 'deerdevil',
-    email: 'deerdevil@grimoire.app',
+    email: 'deerdevil@example.com',
     preset: 'deerDevil',
     description: 'A24 감성 K-다크 판타지. 어둡고 묵직한 밤의 분위기. 사슴뿔 아이콘과 타이핑 애니메이션.',
     theme: {
@@ -109,7 +109,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '이광수',
     slug: 'lee-gwangsu',
-    email: 'lee-gwangsu@grimoire.app',
+    email: 'lee-gwangsu@example.com',
     preset: 'custom',
     description: '근대 계몽기의 무게감. 낡은 양장본처럼 진한 세피아와 갈색.',
     theme: {
@@ -135,7 +135,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '김소월',
     slug: 'kim-sowol',
-    email: 'kim-sowol@grimoire.app',
+    email: 'kim-sowol@example.com',
     preset: 'custom',
     description: '진달래꽃이 흩날리는 봄. 연분홍과 라벤더의 부드러운 서정.',
     theme: {
@@ -161,7 +161,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '윤동주',
     slug: 'yun-dongju',
-    email: 'yun-dongju@grimoire.app',
+    email: 'yun-dongju@example.com',
     preset: 'custom',
     description: '별 헤는 밤. 깊은 네이비 하늘에 금빛 별이 빛나는 고요함.',
     theme: {
@@ -187,7 +187,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '이상',
     slug: 'yi-sang',
-    email: 'yi-sang@grimoire.app',
+    email: 'yi-sang@example.com',
     preset: 'custom',
     description: '날개를 펴는 실험. 극단적 흑백 대비와 기하학적 차가움.',
     theme: {
@@ -213,7 +213,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '채만식',
     slug: 'chae-mansik',
-    email: 'chae-mansik@grimoire.app',
+    email: 'chae-mansik@example.com',
     preset: 'custom',
     description: '풍자의 붓. 따뜻한 황토빛과 머스타드의 해학적 온기.',
     theme: {
@@ -239,7 +239,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '이효석',
     slug: 'lee-hyoseok',
-    email: 'lee-hyoseok@grimoire.app',
+    email: 'lee-hyoseok@example.com',
     preset: 'custom',
     description: '메밀꽃 필 무렵의 달밤. 은은한 숲녹색과 크림빛 서정.',
     theme: {
@@ -265,7 +265,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '김유정',
     slug: 'kim-yujeong',
-    email: 'kim-yujeong@grimoire.app',
+    email: 'kim-yujeong@example.com',
     preset: 'custom',
     description: '봄봄의 흙내음. 적갈색 흙과 따스한 전원의 해학.',
     theme: {
@@ -291,7 +291,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '현진건',
     slug: 'hyun-jingeon',
-    email: 'hyun-jingeon@grimoire.app',
+    email: 'hyun-jingeon@example.com',
     preset: 'custom',
     description: '운수 좋은 날의 아이러니. 잿빛 비 오는 거리의 쓸쓸함.',
     theme: {
@@ -317,7 +317,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '나도향',
     slug: 'na-dohyang',
-    email: 'na-dohyang@grimoire.app',
+    email: 'na-dohyang@example.com',
     preset: 'custom',
     description: '벙어리 삼룡이의 서러움. 짙은 황혼빛의 낭만적 비극.',
     theme: {
@@ -343,7 +343,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '한용운',
     slug: 'han-yongun',
-    email: 'han-yongun@grimoire.app',
+    email: 'han-yongun@example.com',
     preset: 'custom',
     description: '님의 침묵. 먹빛 수묵화의 고요하고 단아한 기다림.',
     theme: {
