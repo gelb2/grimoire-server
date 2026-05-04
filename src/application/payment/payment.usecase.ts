@@ -27,23 +27,50 @@ export class PaymentUseCase {
     }))
   }
 
-  /** 결제 시작 — Payment 레코드 생성 + 게이트웨이 호출 */
+  /**
+   * 결제 시작 — Payment 레코드 생성 또는 24h 이내 pending 재사용 + 게이트웨이 호출.
+   *
+   * Sprint PAY-P1-3 (정본: `.claude/shared-contracts.md` §14):
+   * 1. findReusablePendingPayment(authorId, productId, expireSince=now-24h) 진입 게이트
+   * 2. 적중 시 → Payment row 신규 생성 SKIP, 동일 paymentId 재사용 (DB row 폭주 차단)
+   * 3. null 반환 시 → 신규 create (기존 흐름)
+   * 4. 분기 무관 — paymentGateway.initiatePayment 호출 (Polar Checkout URL 신규 발급, 매 호출 신규)
+   * 5. paymentRepo.updateExternalTransactionId — 재사용 row의 externalTransactionId를 새 tradeNo로 갱신
+   *
+   * Polar SDK 정책: Checkout URL은 매 호출마다 신규 발급 (같은 externalTransactionId 재발급 불가).
+   * 사용자 UX: 응답 paymentId는 재사용 분기에서도 동일 → 중복 클릭/탭 닫음 후 재시도해도 row 폭증 0건.
+   */
   async initiatePayment(authorId: string, productId: string, returnUrl: string) {
     const product = CREDIT_PRODUCTS.find((p) => p.id === productId)
     if (!product) throw new BadRequestException(`존재하지 않는 상품입니다: ${productId}`)
 
-    const payment = await this.paymentRepo.create({
-      authorId, productId: product.id, amount: product.price, credits: product.credits,
-    })
+    // PAY-P1-3 진입 게이트 — 24h 이내 동일 productId pending row 재사용
+    const expireSince = new Date(Date.now() - PaymentUseCase.PENDING_REUSE_HOURS * 60 * 60 * 1000)
+    const reusable = await this.paymentRepo.findReusablePendingPayment(authorId, product.id, expireSince)
+
+    let payment = reusable
+    if (!payment) {
+      payment = await this.paymentRepo.create({
+        authorId, productId: product.id, amount: product.price, credits: product.credits,
+      })
+    } else {
+      this.logger.log(
+        `[reuse] 24h 이내 pending 재사용 — paymentId=${payment.id} authorId=${authorId} productId=${product.id}`,
+      )
+    }
 
     const result = await this.paymentGateway.initiatePayment({
       productId: product.id, productName: product.name, amount: product.price, userId: authorId, returnUrl,
     })
 
+    // 재사용 분기에서도 항상 호출 — Polar 정책상 매 결제 시도마다 신규 tradeNo 발급되므로 갱신 필수
     await this.paymentRepo.updateExternalTransactionId(payment.id, result.tradeNo)
 
     return { paymentId: payment.id, paymentUrl: result.paymentUrl, tradeNo: result.tradeNo }
   }
+
+  /** PAY-P1-3 — pending Payment 재사용 가능 시간 (시간 단위, 24h) */
+  private static readonly PENDING_REUSE_HOURS = 24
 
   /**
    * 웹훅 처리 — 서명 검증 + 멱등성 게이트(Sprint PAY-P0-1) + 크레딧 부여

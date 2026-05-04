@@ -21,6 +21,7 @@ import { AuthUseCase } from '@application/auth/auth.usecase'
 import { WorkManagementUseCase } from '@application/work/work-management.usecase'
 import { PaymentUseCase } from '@application/payment/payment.usecase'
 import { PaymentReconciliationJob } from '@application/payment/payment-reconciliation.job'
+import { PaymentCleanupJob } from '@application/payment/payment-cleanup.job'
 import { RefundPaymentUseCase } from '@application/payment/refund-payment.usecase'
 import { ReaderUseCase } from '@application/reader/reader.usecase'
 import { DiscoveryUseCase } from '@application/discovery/discovery.usecase'
@@ -128,6 +129,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     WorkManagementUseCase,
     PaymentUseCase,
     PaymentReconciliationJob,
+    PaymentCleanupJob,
     RefundPaymentUseCase,
     ReaderUseCase,
     DiscoveryUseCase,

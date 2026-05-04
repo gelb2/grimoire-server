@@ -70,6 +70,35 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
   }
 
   /**
+   * Sprint PAY-P1-3 — 결제 실패 retry 정책 (정본: `.claude/shared-contracts.md` §14).
+   * 24h 이내 동일 productId pending row 1건 조회 (재사용 후보).
+   *
+   * - WHERE: authorId AND productId AND status='pending' AND createdAt > expireSince
+   * - ORDER BY: createdAt DESC (가장 최근 row 우선 — 사용자가 최근에 시작한 결제 재사용)
+   * - LIMIT: 1
+   *
+   * race condition 차단:
+   * - PaymentUseCase.initiatePayment에서 본 메서드는 단일 호출 (트랜잭션 락 도입은 후속 P2)
+   * - 현재는 "두 번째 호출이 첫 번째 row를 재사용"하면 충분 (DB row 폭주 차단이 핵심 KPI)
+   * - 동시 신규 생성 시 partial unique index는 schema 변경 비용으로 P2 보류
+   */
+  async findReusablePendingPayment(
+    authorId: string,
+    productId: string,
+    expireSince: Date,
+  ): Promise<PaymentRecord | null> {
+    return (await this.prisma.payment.findFirst({
+      where: {
+        authorId,
+        productId,
+        status: 'pending',
+        createdAt: { gt: expireSince },
+      },
+      orderBy: { createdAt: 'desc' },
+    })) as unknown as PaymentRecord | null
+  }
+
+  /**
    * 환불 원자 처리 — payment.status='refunded' + Author.credits decrement(0 fix) + CreditLog(음수) + RefundLog 박제
    * (Sprint PAY-P1-1, 2026-05-03 — 정본: `.claude/shared-contracts.md` §13)
    *

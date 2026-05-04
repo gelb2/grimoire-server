@@ -1,5 +1,40 @@
 # Changelog — grimoire-server
 
+## [0.34.0] - 2026-05-04
+
+### Feat — 결제 실패 retry 정책 + pending 24h 재사용 + cleanup cron (PAY-P1-3, sprint-pay-p1-3-retry-policy)
+
+#### Added
+- `application/payment/payment-cleanup.job.ts` — `PaymentCleanupJob` 신설 (`@Cron('0 0 4 * * *')` 매일 새벽 4시). `findPendingPaymentsOlderThan(24)` → row 별 `expirePayment` + `auditLog.log('system_cleanup', 'payment_expire', ...)`. `process.env.PAYMENT_CLEANUP_DISABLED === '1'` 비활성화 게이트 + `isRunning` 동시 실행 차단 + try-finally lock 해제 + 개별 row 실패 resilient (다음 row 처리 계속)
+- `application/payment/payment-cleanup.job.spec.ts` — 6 it 블록 (정상 다건 / 빈 목록 / 24h 이내 보존 / disabled env / isRunning lock / row 단건 실패 시 다음 row 계속)
+- `adapter/outbound/persistence/prisma-payment.repository.spec.ts` — `findReusablePendingPayment` 5 it (정상 재사용 / 24h 초과 / 다른 productId / 다른 authorId / orderBy createdAt DESC + LIMIT 1)
+- `domain/port/outbound/payment-repository.port.ts` — `findReusablePendingPayment(authorId, productId, expireSince)` 시그니처 추가
+- `adapter/outbound/persistence/prisma-payment.repository.ts` — `findReusablePendingPayment` `findFirst` 구현 (WHERE: authorId AND productId AND status='pending' AND createdAt > expireSince, ORDER BY createdAt DESC, LIMIT 1)
+- `application/payment/payment.usecase.spec.ts` — PAY-P1-3 4 it 블록 (재사용 적중 + create 0회 + Polar URL 재발급 / 24h 초과 신규 create / expireSince 시간 정합 / race 시뮬 — Polar SDK 1회 + tradeNo 갱신 1회)
+
+#### Changed
+- `application/payment/payment.usecase.ts` — `initiatePayment` 진입 게이트 추가. `expireSince = now-24h` → `findReusablePendingPayment` 호출 → 적중 시 paymentId 재사용 + create 호출 0회, null 시 신규 생성. `paymentGateway.initiatePayment` + `updateExternalTransactionId`는 분기 무관 항상 호출 (Polar SDK 매 호출 신규 URL 발급 정책 정합).
+- `app.module.ts` — `PaymentCleanupJob` providers 등록 (PAY-P0-2 `PaymentReconciliationJob` 패턴 정합)
+
+#### Unchanged
+- DB schema 변경 0건 — `Payment.status` enum 'expired'는 PAY-P0-2에서 도입됨, 본 sprint에서 활용
+- web 변경 0건 — server 도메인만
+
+#### Tests
+- `npm test`: 558/558 PASS (43 suites, 신규 spec +15건 — cleanup job 6 + repo 5 + usecase 4)
+- `npx tsc --noEmit`: 0 errors
+- `npm run build`: 0 errors
+
+#### Docs
+- `docs/api-contract.md` — `POST /payments/initiate` 재사용 정책 박제 (paymentId 동일 반환 + Polar URL 신규 발급)
+- `docs/data-model.md` — Payment status enum 'expired' 사용 명세 (PAY-P0-2 도입 + PAY-P1-3 활용)
+
+#### CERTI_PROJ 차용 결정
+- 부적합: 구독제 매월 5일 배치 vs Grimoire 일회성 + 즉시 재시도 UX → 다른 구조
+- 차용: pending 만료 cron 패턴은 자체 PAY-P0-2 reconciliation 패턴 정합 (외부 인용 0건)
+
+---
+
 ## [0.33.0] - 2026-05-03
 
 ### Feat — Refund 정밀 처리 + 크레딧 환수 트랜잭션 (PAY-P1-1, sprint-pay-p1-1-refund-atomicity)

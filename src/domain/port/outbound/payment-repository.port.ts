@@ -39,6 +39,28 @@ export interface PaymentRepositoryPort {
   expirePayment(paymentId: string): Promise<void>
 
   /**
+   * Sprint PAY-P1-3 — 결제 실패 retry 정책 (정본: `.claude/shared-contracts.md` §14).
+   * 동일 (authorId, productId, status='pending', createdAt > expireSince) Payment 재사용 후보 1건 조회.
+   *
+   * - WHERE: authorId AND productId AND status='pending' AND createdAt > expireSince
+   * - ORDER BY: createdAt DESC (가장 최근 row 우선)
+   * - LIMIT: 1
+   *
+   * 사용처: PaymentUseCase.initiatePayment 진입 게이트
+   * - 적중 시 → 동일 paymentId 재사용 + Polar URL 재발급(updateExternalTransactionId)
+   * - null 반환 시 → 신규 create
+   *
+   * @param authorId 결제 시도 작가 id
+   * @param productId 상품 id
+   * @param expireSince 재사용 가능 기준 시각 (예: now - 24h)
+   */
+  findReusablePendingPayment(
+    authorId: string,
+    productId: string,
+    expireSince: Date,
+  ): Promise<PaymentRecord | null>
+
+  /**
    * 환불 원자 처리 — payment 상태 + 크레딧 환수 + CreditLog 음수 + RefundLog를 단일 트랜잭션으로 실행
    * (Sprint PAY-P1-1, 2026-05-03 — 정본: `.claude/shared-contracts.md` §13)
    *

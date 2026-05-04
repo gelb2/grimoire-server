@@ -68,6 +68,10 @@ describe('PaymentUseCase', () => {
       completePaymentAtomically: jest.fn().mockResolvedValue(undefined),
       updateStatus: jest.fn().mockResolvedValue(undefined),
       refundPaymentAtomically: jest.fn().mockResolvedValue({ actualDeducted: 0, deficitCredits: 0 }),
+      // PAY-P1-3 — findReusablePendingPayment mock (기본: 재사용 후보 0건 → null 반환 = 신규 create 분기)
+      findReusablePendingPayment: jest.fn().mockResolvedValue(null),
+      findPendingPaymentsOlderThan: jest.fn().mockResolvedValue([]),
+      expirePayment: jest.fn().mockResolvedValue(undefined),
     }
     mockPrisma = mockPaymentRepo // alias for backward test compatibility
 
@@ -168,6 +172,148 @@ describe('PaymentUseCase', () => {
 
       expect(mockPrisma.create).not.toHaveBeenCalled()
       expect(mockPaymentGateway.initiatePayment).not.toHaveBeenCalled()
+    })
+
+    // ============================================================================
+    // Sprint PAY-P1-3: 결제 실패 retry 정책 — 24h 이내 pending 재사용 (정본: shared-contracts §14)
+    // ============================================================================
+    describe('PAY-P1-3: 24h 이내 pending Payment 재사용', () => {
+      const reusablePayment = {
+        id: 'pay-reuse-1',
+        authorId: 'author-1',
+        productId: 'credit-5',
+        amount: 2000,
+        credits: 5,
+        status: 'pending',
+        externalTransactionId: 'TRADE-OLD',
+        createdAt: new Date(Date.now() - 5 * 60 * 1000), // 5분 전
+        completedAt: null,
+      }
+
+      it('24h 이내 pending 적중 시 paymentId 재사용 + create 호출 0회 + Polar URL 재발급', async () => {
+        mockPrisma.findReusablePendingPayment.mockResolvedValueOnce(reusablePayment)
+        mockPaymentGateway.initiatePayment.mockResolvedValueOnce({
+          tradeNo: 'TRADE-NEW-2',
+          paymentUrl: 'https://example.com/pay/new-2',
+        })
+
+        const result = await useCase.initiatePayment(
+          'author-1',
+          'credit-5',
+          'https://example.com/return',
+        )
+
+        // 진입 게이트 호출 정합 — (authorId, productId, expireSince=Date 객체)
+        expect(mockPrisma.findReusablePendingPayment).toHaveBeenCalledTimes(1)
+        expect(mockPrisma.findReusablePendingPayment).toHaveBeenCalledWith(
+          'author-1',
+          'credit-5',
+          expect.any(Date),
+        )
+
+        // create는 호출 0회 (재사용)
+        expect(mockPrisma.create).not.toHaveBeenCalled()
+
+        // Polar SDK 1회 호출 (재사용 분기에서도 신규 URL 발급)
+        expect(mockPaymentGateway.initiatePayment).toHaveBeenCalledTimes(1)
+
+        // updateExternalTransactionId 1회 호출 (재사용 row의 tradeNo 갱신)
+        expect(mockPrisma.updateExternalTransactionId).toHaveBeenCalledTimes(1)
+        expect(mockPrisma.updateExternalTransactionId).toHaveBeenCalledWith(
+          'pay-reuse-1',
+          'TRADE-NEW-2',
+        )
+
+        // 응답 paymentId는 재사용 row의 id, paymentUrl/tradeNo는 신규 발급
+        expect(result).toEqual({
+          paymentId: 'pay-reuse-1',
+          paymentUrl: 'https://example.com/pay/new-2',
+          tradeNo: 'TRADE-NEW-2',
+        })
+      })
+
+      it('24h 초과(findReusablePendingPayment null 반환) 시 신규 create + 기존 흐름 유지', async () => {
+        mockPrisma.findReusablePendingPayment.mockResolvedValueOnce(null)
+
+        const result = await useCase.initiatePayment(
+          'author-1',
+          'credit-5',
+          'https://example.com/return',
+        )
+
+        // 진입 게이트 호출 1회
+        expect(mockPrisma.findReusablePendingPayment).toHaveBeenCalledTimes(1)
+
+        // 신규 create 1회 (재사용 후보 없음)
+        expect(mockPrisma.create).toHaveBeenCalledTimes(1)
+        expect(mockPrisma.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            authorId: 'author-1',
+            productId: 'credit-5',
+            amount: 2000,
+            credits: 5,
+          }),
+        )
+
+        // Polar SDK 1회 + updateExternalTransactionId 1회 (기존 흐름)
+        expect(mockPaymentGateway.initiatePayment).toHaveBeenCalledTimes(1)
+        expect(mockPrisma.updateExternalTransactionId).toHaveBeenCalledWith('pay-1', 'TRADE-001')
+
+        expect(result.paymentId).toBe('pay-1')
+      })
+
+      it('expireSince 인자는 now-24h 시각 (시간 정합 검증)', async () => {
+        mockPrisma.findReusablePendingPayment.mockResolvedValueOnce(null)
+
+        const beforeCall = Date.now()
+        await useCase.initiatePayment('author-1', 'credit-5', 'https://example.com/return')
+        const afterCall = Date.now()
+
+        // 호출 인자에서 expireSince 추출 — now - 24h ± 100ms 허용
+        const expireSinceArg = mockPrisma.findReusablePendingPayment.mock.calls[0][2] as Date
+        const expectedMin = beforeCall - 24 * 60 * 60 * 1000 - 100
+        const expectedMax = afterCall - 24 * 60 * 60 * 1000 + 100
+        expect(expireSinceArg.getTime()).toBeGreaterThanOrEqual(expectedMin)
+        expect(expireSinceArg.getTime()).toBeLessThanOrEqual(expectedMax)
+      })
+
+      it('재사용 분기에서도 Polar SDK 호출 + tradeNo 갱신은 1회씩 정확히 발생 (race 시뮬)', async () => {
+        // 사용자가 동일 productId로 재시도하는 케이스를 시뮬 — 첫 호출의 row를 두 번째 호출이 재사용
+        mockPrisma.findReusablePendingPayment
+          .mockResolvedValueOnce(null) // 첫 호출 — 재사용 후보 0건 → 신규 create
+          .mockResolvedValueOnce(reusablePayment) // 두 번째 호출 — 첫 호출의 row 재사용
+
+        mockPaymentGateway.initiatePayment
+          .mockResolvedValueOnce({ tradeNo: 'TRADE-A', paymentUrl: 'url-a' })
+          .mockResolvedValueOnce({ tradeNo: 'TRADE-B', paymentUrl: 'url-b' })
+
+        const r1 = await useCase.initiatePayment('author-1', 'credit-5', 'https://r')
+        const r2 = await useCase.initiatePayment('author-1', 'credit-5', 'https://r')
+
+        // create는 첫 호출에서만 1회
+        expect(mockPrisma.create).toHaveBeenCalledTimes(1)
+
+        // findReusablePendingPayment는 두 번 모두 호출
+        expect(mockPrisma.findReusablePendingPayment).toHaveBeenCalledTimes(2)
+
+        // Polar SDK는 두 번 호출 (재사용 분기에서도 신규 URL)
+        expect(mockPaymentGateway.initiatePayment).toHaveBeenCalledTimes(2)
+
+        // updateExternalTransactionId 두 번 호출 — 첫 호출은 신규 row, 두 번째는 재사용 row 갱신
+        expect(mockPrisma.updateExternalTransactionId).toHaveBeenCalledTimes(2)
+        expect(mockPrisma.updateExternalTransactionId).toHaveBeenNthCalledWith(1, 'pay-1', 'TRADE-A')
+        expect(mockPrisma.updateExternalTransactionId).toHaveBeenNthCalledWith(
+          2,
+          'pay-reuse-1',
+          'TRADE-B',
+        )
+
+        // 첫 호출은 신규 paymentId, 두 번째는 재사용 paymentId
+        expect(r1.paymentId).toBe('pay-1')
+        expect(r2.paymentId).toBe('pay-reuse-1')
+        expect(r2.paymentUrl).toBe('url-b')
+        expect(r2.tradeNo).toBe('TRADE-B')
+      })
     })
   })
 
