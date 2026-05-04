@@ -117,5 +117,87 @@ describe('AuthUseCase', () => {
         authUseCase.login({ email: 'noone@test.com', password: 'pass' }),
       ).rejects.toThrow(UnauthorizedException)
     })
+
+    describe('PAY-P0-3 / EMAIL-P0-3 — slug 로그인 마이그레이션', () => {
+      it('slug + 비번 정상 — findBySlug 분기 → accessToken 반환', async () => {
+        const hash = await bcrypt.hash('password123', 10)
+        mockAuthorRepo.findBySlug.mockResolvedValue({
+          id: 'slug-id',
+          slug: 'deerdevil',
+          name: '사슴악마',
+          email: 'deerdevil@example.com',
+          passwordHash: hash,
+          credits: 5,
+          createdAt: new Date(),
+        })
+
+        const result = await authUseCase.login({ slug: 'deerdevil', password: 'password123' })
+
+        expect(mockAuthorRepo.findBySlug).toHaveBeenCalledWith('deerdevil')
+        expect(mockAuthorRepo.findByEmail).not.toHaveBeenCalled()
+        expect(mockAuthorRepo.findBySlug).toHaveBeenCalledTimes(1)
+        expect(result).toMatchObject({
+          accessToken: 'test-token',
+          author: expect.objectContaining({ slug: 'deerdevil', email: 'deerdevil@example.com' }),
+        })
+      })
+
+      it('slug 미존재 → UnauthorizedException (식별자 노출 회피 — 동일 메시지)', async () => {
+        mockAuthorRepo.findBySlug.mockResolvedValue(null)
+
+        await expect(authUseCase.login({ slug: 'no-such-slug', password: 'pass' })).rejects.toThrow(
+          UnauthorizedException,
+        )
+        expect(mockAuthorRepo.findBySlug).toHaveBeenCalledWith('no-such-slug')
+      })
+
+      it('email + slug 동시 박제 → BadRequestException (XOR 강제)', async () => {
+        await expect(
+          authUseCase.login({ email: 'a@b.com', slug: 'a', password: 'pass' }),
+        ).rejects.toThrow(BadRequestException)
+        expect(mockAuthorRepo.findByEmail).not.toHaveBeenCalled()
+        expect(mockAuthorRepo.findBySlug).not.toHaveBeenCalled()
+      })
+
+      it('email + slug 둘 다 미박제 → BadRequestException (XOR 강제)', async () => {
+        await expect(authUseCase.login({ password: 'pass' } as { password: string })).rejects.toThrow(
+          BadRequestException,
+        )
+        expect(mockAuthorRepo.findByEmail).not.toHaveBeenCalled()
+        expect(mockAuthorRepo.findBySlug).not.toHaveBeenCalled()
+      })
+
+      it('email 후향호환 회귀 — 기존 email 로그인은 findByEmail 분기 (AC-4)', async () => {
+        const hash = await bcrypt.hash('legacy-pass', 10)
+        mockAuthorRepo.findByEmail.mockResolvedValue({
+          id: 'legacy-id',
+          slug: 'legacy',
+          email: 'legacy@example.com',
+          passwordHash: hash,
+        })
+
+        const result = await authUseCase.login({ email: 'legacy@example.com', password: 'legacy-pass' })
+
+        expect(mockAuthorRepo.findByEmail).toHaveBeenCalledWith('legacy@example.com')
+        expect(mockAuthorRepo.findByEmail).toHaveBeenCalledTimes(1)
+        expect(mockAuthorRepo.findBySlug).not.toHaveBeenCalled()
+        expect(result).toMatchObject({
+          accessToken: 'test-token',
+          author: expect.objectContaining({ email: 'legacy@example.com' }),
+        })
+      })
+
+      it('slug 박제 + 비번 불일치 → UnauthorizedException', async () => {
+        const hash = await bcrypt.hash('correct', 10)
+        mockAuthorRepo.findBySlug.mockResolvedValue({
+          id: 'slug-id',
+          passwordHash: hash,
+        })
+
+        await expect(
+          authUseCase.login({ slug: 'deerdevil', password: 'wrong' }),
+        ).rejects.toThrow(UnauthorizedException)
+      })
+    })
   })
 })
