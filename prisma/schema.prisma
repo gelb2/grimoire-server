@@ -433,3 +433,23 @@ model RefundLog {
   @@index([paymentId])
   @@map("refund_logs")
 }
+
+/// PAY-P2-2: webhook 처리 실패 시 재시도 큐 (Postgres 기반 DLQ — 외부 인프라 의존 0건)
+/// - eventId: Polar webhook-id (멱등성 통합 — webhook_events.eventId @unique 정합)
+/// - payload: NormalizedWebhookEvent 전체 박제 (재처리 시 동일 페이로드 재호출)
+/// - retryCount: 누적 재시도 횟수 (0~10, 10 초과 시 permanent_failed 박제)
+/// - lastError: 마지막 실패 메시지 (디버깅용)
+/// - nextRetryAt: 다음 재시도 시각 — exp backoff (1m → 5m → 30m → 2h → 12h → 24h)
+/// 정본: `.claude/shared-contracts.md` §18 WebhookDLQ
+model WebhookRetryQueue {
+  id          String   @id @default(uuid())
+  eventId     String   @unique @map("event_id")                         // Polar webhook-id 멱등성
+  payload     Json                                                        // NormalizedWebhookEvent 전체
+  retryCount  Int      @default(0) @map("retry_count")
+  lastError   String?  @map("last_error")
+  nextRetryAt DateTime @map("next_retry_at") @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([nextRetryAt])
+  @@map("webhook_retry_queues")
+}

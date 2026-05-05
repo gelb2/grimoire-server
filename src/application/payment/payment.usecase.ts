@@ -1,7 +1,8 @@
-import { Injectable, Inject, BadRequestException, Logger } from '@nestjs/common'
+import { Injectable, Inject, BadRequestException, Logger, Optional } from '@nestjs/common'
 import { PaymentRepositoryPort } from '@domain/port/outbound/payment-repository.port'
 import { PaymentGatewayPort } from '@domain/port/outbound/payment-gateway.port'
 import { WebhookEventRepositoryPort } from '@domain/port/outbound/webhook-event-repository.port'
+import { WebhookRetryQueueRepositoryPort } from '@domain/port/outbound/webhook-retry-queue-repository.port'
 import { CREDIT_PRODUCTS, Product } from '@domain/model/config'
 import { RefundPaymentUseCase } from './refund-payment.usecase'
 
@@ -11,13 +12,41 @@ export { CREDIT_PRODUCTS, type Product }
 @Injectable()
 export class PaymentUseCase {
   private readonly logger = new Logger(PaymentUseCase.name)
+  /** PAY-P2-2 첫 재시도 백오프 — 1분 후 (이후 WebhookRetryJob이 백오프 계산) */
+  private static readonly INITIAL_RETRY_DELAY_MS = 60_000
 
   constructor(
     @Inject('PaymentRepositoryPort') private readonly paymentRepo: PaymentRepositoryPort,
     @Inject('PaymentGatewayPort') private readonly paymentGateway: PaymentGatewayPort,
     @Inject('WebhookEventRepositoryPort') private readonly webhookEventRepo: WebhookEventRepositoryPort,
     private readonly refundPaymentUseCase: RefundPaymentUseCase,
+    /**
+     * PAY-P2-2 — webhook 처리 실패 시 재시도 큐 박제. Optional (선택 의존)이므로
+     * 미주입 시 기존 동작 (Polar 자체 retry만 의존) 보존.
+     */
+    @Optional()
+    @Inject('WebhookRetryQueueRepositoryPort')
+    private readonly retryQueueRepo: WebhookRetryQueueRepositoryPort | null = null,
   ) {}
+
+  /**
+   * webhook 처리 실패 시 재시도 큐에 박제 (PAY-P2-2).
+   * eventId @unique이므로 중복 박제 시 P2002 → null 반환 (재처리 시점에는 markRetry로 retryCount 증가).
+   * retryQueueRepo 미주입 시 무동작 (회귀 보존).
+   */
+  private async enqueueWebhookRetry(event: object, eventId: string): Promise<void> {
+    if (!this.retryQueueRepo) return
+    try {
+      await this.retryQueueRepo.upsert({
+        eventId,
+        payload: event,
+        nextRetryAt: new Date(Date.now() + PaymentUseCase.INITIAL_RETRY_DELAY_MS),
+      })
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      this.logger.warn(`webhook retry queue 박제 실패 (eventId=${eventId}): ${msg}`)
+    }
+  }
 
   /** 상품 목록 조회 */
   getProducts() {
@@ -82,14 +111,36 @@ export class PaymentUseCase {
    * 4. completePaymentAtomically (성공) / updateStatus (실패/취소)
    * 5. webhookEventRepo.createIfAbsent — race 차단 (P2002 → null로 안전 skip)
    */
-  async processWebhook(rawBody: Buffer | string, headers: Record<string, string>) {
+  async processWebhook(
+    rawBody: Buffer | string,
+    headers: Record<string, string>,
+  ): Promise<{
+    processed: boolean
+    credits?: number
+    deficitCredits?: number
+    reason?: string
+  }> {
     const event = this.paymentGateway.verifyAndParseWebhook(rawBody, headers)
     if (!event) return { processed: false, reason: 'invalid_or_ignored' }
+    return await this.processNormalizedWebhook(event)
+  }
 
+  /**
+   * NormalizedWebhookEvent 직접 처리 — PAY-P2-2 WebhookRetryJob에서 재처리 시 호출.
+   * verify 단계는 이미 첫 진입 시 통과했으므로 우회.
+   */
+  async processNormalizedWebhook(
+    event: import('@domain/port/outbound/payment-gateway.port').NormalizedWebhookEvent,
+  ): Promise<{
+    processed: boolean
+    credits?: number
+    deficitCredits?: number
+    reason?: string
+  }> {
     // 1차 게이트: eventId 멱등성 — DB에 이미 박제된 event는 즉시 skip (completePaymentAtomically 0회)
     const existing = await this.webhookEventRepo.findByEventId(event.eventId)
-    if (existing) {
-      this.logger.warn(`중복 webhook 감지 (eventId=${event.eventId}, status=${existing.status}) — skip`)
+    if (existing && existing.status === 'processed') {
+      this.logger.warn(`중복 webhook 감지 (eventId=${event.eventId}, status=processed) — skip`)
       return { processed: false, reason: 'duplicate_event' }
     }
 
@@ -124,7 +175,7 @@ export class PaymentUseCase {
         // 원자 처리: payment 상태 + 크레딧 증가 + 로그 기록 (단일 트랜잭션)
         await this.paymentRepo.completePaymentAtomically(payment.id, payment.authorId, payment.credits, payment.productId)
       } catch (e: unknown) {
-        // 처리 중 오류 — webhook event를 'failed'로 박제 (Polar 재전송 시 다른 eventId로 다시 시도 가능)
+        // 처리 중 오류 — webhook event를 'failed'로 박제 + PAY-P2-2 retry queue 박제 (멱등성 — eventId @unique)
         const message = e instanceof Error ? e.message : String(e)
         await this.webhookEventRepo.createIfAbsent({
           eventId: event.eventId,
@@ -134,6 +185,8 @@ export class PaymentUseCase {
           status: 'failed',
           errorMessage: message.slice(0, 500),
         })
+        // PAY-P2-2 — DLQ 박제 (WebhookRetryJob @Cron 5분이 재처리)
+        await this.enqueueWebhookRetry(event as unknown as object, event.eventId)
         throw e
       }
 
@@ -166,7 +219,7 @@ export class PaymentUseCase {
         })
         deficitCredits = result.deficitCredits
       } catch (e: unknown) {
-        // 환수 실패 — webhook event를 'failed'로 박제 (Polar 재전송 시 다른 eventId 시도)
+        // 환수 실패 — webhook event를 'failed'로 박제 + PAY-P2-2 retry queue 박제
         const message = e instanceof Error ? e.message : String(e)
         await this.webhookEventRepo.createIfAbsent({
           eventId: event.eventId,
@@ -176,6 +229,8 @@ export class PaymentUseCase {
           status: 'failed',
           errorMessage: message.slice(0, 500),
         })
+        // PAY-P2-2 — DLQ 박제 (WebhookRetryJob @Cron 5분이 재처리)
+        await this.enqueueWebhookRetry(event as unknown as object, event.eventId)
         throw e
       }
 

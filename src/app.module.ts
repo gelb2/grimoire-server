@@ -22,6 +22,7 @@ import { WorkManagementUseCase } from '@application/work/work-management.usecase
 import { PaymentUseCase } from '@application/payment/payment.usecase'
 import { PaymentReconciliationJob } from '@application/payment/payment-reconciliation.job'
 import { PaymentCleanupJob } from '@application/payment/payment-cleanup.job'
+import { WebhookRetryJob } from '@application/payment/webhook-retry.job'
 import { RefundPaymentUseCase } from '@application/payment/refund-payment.usecase'
 import { ReaderUseCase } from '@application/reader/reader.usecase'
 import { DiscoveryUseCase } from '@application/discovery/discovery.usecase'
@@ -69,6 +70,7 @@ import { PrismaSignupHistoryRepository } from '@adapter/outbound/persistence/pri
 import { PrismaAdminRepository } from '@adapter/outbound/persistence/prisma-admin.repository'
 import { PrismaPaymentRepository } from '@adapter/outbound/persistence/prisma-payment.repository'
 import { PrismaWebhookEventRepository } from '@adapter/outbound/persistence/prisma-webhook-event.repository'
+import { PrismaWebhookRetryQueueRepository } from '@adapter/outbound/persistence/prisma-webhook-retry-queue.repository'
 import { PrismaReconciliationCheckpointRepository } from '@adapter/outbound/persistence/prisma-reconciliation-checkpoint.repository'
 import { PrismaAnalysisReportRepository } from '@adapter/outbound/persistence/prisma-analysis-report.repository'
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
@@ -130,6 +132,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     PaymentUseCase,
     PaymentReconciliationJob,
     PaymentCleanupJob,
+    WebhookRetryJob,
     RefundPaymentUseCase,
     ReaderUseCase,
     DiscoveryUseCase,
@@ -168,6 +171,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'AdminRepositoryPort', useClass: PrismaAdminRepository },
     { provide: 'PaymentRepositoryPort', useClass: PrismaPaymentRepository },
     { provide: 'WebhookEventRepositoryPort', useClass: PrismaWebhookEventRepository },
+    { provide: 'WebhookRetryQueueRepositoryPort', useClass: PrismaWebhookRetryQueueRepository },
     { provide: 'ReconciliationCheckpointRepositoryPort', useClass: PrismaReconciliationCheckpointRepository },
     { provide: 'AnalysisReportRepositoryPort', useClass: PrismaAnalysisReportRepository },
   ],
