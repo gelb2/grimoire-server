@@ -100,19 +100,31 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
 
   /**
    * 환불 원자 처리 — payment.status='refunded' + Author.credits decrement(0 fix) + CreditLog(음수) + RefundLog 박제
-   * (Sprint PAY-P1-1, 2026-05-03 — 정본: `.claude/shared-contracts.md` §13)
+   * (Sprint PAY-P1-1 신설, PAY-P2-1 부분 환불 비율 계산 보강 — 정본: `.claude/shared-contracts.md` §13 + §17)
    *
    * $transaction 내부 처리 순서:
-   *   1. tx.payment.update — status='refunded'
-   *   2. tx.author.findUnique — 현재 잔액 조회
-   *   3. actualDeducted = Math.min(currentBalance, credits) (0 fix 보장)
-   *   4. deficitCredits = Math.max(0, credits - currentBalance)
-   *   5. tx.author.update — credits decrement(actualDeducted)
-   *   6. tx.creditLog.create — amount=-actualDeducted (음수, 대칭)
-   *   7. tx.refundLog.create — paymentId/amount/credits/deficitCredits/reason/source
+   *   1. tx.payment.findUniqueOrThrow — payment.amount 조회 (부분 환불 비율 계산용)
+   *   2. validation: refundedAmount ≤ payment.amount + payment.amount > 0
+   *   3. ratio = refundedAmount / payment.amount (0 < ratio ≤ 1.0)
+   *   4. proportionalCredits = Math.floor(credits * ratio) — 사용자 우호 floor 정책
+   *   5. tx.payment.update — status='refunded' (전액 시) | 'partial_refunded' (부분 시)
+   *   6. tx.author.findUnique — 현재 잔액 조회
+   *   7. actualDeducted = Math.min(currentBalance, proportionalCredits) (0 fix 보장)
+   *   8. deficitCredits = Math.max(0, proportionalCredits - currentBalance)
+   *   9. tx.author.update — credits decrement(actualDeducted)
+   *  10. tx.creditLog.create — amount=-actualDeducted (음수, 대칭)
+   *  11. tx.refundLog.create — paymentId/amount/credits/deficitCredits/reason/source
    *
-   * 정상 환수 (Author.credits >= credits): actualDeducted=credits, deficitCredits=0
-   * deficit 환수 (Author.credits < credits): actualDeducted=잔액, deficitCredits=credits-잔액
+   * 비율 정책 (PAY-P2-1):
+   *   - ratio === 1.0 (전액 환불): proportionalCredits = credits (PAY-P1-1 회귀 보존)
+   *   - 0 < ratio < 1.0 (부분 환불): proportionalCredits = Math.floor(credits * ratio)
+   *   - 반올림: Math.floor 고정 (소수점 버림으로 차감 ↓ — 사용자 우호)
+   *   - refundedAmount > payment.amount: BadRequestException (validation)
+   *   - payment.amount === 0: BadRequestException (free 결제 환불 무의미)
+   *
+   * 분기:
+   *   정상 환수 (잔액 ≥ proportionalCredits): actualDeducted=proportionalCredits, deficitCredits=0
+   *   deficit 환수 (잔액 < proportionalCredits): actualDeducted=잔액, deficitCredits=proportionalCredits-잔액
    */
   async refundPaymentAtomically(input: {
     paymentId: string
@@ -124,17 +136,46 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
   }): Promise<{
     actualDeducted: number
     deficitCredits: number
+    proportionalCredits: number
+    isPartial: boolean
   }> {
     const { paymentId, authorId, credits, refundedAmount, reason, source } = input
 
     return await this.prisma.$transaction(async (tx) => {
-      // 1. Payment 상태 → refunded
+      // 1. Payment 조회 — 원래 결제 금액 확인 (부분 환불 비율 계산용)
+      const payment = await tx.payment.findUnique({
+        where: { id: paymentId },
+        select: { amount: true, status: true },
+      })
+      if (!payment) {
+        throw new Error(`Payment not found: ${paymentId}`)
+      }
+
+      // 2. validation — refundedAmount/payment.amount 정합
+      if (payment.amount <= 0) {
+        throw new Error(`환불 불가 — payment.amount=${payment.amount} (free 결제 또는 비정상 데이터)`)
+      }
+      if (refundedAmount <= 0) {
+        throw new Error(`환불 금액은 양수여야 합니다: ${refundedAmount}`)
+      }
+      if (refundedAmount > payment.amount) {
+        throw new Error(
+          `환불 금액(${refundedAmount})이 결제 금액(${payment.amount})을 초과할 수 없습니다`,
+        )
+      }
+
+      // 3-4. 비율 + 비례 크레딧 계산 (PAY-P2-1)
+      const ratio = refundedAmount / payment.amount
+      const isPartial = ratio < 1.0
+      const proportionalCredits = isPartial ? Math.floor(credits * ratio) : credits
+
+      // 5. Payment 상태 — 전액 환불은 'refunded', 부분 환불은 'partial_refunded'
       await tx.payment.update({
         where: { id: paymentId },
-        data: { status: 'refunded' },
+        data: { status: isPartial ? 'partial_refunded' : 'refunded' },
       })
 
-      // 2. 현재 Author 잔액 조회 (race 차단 — 동일 $transaction 내 일관성 보장)
+      // 6. 현재 Author 잔액 조회 (race 차단 — 동일 $transaction 내 일관성 보장)
       const author = await tx.author.findUnique({
         where: { id: authorId },
         select: { credits: true },
@@ -143,27 +184,30 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
         throw new Error(`Author not found: ${authorId}`)
       }
 
-      // 3. actualDeducted / deficitCredits 계산 — 음수 잔액 절대 차단
+      // 7. actualDeducted / deficitCredits 계산 — 음수 잔액 절대 차단
       const currentBalance = author.credits
-      const actualDeducted = Math.min(currentBalance, credits)
-      const deficitCredits = Math.max(0, credits - currentBalance)
+      const actualDeducted = Math.min(currentBalance, proportionalCredits)
+      const deficitCredits = Math.max(0, proportionalCredits - currentBalance)
 
-      // 4. Author.credits decrement (0 fix 보장)
-      await tx.author.update({
-        where: { id: authorId },
-        data: { credits: { decrement: actualDeducted } },
-      })
+      // 8. Author.credits decrement (0 fix 보장)
+      if (actualDeducted > 0) {
+        await tx.author.update({
+          where: { id: authorId },
+          data: { credits: { decrement: actualDeducted } },
+        })
+      }
 
-      // 5. CreditLog 음수 박제 (대칭 — completePaymentAtomically의 양수와 정합)
+      // 9. CreditLog 음수 박제 (대칭 — completePaymentAtomically의 양수와 정합)
+      // 0 차감 시도도 박제 (deficit 추적용)
       await tx.creditLog.create({
         data: {
           authorId,
           amount: -actualDeducted,
-          reason: `refund_${paymentId}_${source}`,
+          reason: `refund_${paymentId}_${source}${isPartial ? '_partial' : ''}`,
         },
       })
 
-      // 6. RefundLog 박제
+      // 10. RefundLog 박제
       await tx.refundLog.create({
         data: {
           paymentId,
@@ -175,7 +219,7 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
         },
       })
 
-      return { actualDeducted, deficitCredits }
+      return { actualDeducted, deficitCredits, proportionalCredits, isPartial }
     })
   }
 }

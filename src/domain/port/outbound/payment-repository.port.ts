@@ -62,19 +62,30 @@ export interface PaymentRepositoryPort {
 
   /**
    * 환불 원자 처리 — payment 상태 + 크레딧 환수 + CreditLog 음수 + RefundLog를 단일 트랜잭션으로 실행
-   * (Sprint PAY-P1-1, 2026-05-03 — 정본: `.claude/shared-contracts.md` §13)
+   * (Sprint PAY-P1-1 신설, PAY-P2-1 부분 환불 비율 보강 — 정본: `.claude/shared-contracts.md` §13 + §17)
+   *
+   * 부분 환불 비율 정책 (PAY-P2-1):
+   * - ratio = refundedAmount / payment.amount (transaction 내부 조회)
+   * - proportionalCredits = ratio === 1.0 ? credits : Math.floor(credits * ratio)
+   * - Math.floor 고정 (사용자 우호 — 차감 ↓)
+   * - refundedAmount > payment.amount: throw (validation)
+   * - payment.amount === 0: throw (free 결제 환불 무의미)
    *
    * 분기:
-   * - Author.credits >= credits: 정상 환수 (actualDeducted=credits, deficitCredits=0)
-   * - Author.credits < credits: 0 fix (actualDeducted=잔액, deficitCredits=credits-잔액). 음수 절대 차단.
+   * - Author.credits >= proportionalCredits: 정상 환수 (actualDeducted=proportionalCredits, deficitCredits=0)
+   * - Author.credits < proportionalCredits: 0 fix (actualDeducted=잔액, deficitCredits=proportionalCredits-잔액). 음수 절대 차단.
+   *
+   * Payment.status 갱신:
+   * - 전액 환불 (ratio === 1.0): 'refunded'
+   * - 부분 환불 (ratio < 1.0): 'partial_refunded'
    *
    * @param input.paymentId 환불 대상 Payment id
    * @param input.authorId 환수 대상 Author id
-   * @param input.credits 환수할 크레딧 (양수 입력)
-   * @param input.refundedAmount PG 환불 금액 (KRW)
+   * @param input.credits 원래 결제 적립 크레딧 (양수 — 비율로 비례 차감)
+   * @param input.refundedAmount PG 환불 금액 (KRW) — 전액 시 payment.amount, 부분 시 그 미만
    * @param input.reason 환불 사유 (예: 'polar_webhook_order.refunded')
    * @param input.source 'webhook' | 'manual'
-   * @returns actualDeducted (실제 차감 크레딧), deficitCredits (잔액 부족분)
+   * @returns actualDeducted, deficitCredits, proportionalCredits, isPartial
    */
   refundPaymentAtomically(input: {
     paymentId: string
@@ -86,5 +97,7 @@ export interface PaymentRepositoryPort {
   }): Promise<{
     actualDeducted: number
     deficitCredits: number
+    proportionalCredits: number
+    isPartial: boolean
   }>
 }

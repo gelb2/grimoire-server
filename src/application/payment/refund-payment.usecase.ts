@@ -47,19 +47,29 @@ export class RefundPaymentUseCase {
   }): Promise<{
     actualDeducted: number
     deficitCredits: number
+    proportionalCredits: number
+    isPartial: boolean
   }> {
     const { paymentId, authorId, credits, refundedAmount, reason, source } = input
 
     if (credits < 0) {
       throw new BadRequestException(`환불 크레딧은 음수일 수 없습니다: ${credits}`)
     }
+    if (refundedAmount <= 0) {
+      throw new BadRequestException(`환불 금액은 양수여야 합니다: ${refundedAmount}`)
+    }
 
     // L2 게이트 — payment 사전 검증은 호출자(payment.usecase)가 수행 (status='completed' 검증 후 본 usecase 호출).
-    // 본 usecase는 $transaction 내부 update 시 row가 없거나 이미 refunded면 Prisma가 throw → catch 후 webhook event 'failed' 박제.
-    // (P2-1 부분 환불 시 paymentId 직접 조회 로직 추가 검토 — 본 Sprint OUT)
+    // PAY-P2-1: $transaction 내부에서 payment.amount 조회 + refundedAmount > payment.amount 시 throw.
+    // 본 usecase는 그 throw를 catch → 호출자(payment.usecase)에 위임 → webhook event 'failed' 박제.
 
-    // 환수 트랜잭션 실행 ($transaction 내부에서 Payment.status='refunded' 갱신 — race 차단)
-    let result: { actualDeducted: number; deficitCredits: number }
+    // 환수 트랜잭션 실행 ($transaction 내부에서 비율 계산 + Payment.status 갱신 — race 차단)
+    let result: {
+      actualDeducted: number
+      deficitCredits: number
+      proportionalCredits: number
+      isPartial: boolean
+    }
     try {
       result = await this.paymentRepo.refundPaymentAtomically({
         paymentId,
@@ -72,30 +82,41 @@ export class RefundPaymentUseCase {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e)
       this.logger.error(
-        `환불 트랜잭션 실패 (paymentId=${paymentId}, authorId=${authorId}, credits=${credits}): ${message}`,
+        `환불 트랜잭션 실패 (paymentId=${paymentId}, authorId=${authorId}, credits=${credits}, refundedAmount=${refundedAmount}): ${message}`,
       )
-      // payment 미존재 / 이미 갱신된 row / DB 장애 등 — 호출자(payment.usecase)에 throw 위임 → webhook event 'failed' 박제
+      // payment 미존재 / refundedAmount > payment.amount / 이미 갱신된 row / DB 장애 등
+      // 호출자(payment.usecase)에 throw 위임 → webhook event 'failed' 박제
       throw e
     }
 
-    const { actualDeducted, deficitCredits } = result
+    const { actualDeducted, deficitCredits, proportionalCredits, isPartial } = result
 
     // AdminAuditLog 후행 (트랜잭션 외 — DB commit 후 박제. 실패 시 logger.error만, throw 0)
+    // action 분기 (PAY-P2-1):
+    //   - 부분 환불 + deficit: 'refund_partial_deficit'
+    //   - 부분 환불 정상: 'refund_partial'
+    //   - 전액 환불 + deficit: 'refund_deficit' (PAY-P1-1 회귀 보존)
+    //   - 전액 환불 정상: 'refund_normal' (PAY-P1-1 회귀 보존)
+    const action = isPartial
+      ? deficitCredits > 0
+        ? 'refund_partial_deficit'
+        : 'refund_partial'
+      : deficitCredits > 0
+        ? 'refund_deficit'
+        : 'refund_normal'
+
     try {
-      await this.auditLogService.log(
-        'system_refund',
-        deficitCredits > 0 ? 'refund_deficit' : 'refund_normal',
-        paymentId,
-        {
-          authorId,
-          refundedAmount,
-          creditsRequested: credits,
-          creditsActuallyDeducted: actualDeducted,
-          deficitCredits,
-          reason,
-          source,
-        },
-      )
+      await this.auditLogService.log('system_refund', action, paymentId, {
+        authorId,
+        refundedAmount,
+        creditsRequested: credits,
+        proportionalCredits,
+        creditsActuallyDeducted: actualDeducted,
+        deficitCredits,
+        isPartial,
+        reason,
+        source,
+      })
     } catch (e: unknown) {
       // AuditLog 실패는 환수 트랜잭션 결과를 무효화하지 않음 — logger 경고만
       const message = e instanceof Error ? e.message : String(e)
@@ -104,12 +125,17 @@ export class RefundPaymentUseCase {
       )
     }
 
+    if (isPartial) {
+      this.logger.log(
+        `부분 환불 (paymentId=${paymentId}, authorId=${authorId}, refundedAmount=${refundedAmount}, proportionalCredits=${proportionalCredits}, deducted=${actualDeducted})`,
+      )
+    }
     if (deficitCredits > 0) {
       this.logger.warn(
-        `환불 deficit 발생 (paymentId=${paymentId}, authorId=${authorId}, requested=${credits}, deducted=${actualDeducted}, deficit=${deficitCredits})`,
+        `환불 deficit 발생 (paymentId=${paymentId}, authorId=${authorId}, proportionalCredits=${proportionalCredits}, deducted=${actualDeducted}, deficit=${deficitCredits})`,
       )
     }
 
-    return { actualDeducted, deficitCredits }
+    return { actualDeducted, deficitCredits, proportionalCredits, isPartial }
   }
 }

@@ -50,11 +50,13 @@ describe('RefundPaymentUseCase', () => {
     )
   })
 
-  describe('정상 환수 (Author.credits >= credits)', () => {
+  describe('정상 환수 (Author.credits >= credits, 전액 환불 — PAY-P1-1 회귀 보존)', () => {
     it('credits=50 보유 시 50 decrement + deficitCredits=0 + auditLog action=refund_normal 박제', async () => {
       mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
         actualDeducted: 50,
         deficitCredits: 0,
+        proportionalCredits: 50,
+        isPartial: false,
       })
 
       const result = await useCase.execute(baseInput)
@@ -70,7 +72,7 @@ describe('RefundPaymentUseCase', () => {
         source: 'webhook',
       })
 
-      // AuditLog — 정상 분기
+      // AuditLog — 정상 분기 (PAY-P1-1 회귀 보존)
       expect(mockAuditLogService.log).toHaveBeenCalledTimes(1)
       expect(mockAuditLogService.log).toHaveBeenCalledWith(
         'system_refund',
@@ -82,19 +84,28 @@ describe('RefundPaymentUseCase', () => {
           creditsRequested: 50,
           creditsActuallyDeducted: 50,
           deficitCredits: 0,
+          isPartial: false,
+          proportionalCredits: 50,
           reason: 'polar_webhook_order.refunded',
           source: 'webhook',
         }),
       )
 
-      // 반환값 검증
-      expect(result).toEqual({ actualDeducted: 50, deficitCredits: 0 })
+      // 반환값 검증 — PAY-P2-1 4 필드 확장
+      expect(result).toEqual({
+        actualDeducted: 50,
+        deficitCredits: 0,
+        proportionalCredits: 50,
+        isPartial: false,
+      })
     })
 
     it('source=manual 시 reason은 그대로 박제되고 auditLog detail.source=manual로 박제', async () => {
       mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
         actualDeducted: 30,
         deficitCredits: 0,
+        proportionalCredits: 30,
+        isPartial: false,
       })
 
       await useCase.execute({
@@ -121,11 +132,13 @@ describe('RefundPaymentUseCase', () => {
     })
   })
 
-  describe('deficit 환수 (Author.credits < credits)', () => {
+  describe('deficit 환수 (Author.credits < credits, 전액 환불 — PAY-P1-1 회귀 보존)', () => {
     it('credits=50 요청 + 잔액 30 시 actualDeducted=30 + deficitCredits=20 + action=refund_deficit', async () => {
       mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
         actualDeducted: 30,
         deficitCredits: 20,
+        proportionalCredits: 50,
+        isPartial: false,
       })
 
       const result = await useCase.execute(baseInput)
@@ -135,7 +148,7 @@ describe('RefundPaymentUseCase', () => {
         expect.objectContaining({ credits: 50 }),
       )
 
-      // AuditLog — deficit 분기 (action 식별자 + detail 박제)
+      // AuditLog — deficit 분기 (action 식별자 + detail 박제, PAY-P1-1 회귀 보존)
       expect(mockAuditLogService.log).toHaveBeenCalledWith(
         'system_refund',
         'refund_deficit',
@@ -144,23 +157,32 @@ describe('RefundPaymentUseCase', () => {
           creditsRequested: 50,
           creditsActuallyDeducted: 30,
           deficitCredits: 20,
+          isPartial: false,
         }),
       )
 
       // 반환값 — deficit 운영자 추적용
       expect(result.actualDeducted).toBe(30)
       expect(result.deficitCredits).toBe(20)
+      expect(result.isPartial).toBe(false)
     })
 
     it('잔액 0 시 actualDeducted=0 + deficitCredits=credits 전체 + action=refund_deficit', async () => {
       mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
         actualDeducted: 0,
         deficitCredits: 50,
+        proportionalCredits: 50,
+        isPartial: false,
       })
 
       const result = await useCase.execute(baseInput)
 
-      expect(result).toEqual({ actualDeducted: 0, deficitCredits: 50 })
+      expect(result).toEqual({
+        actualDeducted: 0,
+        deficitCredits: 50,
+        proportionalCredits: 50,
+        isPartial: false,
+      })
       expect(mockAuditLogService.log).toHaveBeenCalledWith(
         'system_refund',
         'refund_deficit',
@@ -175,6 +197,8 @@ describe('RefundPaymentUseCase', () => {
       mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
         actualDeducted: 50,
         deficitCredits: 0,
+        proportionalCredits: 50,
+        isPartial: false,
       })
 
       await useCase.execute(baseInput)
@@ -202,6 +226,18 @@ describe('RefundPaymentUseCase', () => {
       expect(mockAuditLogService.log).not.toHaveBeenCalled()
     })
 
+    it('refundedAmount 0 또는 음수 입력 시 BadRequestException (PAY-P2-1 validation)', async () => {
+      await expect(
+        useCase.execute({ ...baseInput, refundedAmount: 0 }),
+      ).rejects.toThrow(BadRequestException)
+      await expect(
+        useCase.execute({ ...baseInput, refundedAmount: -100 }),
+      ).rejects.toThrow(BadRequestException)
+
+      expect(mockPaymentRepo.refundPaymentAtomically).not.toHaveBeenCalled()
+      expect(mockAuditLogService.log).not.toHaveBeenCalled()
+    })
+
     it('repository 환수 트랜잭션 실패 시 throw 위임 + auditLog 호출 0회 (성공 박제 차단)', async () => {
       mockPaymentRepo.refundPaymentAtomically.mockRejectedValueOnce(
         new Error('payment not found or already refunded'),
@@ -218,13 +254,20 @@ describe('RefundPaymentUseCase', () => {
       mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
         actualDeducted: 50,
         deficitCredits: 0,
+        proportionalCredits: 50,
+        isPartial: false,
       })
       mockAuditLogService.log.mockRejectedValueOnce(new Error('audit_log_db_down'))
 
       // AuditLog 실패는 throw하지 않음 — 환수는 이미 commit됨
       const result = await useCase.execute(baseInput)
 
-      expect(result).toEqual({ actualDeducted: 50, deficitCredits: 0 })
+      expect(result).toEqual({
+        actualDeducted: 50,
+        deficitCredits: 0,
+        proportionalCredits: 50,
+        isPartial: false,
+      })
       expect(mockPaymentRepo.refundPaymentAtomically).toHaveBeenCalledTimes(1)
       expect(mockAuditLogService.log).toHaveBeenCalledTimes(1)
     })
@@ -235,6 +278,8 @@ describe('RefundPaymentUseCase', () => {
       mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
         actualDeducted: 50,
         deficitCredits: 0,
+        proportionalCredits: 50,
+        isPartial: false,
       })
 
       await useCase.execute({
@@ -248,6 +293,159 @@ describe('RefundPaymentUseCase', () => {
       expect(mockAuditLogService.log.mock.calls[0][3]).toEqual(
         expect.objectContaining({ reason: 'polar_webhook_order.refunded_dispute_resolved' }),
       )
+    })
+  })
+
+  // PAY-P2-1 부분 환불 (Partial Refund) 신규 spec 6 it
+  describe('부분 환불 (PAY-P2-1)', () => {
+    it('부분 환불 비율 50% (refundedAmount=2500, payment.amount=5000) — 크레딧 비례 25 차감 + action=refund_partial', async () => {
+      // repository가 비율 계산해서 proportionalCredits=25 반환 (Math.floor(50 * 0.5) = 25)
+      mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
+        actualDeducted: 25,
+        deficitCredits: 0,
+        proportionalCredits: 25,
+        isPartial: true,
+      })
+
+      const result = await useCase.execute({
+        ...baseInput,
+        refundedAmount: 2500, // 50% 부분 환불
+      })
+
+      expect(result.isPartial).toBe(true)
+      expect(result.proportionalCredits).toBe(25)
+      expect(result.actualDeducted).toBe(25)
+      expect(result.deficitCredits).toBe(0)
+
+      // AuditLog action — 부분 환불 정상
+      expect(mockAuditLogService.log).toHaveBeenCalledWith(
+        'system_refund',
+        'refund_partial',
+        'pay-1',
+        expect.objectContaining({
+          refundedAmount: 2500,
+          creditsRequested: 50,
+          proportionalCredits: 25,
+          creditsActuallyDeducted: 25,
+          isPartial: true,
+        }),
+      )
+    })
+
+    it('부분 환불 + 잔액 부족 deficit — proportionalCredits=25, 잔액 10 → actualDeducted=10 + deficit=15 + action=refund_partial_deficit', async () => {
+      mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
+        actualDeducted: 10,
+        deficitCredits: 15,
+        proportionalCredits: 25,
+        isPartial: true,
+      })
+
+      const result = await useCase.execute({
+        ...baseInput,
+        refundedAmount: 2500,
+      })
+
+      expect(result).toEqual({
+        actualDeducted: 10,
+        deficitCredits: 15,
+        proportionalCredits: 25,
+        isPartial: true,
+      })
+
+      // action='refund_partial_deficit'
+      expect(mockAuditLogService.log).toHaveBeenCalledWith(
+        'system_refund',
+        'refund_partial_deficit',
+        'pay-1',
+        expect.objectContaining({
+          isPartial: true,
+          deficitCredits: 15,
+          proportionalCredits: 25,
+          creditsActuallyDeducted: 10,
+        }),
+      )
+    })
+
+    it('Math.floor 반올림 회귀 — credits=10 + ratio=0.75 (refundedAmount=3750/5000) → 7 차감 (7.5 floor)', async () => {
+      // repository가 Math.floor(10 * 0.75) = 7 반환
+      mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
+        actualDeducted: 7,
+        deficitCredits: 0,
+        proportionalCredits: 7,
+        isPartial: true,
+      })
+
+      const result = await useCase.execute({
+        ...baseInput,
+        credits: 10,
+        refundedAmount: 3750, // 75%
+      })
+
+      expect(result.proportionalCredits).toBe(7) // Math.floor(7.5) = 7 (사용자 우호 정책)
+      expect(result.actualDeducted).toBe(7)
+      expect(result.isPartial).toBe(true)
+    })
+
+    it('전액 환불 회귀 보존 — refundedAmount === payment.amount 시 isPartial=false + action=refund_normal', async () => {
+      // 회귀 보존: refundedAmount = payment.amount → ratio=1.0 → isPartial=false
+      mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
+        actualDeducted: 50,
+        deficitCredits: 0,
+        proportionalCredits: 50,
+        isPartial: false,
+      })
+
+      await useCase.execute(baseInput)
+
+      // action은 'refund_normal' (PAY-P1-1 회귀 보존)
+      expect(mockAuditLogService.log).toHaveBeenCalledWith(
+        'system_refund',
+        'refund_normal',
+        'pay-1',
+        expect.objectContaining({ isPartial: false }),
+      )
+    })
+
+    it('AuditLog 4 action 식별자 매트릭스 — refund_normal/refund_deficit/refund_partial/refund_partial_deficit 정확 분기', async () => {
+      // 매트릭스: (isPartial, deficitCredits>0) 4 조합
+      const cases = [
+        {
+          mock: { actualDeducted: 50, deficitCredits: 0, proportionalCredits: 50, isPartial: false },
+          expectedAction: 'refund_normal',
+        },
+        {
+          mock: { actualDeducted: 30, deficitCredits: 20, proportionalCredits: 50, isPartial: false },
+          expectedAction: 'refund_deficit',
+        },
+        {
+          mock: { actualDeducted: 25, deficitCredits: 0, proportionalCredits: 25, isPartial: true },
+          expectedAction: 'refund_partial',
+        },
+        {
+          mock: { actualDeducted: 10, deficitCredits: 15, proportionalCredits: 25, isPartial: true },
+          expectedAction: 'refund_partial_deficit',
+        },
+      ]
+
+      for (const { mock, expectedAction } of cases) {
+        mockAuditLogService.log.mockClear()
+        mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce(mock)
+        await useCase.execute(baseInput)
+        expect(mockAuditLogService.log.mock.calls[0][1]).toBe(expectedAction)
+      }
+    })
+
+    it('repository validation 실패 (refundedAmount > payment.amount) 시 throw 위임 + auditLog 호출 0회', async () => {
+      mockPaymentRepo.refundPaymentAtomically.mockRejectedValueOnce(
+        new Error('환불 금액(10000)이 결제 금액(5000)을 초과할 수 없습니다'),
+      )
+
+      await expect(
+        useCase.execute({ ...baseInput, refundedAmount: 10000 }),
+      ).rejects.toThrow('환불 금액(10000)이 결제 금액(5000)을 초과할 수 없습니다')
+
+      expect(mockPaymentRepo.refundPaymentAtomically).toHaveBeenCalledTimes(1)
+      expect(mockAuditLogService.log).not.toHaveBeenCalled()
     })
   })
 })
