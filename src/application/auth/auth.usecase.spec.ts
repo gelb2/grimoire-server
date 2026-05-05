@@ -2,6 +2,15 @@ import { AuthUseCase } from './auth.usecase'
 import { BadRequestException, UnauthorizedException } from '@nestjs/common'
 import * as bcrypt from 'bcryptjs'
 
+// google-auth-library Mock — googleLogin spec에서 OAuth2Client.verifyIdToken().getPayload() 결과 컨트롤
+// 트랙 F (sprint #10_7) — OAuth email_verified 차단 spec 박제
+const mockVerifyIdToken = jest.fn()
+jest.mock('google-auth-library', () => ({
+  OAuth2Client: jest.fn().mockImplementation(() => ({
+    verifyIdToken: mockVerifyIdToken,
+  })),
+}))
+
 describe('AuthUseCase', () => {
   let authUseCase: AuthUseCase
   let mockAuthorRepo: any
@@ -198,6 +207,105 @@ describe('AuthUseCase', () => {
           authUseCase.login({ slug: 'deerdevil', password: 'wrong' }),
         ).rejects.toThrow(UnauthorizedException)
       })
+    })
+  })
+
+  // 트랙 F 강화안 A (sprint #10_7) — OAuth 자동 링크 보안 강화
+  // RFC 6819 §5.1.1 / OWASP A07:2021 — email_verified=false OAuth 자동 링크 차단
+  describe('googleLogin (트랙 F email_verified 차단)', () => {
+    beforeEach(() => {
+      mockVerifyIdToken.mockReset()
+      mockAuthorRepo.findBySocialAccount = jest.fn()
+      mockAuthorRepo.linkSocialAccount = jest.fn()
+    })
+
+    it('payload.email 없을 때 UnauthorizedException', async () => {
+      mockVerifyIdToken.mockResolvedValue({
+        getPayload: () => ({ sub: 'google-sub-1', name: 'NoEmail' }),
+      })
+
+      await expect(authUseCase.googleLogin('google-token')).rejects.toThrow(
+        UnauthorizedException,
+      )
+      await expect(authUseCase.googleLogin('google-token')).rejects.toThrow(
+        'Google 인증 실패',
+      )
+    })
+
+    it('email_verified=false 시 UnauthorizedException — 자동 링크 차단', async () => {
+      mockVerifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          email: 'attacker@example.com',
+          email_verified: false,
+          sub: 'google-sub-attacker',
+          name: 'Attacker',
+        }),
+      })
+
+      await expect(authUseCase.googleLogin('attacker-token')).rejects.toThrow(
+        UnauthorizedException,
+      )
+      await expect(authUseCase.googleLogin('attacker-token')).rejects.toThrow(
+        /Google 이메일이 아직 인증되지 않았습니다/,
+      )
+      // findByEmail 호출 차단 — email_verified=false면 자동 링크 시도 자체 안 함
+      expect(mockAuthorRepo.findByEmail).not.toHaveBeenCalled()
+      expect(mockAuthorRepo.linkSocialAccount).not.toHaveBeenCalled()
+    })
+
+    it('email_verified=true + 기존 소셜 연결 시 정상 로그인 (회귀 보존)', async () => {
+      const existingAuthor = {
+        id: 'a1',
+        email: 'verified@example.com',
+        slug: 'verified-user',
+        name: '검증됨',
+      }
+      mockVerifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          email: 'verified@example.com',
+          email_verified: true,
+          sub: 'google-sub-verified',
+          name: '검증됨',
+        }),
+      })
+      mockAuthorRepo.findBySocialAccount.mockResolvedValue(existingAuthor)
+
+      const result = await authUseCase.googleLogin('verified-token')
+
+      expect(mockAuthorRepo.findBySocialAccount).toHaveBeenCalledWith(
+        'google',
+        'google-sub-verified',
+      )
+      expect(result.author).toMatchObject({
+        id: 'a1',
+        email: 'verified@example.com',
+      })
+      expect(result.accessToken).toBe('test-token')
+    })
+
+    it('email_verified 미박제 (undefined) 시 자동 링크 허용 — Google 기본 verified=true 정합', async () => {
+      // Google OAuth payload는 기본적으로 email_verified=true
+      // 일부 OAuth provider는 email_verified 필드 미제공 가능
+      // 정책: undefined != false → 통과 (현 정책 보존, false만 명시 차단)
+      const existingAuthor = {
+        id: 'a2',
+        email: 'no-verified-field@example.com',
+        slug: 'noverified',
+      }
+      mockVerifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          email: 'no-verified-field@example.com',
+          // email_verified 필드 미박제
+          sub: 'google-sub-undef',
+          name: 'NoField',
+        }),
+      })
+      mockAuthorRepo.findBySocialAccount.mockResolvedValue(existingAuthor)
+
+      const result = await authUseCase.googleLogin('undef-token')
+
+      expect(result.author).toMatchObject({ id: 'a2' })
+      expect(mockAuthorRepo.findBySocialAccount).toHaveBeenCalled()
     })
   })
 })

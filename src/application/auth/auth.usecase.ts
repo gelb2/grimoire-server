@@ -112,6 +112,15 @@ export class AuthUseCase {
     const payload = ticket.getPayload()
     if (!payload?.email) throw new UnauthorizedException('Google 인증 실패')
 
+    // OAuth 자동 링크 보안 강화 (트랙 F 강화안 A — sprint #10_7)
+    // RFC 6819 §5.1.1 / OWASP A07:2021 — email_verified=false 차단으로
+    // victim 이메일의 미인증 OAuth 계정이 기존 일반 회원 계정을 자동 인수하는 위험 차단.
+    if (payload.email_verified === false) {
+      throw new UnauthorizedException(
+        'Google 이메일이 아직 인증되지 않았습니다. Google 계정에서 이메일 인증 후 다시 시도해주세요.',
+      )
+    }
+
     // 이미 소셜 계정으로 연결된 유저 찾기
     let author = await this.authorRepo.findBySocialAccount('google', payload.sub!)
 
