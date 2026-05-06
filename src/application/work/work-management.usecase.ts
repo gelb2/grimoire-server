@@ -112,6 +112,39 @@ export class WorkManagementUseCase {
     return episode
   }
 
+  /** 작가 본인 에피소드 rawMd 조회 (인라인 본문 편집용 — 소유권 검증)
+   *
+   * 신설 (2026-05-06 묶음 MM): public getEpisode는 rawMd 의도적 제거 (Constitution P3).
+   * 작가 본인이 dashboard에서 본문 편집하려면 rawMd 직접 조회 필요.
+   */
+  async getEpisodeRawForOwner(authorId: string, episodeId: string): Promise<{
+    id: string
+    title: string
+    subtitle: string | null
+    description: string | null
+    rawMd: string
+    sourceFormat: string
+    orderNum: number
+  }> {
+    const episode = await this.workRepo.findEpisodeById(episodeId)
+    if (!episode) throw new NotFoundException('에피소드를 찾을 수 없습니다')
+
+    const work = await this.workRepo.findById(episode.workId)
+    if (!work || work.authorId !== authorId) {
+      throw new ForbiddenException('에피소드 본문 조회 권한이 없습니다')
+    }
+
+    return {
+      id: episode.id,
+      title: episode.title,
+      subtitle: episode.subtitle ?? null,
+      description: episode.description ?? null,
+      rawMd: episode.rawMd ?? '',
+      sourceFormat: episode.sourceFormat ?? 'markdown',
+      orderNum: episode.orderNum,
+    }
+  }
+
   /** 에피소드 재업로드 (파일 교체 — 소유권 검증) */
   async reuploadEpisode(
     authorId: string,

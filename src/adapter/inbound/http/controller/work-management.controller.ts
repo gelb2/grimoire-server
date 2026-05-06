@@ -1,7 +1,7 @@
 import { AuthenticatedRequest } from '@adapter/inbound/http/dto/authenticated-request'
 import * as path from 'path'
 import {
-  Controller, Post, Patch, Delete, Put, Body, Param,
+  Controller, Get, Post, Patch, Delete, Put, Body, Param,
   UseGuards, UseInterceptors, UploadedFile, Req, BadRequestException,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
@@ -94,6 +94,16 @@ export class WorkManagementController {
 @UseGuards(JwtAuthGuard)
 export class EpisodeManagementController {
   constructor(private readonly workManagementUseCase: WorkManagementUseCase) {}
+
+  /** 작가 본인 에피소드 rawMd 조회 (인라인 본문 편집용, 묶음 MM 신설) */
+  @Throttle({ default: { ttl: 60000, limit: 30 } })  // 분당 30회
+  @Get(':episodeId/raw')
+  async getEpisodeRaw(
+    @Req() req: AuthenticatedRequest,
+    @Param('episodeId') episodeId: string,
+  ) {
+    return this.workManagementUseCase.getEpisodeRawForOwner(req.user.sub, episodeId)
+  }
 
   /** 에피소드 재업로드 (파일 교체) */
   @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
