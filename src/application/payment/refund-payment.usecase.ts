@@ -1,5 +1,6 @@
-import { Injectable, Inject, BadRequestException, Logger } from '@nestjs/common'
+import { Injectable, Inject, BadRequestException, Logger, Optional } from '@nestjs/common'
 import { PaymentRepositoryPort } from '@domain/port/outbound/payment-repository.port'
+import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { AuditLogService } from '@application/admin/audit-log.service'
 
 /**
@@ -26,6 +27,14 @@ export class RefundPaymentUseCase {
   constructor(
     @Inject('PaymentRepositoryPort') private readonly paymentRepo: PaymentRepositoryPort,
     private readonly auditLogService: AuditLogService,
+    /**
+     * PAY-P2-4 — 잔액 사전 조회 (beforeState 박제용).
+     * Optional이지만 실 운영(`app.module.ts`)에서는 항상 주입됨.
+     * 미주입 시 beforeState 박제 skip (BACKWARD COMPATIBLE).
+     */
+    @Optional()
+    @Inject('AuthorRepositoryPort')
+    private readonly authorRepo: AuthorRepositoryPort | null = null,
   ) {}
 
   /**
@@ -62,6 +71,22 @@ export class RefundPaymentUseCase {
     // L2 게이트 — payment 사전 검증은 호출자(payment.usecase)가 수행 (status='completed' 검증 후 본 usecase 호출).
     // PAY-P2-1: $transaction 내부에서 payment.amount 조회 + refundedAmount > payment.amount 시 throw.
     // 본 usecase는 그 throw를 catch → 호출자(payment.usecase)에 위임 → webhook event 'failed' 박제.
+
+    // PAY-P2-4: 잔액 사전 조회 (beforeState 박제용 — auditLog detail JSON에 표준 키)
+    let balanceBefore: number | null = null
+    if (this.authorRepo) {
+      try {
+        const author = await this.authorRepo.findById(authorId)
+        balanceBefore = author?.credits ?? null
+      } catch (e: unknown) {
+        // 잔액 조회 실패는 환수 트랜잭션을 막지 않음 — auditLog beforeState 박제만 skip
+        this.logger.warn(
+          `잔액 사전 조회 실패 (authorId=${authorId}, paymentId=${paymentId}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        )
+      }
+    }
 
     // 환수 트랜잭션 실행 ($transaction 내부에서 비율 계산 + Payment.status 갱신 — race 차단)
     let result: {
@@ -105,18 +130,41 @@ export class RefundPaymentUseCase {
         ? 'refund_deficit'
         : 'refund_normal'
 
+    // PAY-P2-4: detail JSON에 표준 beforeState/afterState 분리 박제
+    // - beforeState: 환수 직전 author.credits + paymentStatus='completed'
+    // - afterState: 환수 직후 잔액 + paymentStatus(부분/전액 분기) + deficit 메타
+    // - balanceBefore null 시 (authorRepo 미주입 또는 조회 실패) → state 키 미박제 (BACKWARD COMPATIBLE)
+    const balanceAfter = balanceBefore !== null ? balanceBefore - actualDeducted : null
+    const paymentStatusAfter = isPartial ? 'partial_refunded' : 'refunded'
+
     try {
-      await this.auditLogService.log('system_refund', action, paymentId, {
-        authorId,
-        refundedAmount,
-        creditsRequested: credits,
-        proportionalCredits,
-        creditsActuallyDeducted: actualDeducted,
-        deficitCredits,
-        isPartial,
-        reason,
-        source,
-      })
+      await this.auditLogService.log(
+        'system_refund',
+        action,
+        paymentId,
+        {
+          authorId,
+          refundedAmount,
+          creditsRequested: credits,
+          proportionalCredits,
+          creditsActuallyDeducted: actualDeducted,
+          deficitCredits,
+          isPartial,
+          reason,
+          source,
+        },
+        balanceBefore !== null
+          ? { credits: balanceBefore, paymentStatus: 'completed' }
+          : undefined,
+        balanceAfter !== null
+          ? {
+              credits: balanceAfter,
+              paymentStatus: paymentStatusAfter,
+              deficitCredits,
+              creditsActuallyDeducted: actualDeducted,
+            }
+          : undefined,
+      )
     } catch (e: unknown) {
       // AuditLog 실패는 환수 트랜잭션 결과를 무효화하지 않음 — logger 경고만
       const message = e instanceof Error ? e.message : String(e)

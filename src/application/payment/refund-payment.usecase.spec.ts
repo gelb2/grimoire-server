@@ -18,6 +18,10 @@ describe('RefundPaymentUseCase', () => {
     log: jest.Mock
     findAll: jest.Mock
   }
+  // PAY-P2-4: AuthorRepository mock — beforeState 박제용 잔액 사전 조회
+  let mockAuthorRepo: {
+    findById: jest.Mock
+  }
 
   const baseInput = {
     paymentId: 'pay-1',
@@ -44,9 +48,17 @@ describe('RefundPaymentUseCase', () => {
       log: jest.fn().mockResolvedValue(undefined),
       findAll: jest.fn(),
     }
+    // PAY-P2-4: 기본 author.credits=100 — beforeState 박제용
+    mockAuthorRepo = {
+      findById: jest.fn().mockResolvedValue({
+        id: 'author-1', slug: 'a', name: 'A', email: 'a@a.com',
+        role: 'user', credits: 100, plan: 'free', planExpireAt: null, createdAt: new Date(),
+      }),
+    }
     useCase = new RefundPaymentUseCase(
       mockPaymentRepo as never,
       mockAuditLogService as never,
+      mockAuthorRepo as never,
     )
   })
 
@@ -72,7 +84,7 @@ describe('RefundPaymentUseCase', () => {
         source: 'webhook',
       })
 
-      // AuditLog — 정상 분기 (PAY-P1-1 회귀 보존)
+      // AuditLog — 정상 분기 (PAY-P1-1 회귀 보존 + PAY-P2-4 6-arg 호출)
       expect(mockAuditLogService.log).toHaveBeenCalledTimes(1)
       expect(mockAuditLogService.log).toHaveBeenCalledWith(
         'system_refund',
@@ -89,6 +101,15 @@ describe('RefundPaymentUseCase', () => {
           reason: 'polar_webhook_order.refunded',
           source: 'webhook',
         }),
+        // PAY-P2-4: beforeState — author.credits=100 (mock 베이스), paymentStatus='completed'
+        { credits: 100, paymentStatus: 'completed' },
+        // PAY-P2-4: afterState — credits=100-50=50, status='refunded' (전액), deficit=0
+        {
+          credits: 50,
+          paymentStatus: 'refunded',
+          deficitCredits: 0,
+          creditsActuallyDeducted: 50,
+        },
       )
 
       // 반환값 검증 — PAY-P2-1 4 필드 확장
@@ -149,6 +170,7 @@ describe('RefundPaymentUseCase', () => {
       )
 
       // AuditLog — deficit 분기 (action 식별자 + detail 박제, PAY-P1-1 회귀 보존)
+      // PAY-P2-4: 6-arg 호출 — beforeState/afterState 검증 추가
       expect(mockAuditLogService.log).toHaveBeenCalledWith(
         'system_refund',
         'refund_deficit',
@@ -159,6 +181,14 @@ describe('RefundPaymentUseCase', () => {
           deficitCredits: 20,
           isPartial: false,
         }),
+        { credits: 100, paymentStatus: 'completed' },
+        // afterState: 100 - 30 = 70 잔액, deficit=20
+        {
+          credits: 70,
+          paymentStatus: 'refunded',
+          deficitCredits: 20,
+          creditsActuallyDeducted: 30,
+        },
       )
 
       // 반환값 — deficit 운영자 추적용
@@ -168,6 +198,11 @@ describe('RefundPaymentUseCase', () => {
     })
 
     it('잔액 0 시 actualDeducted=0 + deficitCredits=credits 전체 + action=refund_deficit', async () => {
+      // PAY-P2-4: author.credits=0 (잔액 0 시나리오)
+      mockAuthorRepo.findById.mockResolvedValueOnce({
+        id: 'author-1', slug: 'a', name: 'A', email: 'a@a.com',
+        role: 'user', credits: 0, plan: 'free', planExpireAt: null, createdAt: new Date(),
+      })
       mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
         actualDeducted: 0,
         deficitCredits: 50,
@@ -188,6 +223,14 @@ describe('RefundPaymentUseCase', () => {
         'refund_deficit',
         'pay-1',
         expect.objectContaining({ deficitCredits: 50, creditsActuallyDeducted: 0 }),
+        { credits: 0, paymentStatus: 'completed' },
+        // afterState: 0 - 0 = 0 (deduct 0), deficit=50
+        {
+          credits: 0,
+          paymentStatus: 'refunded',
+          deficitCredits: 50,
+          creditsActuallyDeducted: 0,
+        },
       )
     })
   })
@@ -204,11 +247,20 @@ describe('RefundPaymentUseCase', () => {
       await useCase.execute(baseInput)
 
       // boundary는 정상 분기 — refund_normal 박제 (refund_deficit 아님)
+      // PAY-P2-4: 6-arg 호출 (beforeState/afterState 박제) — boundary 잔액=credits 정확 일치
       expect(mockAuditLogService.log).toHaveBeenCalledWith(
         'system_refund',
         'refund_normal',
         'pay-1',
         expect.objectContaining({ deficitCredits: 0 }),
+        { credits: 100, paymentStatus: 'completed' },
+        // afterState: 100 - 50 = 50, deficit=0
+        {
+          credits: 50,
+          paymentStatus: 'refunded',
+          deficitCredits: 0,
+          creditsActuallyDeducted: 50,
+        },
       )
       // refund_deficit으로는 호출되지 않음 (회귀)
       const auditCallActions = mockAuditLogService.log.mock.calls.map((c) => c[1])
@@ -317,7 +369,7 @@ describe('RefundPaymentUseCase', () => {
       expect(result.actualDeducted).toBe(25)
       expect(result.deficitCredits).toBe(0)
 
-      // AuditLog action — 부분 환불 정상
+      // AuditLog action — 부분 환불 정상 (PAY-P2-4: 6-arg 호출 + paymentStatus='partial_refunded')
       expect(mockAuditLogService.log).toHaveBeenCalledWith(
         'system_refund',
         'refund_partial',
@@ -329,10 +381,23 @@ describe('RefundPaymentUseCase', () => {
           creditsActuallyDeducted: 25,
           isPartial: true,
         }),
+        { credits: 100, paymentStatus: 'completed' },
+        // afterState: 100 - 25 = 75, status='partial_refunded' (부분 환불)
+        {
+          credits: 75,
+          paymentStatus: 'partial_refunded',
+          deficitCredits: 0,
+          creditsActuallyDeducted: 25,
+        },
       )
     })
 
     it('부분 환불 + 잔액 부족 deficit — proportionalCredits=25, 잔액 10 → actualDeducted=10 + deficit=15 + action=refund_partial_deficit', async () => {
+      // PAY-P2-4: author.credits=10 (잔액 부족)
+      mockAuthorRepo.findById.mockResolvedValueOnce({
+        id: 'author-1', slug: 'a', name: 'A', email: 'a@a.com',
+        role: 'user', credits: 10, plan: 'free', planExpireAt: null, createdAt: new Date(),
+      })
       mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
         actualDeducted: 10,
         deficitCredits: 15,
@@ -352,7 +417,7 @@ describe('RefundPaymentUseCase', () => {
         isPartial: true,
       })
 
-      // action='refund_partial_deficit'
+      // action='refund_partial_deficit' (PAY-P2-4: 6-arg + paymentStatus='partial_refunded' + deficit)
       expect(mockAuditLogService.log).toHaveBeenCalledWith(
         'system_refund',
         'refund_partial_deficit',
@@ -363,6 +428,14 @@ describe('RefundPaymentUseCase', () => {
           proportionalCredits: 25,
           creditsActuallyDeducted: 10,
         }),
+        { credits: 10, paymentStatus: 'completed' },
+        // afterState: 10 - 10 = 0, status='partial_refunded' + deficit=15
+        {
+          credits: 0,
+          paymentStatus: 'partial_refunded',
+          deficitCredits: 15,
+          creditsActuallyDeducted: 10,
+        },
       )
     })
 
@@ -398,11 +471,19 @@ describe('RefundPaymentUseCase', () => {
       await useCase.execute(baseInput)
 
       // action은 'refund_normal' (PAY-P1-1 회귀 보존)
+      // PAY-P2-4: 6-arg 호출 — 전액 환불 시 paymentStatus='refunded'
       expect(mockAuditLogService.log).toHaveBeenCalledWith(
         'system_refund',
         'refund_normal',
         'pay-1',
         expect.objectContaining({ isPartial: false }),
+        { credits: 100, paymentStatus: 'completed' },
+        {
+          credits: 50,
+          paymentStatus: 'refunded',
+          deficitCredits: 0,
+          creditsActuallyDeducted: 50,
+        },
       )
     })
 
@@ -446,6 +527,151 @@ describe('RefundPaymentUseCase', () => {
 
       expect(mockPaymentRepo.refundPaymentAtomically).toHaveBeenCalledTimes(1)
       expect(mockAuditLogService.log).not.toHaveBeenCalled()
+    })
+  })
+
+  // ============================================================================
+  // PAY-P2-4: AdminAuditLog beforeState/afterState 박제 (정본: shared-contracts §20)
+  // ============================================================================
+  describe('PAY-P2-4: beforeState/afterState 분리 박제', () => {
+    it('전액 정상 환수 — beforeState credits=100 / afterState credits=50 + paymentStatus=refunded', async () => {
+      mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
+        actualDeducted: 50,
+        deficitCredits: 0,
+        proportionalCredits: 50,
+        isPartial: false,
+      })
+
+      await useCase.execute(baseInput)
+
+      // 잔액 사전 조회 1회 (PAY-P2-4 게이트)
+      expect(mockAuthorRepo.findById).toHaveBeenCalledTimes(1)
+      expect(mockAuthorRepo.findById).toHaveBeenCalledWith('author-1')
+
+      // auditLog.log 6번째 인자 (beforeState)
+      const beforeStateArg = mockAuditLogService.log.mock.calls[0][4]
+      expect(beforeStateArg).toEqual({ credits: 100, paymentStatus: 'completed' })
+
+      // auditLog.log 7번째 인자 (afterState)
+      const afterStateArg = mockAuditLogService.log.mock.calls[0][5]
+      expect(afterStateArg).toEqual({
+        credits: 50,
+        paymentStatus: 'refunded',
+        deficitCredits: 0,
+        creditsActuallyDeducted: 50,
+      })
+    })
+
+    it('전액 deficit 환수 — afterState credits=0 + deficitCredits=20', async () => {
+      mockAuthorRepo.findById.mockResolvedValueOnce({
+        id: 'author-1', slug: 'a', name: 'A', email: 'a@a.com',
+        role: 'user', credits: 30, plan: 'free', planExpireAt: null, createdAt: new Date(),
+      })
+      mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
+        actualDeducted: 30,
+        deficitCredits: 20,
+        proportionalCredits: 50,
+        isPartial: false,
+      })
+
+      await useCase.execute(baseInput)
+
+      const beforeStateArg = mockAuditLogService.log.mock.calls[0][4]
+      const afterStateArg = mockAuditLogService.log.mock.calls[0][5]
+      expect(beforeStateArg).toEqual({ credits: 30, paymentStatus: 'completed' })
+      expect(afterStateArg).toEqual({
+        credits: 0, // 30 - 30 = 0
+        paymentStatus: 'refunded',
+        deficitCredits: 20,
+        creditsActuallyDeducted: 30,
+      })
+    })
+
+    it('부분 정상 환불 — afterState paymentStatus=partial_refunded', async () => {
+      mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
+        actualDeducted: 25,
+        deficitCredits: 0,
+        proportionalCredits: 25,
+        isPartial: true,
+      })
+
+      await useCase.execute({ ...baseInput, refundedAmount: 2500 })
+
+      const afterStateArg = mockAuditLogService.log.mock.calls[0][5]
+      expect(afterStateArg).toEqual({
+        credits: 75, // 100 - 25
+        paymentStatus: 'partial_refunded',
+        deficitCredits: 0,
+        creditsActuallyDeducted: 25,
+      })
+    })
+
+    it('부분 deficit 환불 — afterState paymentStatus=partial_refunded + deficit=15', async () => {
+      mockAuthorRepo.findById.mockResolvedValueOnce({
+        id: 'author-1', slug: 'a', name: 'A', email: 'a@a.com',
+        role: 'user', credits: 10, plan: 'free', planExpireAt: null, createdAt: new Date(),
+      })
+      mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
+        actualDeducted: 10,
+        deficitCredits: 15,
+        proportionalCredits: 25,
+        isPartial: true,
+      })
+
+      await useCase.execute({ ...baseInput, refundedAmount: 2500 })
+
+      const beforeStateArg = mockAuditLogService.log.mock.calls[0][4]
+      const afterStateArg = mockAuditLogService.log.mock.calls[0][5]
+      expect(beforeStateArg).toEqual({ credits: 10, paymentStatus: 'completed' })
+      expect(afterStateArg).toEqual({
+        credits: 0, // 10 - 10 = 0
+        paymentStatus: 'partial_refunded',
+        deficitCredits: 15,
+        creditsActuallyDeducted: 10,
+      })
+    })
+
+    it('authorRepo 미주입 시 beforeState/afterState 박제 skip (BACKWARD COMPATIBLE)', async () => {
+      // authorRepo null로 useCase 재생성
+      const useCaseNoAuthor = new RefundPaymentUseCase(
+        mockPaymentRepo as never,
+        mockAuditLogService as never,
+        null,
+      )
+      mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
+        actualDeducted: 50,
+        deficitCredits: 0,
+        proportionalCredits: 50,
+        isPartial: false,
+      })
+
+      await useCaseNoAuthor.execute(baseInput)
+
+      // 잔액 조회는 호출되지 않음 (authorRepo null)
+      expect(mockAuthorRepo.findById).not.toHaveBeenCalled()
+
+      // auditLog.log 호출 시 5/6번째 인자는 undefined (회귀 보존)
+      expect(mockAuditLogService.log.mock.calls[0][4]).toBeUndefined()
+      expect(mockAuditLogService.log.mock.calls[0][5]).toBeUndefined()
+    })
+
+    it('잔액 사전 조회 실패 시 beforeState/afterState 박제 skip + 환수는 그대로 진행 (회귀 보존)', async () => {
+      mockAuthorRepo.findById.mockRejectedValueOnce(new Error('db_unreachable'))
+      mockPaymentRepo.refundPaymentAtomically.mockResolvedValueOnce({
+        actualDeducted: 50,
+        deficitCredits: 0,
+        proportionalCredits: 50,
+        isPartial: false,
+      })
+
+      const result = await useCase.execute(baseInput)
+
+      // 환수는 성공
+      expect(result.actualDeducted).toBe(50)
+
+      // auditLog.log 호출 시 beforeState/afterState undefined
+      expect(mockAuditLogService.log.mock.calls[0][4]).toBeUndefined()
+      expect(mockAuditLogService.log.mock.calls[0][5]).toBeUndefined()
     })
   })
 })

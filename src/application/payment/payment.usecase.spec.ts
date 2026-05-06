@@ -10,6 +10,8 @@ describe('PaymentUseCase', () => {
   let mockPaymentGateway: any
   let mockWebhookEventRepo: any
   let mockRefundPaymentUseCase: any
+  let mockAuthorRepo: any
+  let mockAuditLog: any
 
   const mockPayment = {
     id: 'pay-1',
@@ -104,11 +106,25 @@ describe('PaymentUseCase', () => {
       execute: jest.fn().mockResolvedValue({ actualDeducted: 0, deficitCredits: 0 }),
     }
 
+    // Sprint PAY-P2-4 — authorRepo + auditLog mock (success 분기 잔액 조회 + audit 박제)
+    mockAuthorRepo = {
+      findById: jest.fn().mockResolvedValue({
+        id: 'author-1', slug: 'a', name: 'A', email: 'a@a.com',
+        role: 'user', credits: 50, plan: 'free', planExpireAt: null, createdAt: new Date(),
+      }),
+    }
+    mockAuditLog = {
+      log: jest.fn().mockResolvedValue(undefined),
+      findAll: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+    }
+
     useCase = new PaymentUseCase(
       mockPaymentRepo as any,
       mockPaymentGateway,
       mockWebhookEventRepo,
       mockRefundPaymentUseCase,
+      mockAuthorRepo,
+      mockAuditLog,
     )
   })
 
@@ -387,6 +403,73 @@ describe('PaymentUseCase', () => {
           status: 'processed',
         }),
       )
+    })
+
+    // PAY-P2-4: 성공 분기에서 잔액 사전 조회 + auditLog beforeState/afterState 박제
+    it('PAY-P2-4: 성공 웹훅 시 authorRepo.findById 1회 + auditLog.log 6-arg(payment_completed) 박제', async () => {
+      mockPrisma.findByExternalTransactionId.mockResolvedValue({
+        ...mockPayment,
+        externalTransactionId: 'TRADE-001',
+      })
+
+      await useCase.processWebhook(dummyBody, dummyHeaders)
+
+      // 잔액 사전 조회 호출 확인
+      expect(mockAuthorRepo.findById).toHaveBeenCalledTimes(1)
+      expect(mockAuthorRepo.findById).toHaveBeenCalledWith('author-1')
+
+      // auditLog.log 정확히 1회 호출 + 7-arg (operator='system_payment', action='payment_completed')
+      expect(mockAuditLog.log).toHaveBeenCalledTimes(1)
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'system_payment',
+        'payment_completed',
+        'pay-1',
+        expect.objectContaining({
+          reason: 'polar_webhook_order.paid',
+          externalTransactionId: 'TRADE-001',
+        }),
+        { credits: 50 }, // mockAuthorRepo author.credits 베이스
+        expect.objectContaining({
+          credits: 55, // 50 + 5 (payment.credits)
+          paymentId: 'pay-1',
+          addedCredits: 5,
+        }),
+      )
+    })
+
+    it('PAY-P2-4: 성공 분기 — 잔액 조회 실패 시 auditLog 박제 skip + 결제는 성공 (회귀 보존)', async () => {
+      mockPrisma.findByExternalTransactionId.mockResolvedValue({
+        ...mockPayment,
+        externalTransactionId: 'TRADE-001',
+      })
+      mockAuthorRepo.findById.mockRejectedValueOnce(new Error('db_unreachable'))
+
+      const result = await useCase.processWebhook(dummyBody, dummyHeaders)
+
+      // 결제는 성공 (잔액 조회 실패가 차단하지 않음)
+      expect(result.processed).toBe(true)
+      expect(result.credits).toBe(5)
+      expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledTimes(1)
+
+      // auditLog는 박제 skip (balanceBefore null)
+      expect(mockAuditLog.log).not.toHaveBeenCalled()
+    })
+
+    it('PAY-P2-4: 성공 분기 — auditLog.log 실패 시 결제는 그대로 성공 (logger.warn만, throw 0)', async () => {
+      mockPrisma.findByExternalTransactionId.mockResolvedValue({
+        ...mockPayment,
+        externalTransactionId: 'TRADE-001',
+      })
+      mockAuditLog.log.mockRejectedValueOnce(new Error('audit_log_db_down'))
+
+      const result = await useCase.processWebhook(dummyBody, dummyHeaders)
+
+      // 결제는 성공
+      expect(result.processed).toBe(true)
+      expect(result.credits).toBe(5)
+      expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledTimes(1)
+      // auditLog 호출 1회 (실패는 catch 처리)
+      expect(mockAuditLog.log).toHaveBeenCalledTimes(1)
     })
 
     it('실패(fail) 웹훅 시 상태를 failed로 변경하고 refund usecase는 호출하지 않는다 (PAY-P1-1 회귀)', async () => {

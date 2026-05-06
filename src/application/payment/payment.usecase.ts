@@ -3,8 +3,10 @@ import { PaymentRepositoryPort } from '@domain/port/outbound/payment-repository.
 import { PaymentGatewayPort } from '@domain/port/outbound/payment-gateway.port'
 import { WebhookEventRepositoryPort } from '@domain/port/outbound/webhook-event-repository.port'
 import { WebhookRetryQueueRepositoryPort } from '@domain/port/outbound/webhook-retry-queue-repository.port'
+import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { CREDIT_PRODUCTS, Product } from '@domain/model/config'
 import { RefundPaymentUseCase } from './refund-payment.usecase'
+import { AuditLogService } from '@application/admin/audit-log.service'
 
 // re-export for backward compatibility
 export { CREDIT_PRODUCTS, type Product }
@@ -20,6 +22,19 @@ export class PaymentUseCase {
     @Inject('PaymentGatewayPort') private readonly paymentGateway: PaymentGatewayPort,
     @Inject('WebhookEventRepositoryPort') private readonly webhookEventRepo: WebhookEventRepositoryPort,
     private readonly refundPaymentUseCase: RefundPaymentUseCase,
+    /**
+     * PAY-P2-4 — webhook 'success' 분기에서 잔액 사전 조회 (beforeState 박제용).
+     * Optional이지만 실 운영(`app.module.ts`)에서는 항상 주입됨.
+     */
+    @Optional()
+    @Inject('AuthorRepositoryPort')
+    private readonly authorRepo: AuthorRepositoryPort | null = null,
+    /**
+     * PAY-P2-4 — webhook 'success' 분기에서 audit log 박제 (트랜잭션 외 후행).
+     * Optional이지만 실 운영(`app.module.ts`)에서는 항상 주입됨.
+     */
+    @Optional()
+    private readonly auditLog: AuditLogService | null = null,
     /**
      * PAY-P2-2 — webhook 처리 실패 시 재시도 큐 박제. Optional (선택 의존)이므로
      * 미주입 시 기존 동작 (Polar 자체 retry만 의존) 보존.
@@ -171,6 +186,23 @@ export class PaymentUseCase {
     }
 
     if (event.status === 'success') {
+      // PAY-P2-4: 트랜잭션 진입 직전 잔액 조회 (beforeState 박제용)
+      // authorRepo Optional — 미주입 시 박제 skip (회귀 보존)
+      let balanceBefore: number | null = null
+      if (this.authorRepo) {
+        try {
+          const author = await this.authorRepo.findById(payment.authorId)
+          balanceBefore = author?.credits ?? null
+        } catch (e: unknown) {
+          // 잔액 조회 실패는 트랜잭션 진행을 막지 않음 — auditLog 박제만 skip
+          this.logger.warn(
+            `잔액 사전 조회 실패 (authorId=${payment.authorId}, paymentId=${payment.id}): ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          )
+        }
+      }
+
       try {
         // 원자 처리: payment 상태 + 크레딧 증가 + 로그 기록 (단일 트랜잭션)
         await this.paymentRepo.completePaymentAtomically(payment.id, payment.authorId, payment.credits, payment.productId)
@@ -188,6 +220,31 @@ export class PaymentUseCase {
         // PAY-P2-2 — DLQ 박제 (WebhookRetryJob @Cron 5분이 재처리)
         await this.enqueueWebhookRetry(event as unknown as object, event.eventId)
         throw e
+      }
+
+      // PAY-P2-4: payment_completed audit log 박제 (트랜잭션 외 후행)
+      // 실패 시 logger.warn만, throw 0 — 결제 트랜잭션은 이미 commit됨.
+      if (this.auditLog && balanceBefore !== null) {
+        try {
+          const balanceAfter = balanceBefore + payment.credits
+          await this.auditLog.log(
+            'system_payment',
+            'payment_completed',
+            payment.id,
+            {
+              reason: `polar_webhook_${event.type}`,
+              externalTransactionId: payment.externalTransactionId ?? event.tradeNo,
+            },
+            { credits: balanceBefore },
+            { credits: balanceAfter, paymentId: payment.id, addedCredits: payment.credits },
+          )
+        } catch (e: unknown) {
+          this.logger.warn(
+            `AuditLog 박제 실패 (success, paymentId=${payment.id}): ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          )
+        }
       }
 
       // 성공 박제 — race 시 (다른 worker가 먼저 INSERT) null 반환되어도 무시 (둘 다 같은 결과)
