@@ -376,6 +376,42 @@ title: "테스트"
     })
   })
 
+  describe('getEpisodeRawForOwner (묶음 MM 신설 — 인라인 본문 편집용)', () => {
+    it('소유자에게 rawMd 포함 응답을 반환한다', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue({
+        ...mockEpisode,
+        rawMd: '## 5화\n\n학계 용어로 ContextRot, 어텐션 상실',
+        sourceFormat: 'markdown',
+        orderNum: 5,
+      } as any)
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+
+      const result = await useCase.getEpisodeRawForOwner('author-1', 'ep-1')
+
+      expect(result.id).toBe('ep-1')
+      expect(result.rawMd).toContain('학계 용어로 ContextRot')
+      expect(result.sourceFormat).toBe('markdown')
+      expect(result.orderNum).toBe(5)
+    })
+
+    it('소유자가 아니면 ForbiddenException을 던진다', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+
+      await expect(
+        useCase.getEpisodeRawForOwner('other-author', 'ep-1'),
+      ).rejects.toThrow(ForbiddenException)
+    })
+
+    it('episode 없으면 NotFoundException을 던진다', async () => {
+      mockWorkRepo.findEpisodeById.mockResolvedValue(null)
+
+      await expect(
+        useCase.getEpisodeRawForOwner('author-1', 'no-ep'),
+      ).rejects.toThrow(NotFoundException)
+    })
+  })
+
   describe('reuploadEpisode', () => {
     const updatedMock = { ...mockEpisode, title: '정규화된 제목' }
 

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common'
 import { APP_GUARD } from '@nestjs/core'
 import { JwtModule } from '@nestjs/jwt'
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler'
+import { ScheduleModule } from '@nestjs/schedule'
 
 // 인프라
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
@@ -19,6 +20,10 @@ import { ContentUseCase } from '@application/content/content.usecase'
 import { AuthUseCase } from '@application/auth/auth.usecase'
 import { WorkManagementUseCase } from '@application/work/work-management.usecase'
 import { PaymentUseCase } from '@application/payment/payment.usecase'
+import { PaymentReconciliationJob } from '@application/payment/payment-reconciliation.job'
+import { PaymentCleanupJob } from '@application/payment/payment-cleanup.job'
+import { WebhookRetryJob } from '@application/payment/webhook-retry.job'
+import { RefundPaymentUseCase } from '@application/payment/refund-payment.usecase'
 import { ReaderUseCase } from '@application/reader/reader.usecase'
 import { DiscoveryUseCase } from '@application/discovery/discovery.usecase'
 import { AdminUseCase } from '@application/admin/admin.usecase'
@@ -64,6 +69,9 @@ import { PrismaAuthTokenRepository } from '@adapter/outbound/persistence/prisma-
 import { PrismaSignupHistoryRepository } from '@adapter/outbound/persistence/prisma-signup-history.repository'
 import { PrismaAdminRepository } from '@adapter/outbound/persistence/prisma-admin.repository'
 import { PrismaPaymentRepository } from '@adapter/outbound/persistence/prisma-payment.repository'
+import { PrismaWebhookEventRepository } from '@adapter/outbound/persistence/prisma-webhook-event.repository'
+import { PrismaWebhookRetryQueueRepository } from '@adapter/outbound/persistence/prisma-webhook-retry-queue.repository'
+import { PrismaReconciliationCheckpointRepository } from '@adapter/outbound/persistence/prisma-reconciliation-checkpoint.repository'
 import { PrismaAnalysisReportRepository } from '@adapter/outbound/persistence/prisma-analysis-report.repository'
 import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
 import { OpenAIEmbeddingAdapter } from '@adapter/outbound/embedding/openai-embedding.adapter'
@@ -82,6 +90,8 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
       ttl: 60000,   // 기본: 1분
       limit: 60,    // 기본: 분당 60회
     }]),
+    // Sprint PAY-P0-2 — @Cron 기반 PG↔DB 정합성 검증 cron
+    ScheduleModule.forRoot(),
   ],
   controllers: [
     HealthController,
@@ -120,6 +130,10 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     AuthUseCase,
     WorkManagementUseCase,
     PaymentUseCase,
+    PaymentReconciliationJob,
+    PaymentCleanupJob,
+    WebhookRetryJob,
+    RefundPaymentUseCase,
     ReaderUseCase,
     DiscoveryUseCase,
     AdminUseCase,
@@ -156,6 +170,9 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'SignupHistoryRepositoryPort', useClass: PrismaSignupHistoryRepository },
     { provide: 'AdminRepositoryPort', useClass: PrismaAdminRepository },
     { provide: 'PaymentRepositoryPort', useClass: PrismaPaymentRepository },
+    { provide: 'WebhookEventRepositoryPort', useClass: PrismaWebhookEventRepository },
+    { provide: 'WebhookRetryQueueRepositoryPort', useClass: PrismaWebhookRetryQueueRepository },
+    { provide: 'ReconciliationCheckpointRepositoryPort', useClass: PrismaReconciliationCheckpointRepository },
     { provide: 'AnalysisReportRepositoryPort', useClass: PrismaAnalysisReportRepository },
   ],
 })

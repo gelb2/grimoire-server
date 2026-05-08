@@ -203,6 +203,26 @@ model Payment {
   @@map("payments")
 }
 
+/// 웹훅 이벤트 멱등성 박제 (Sprint PAY-P0-1, 2026-05-03)
+/// - eventId @unique: PG webhook 재전송 시 race condition 차단 (P2002 → safe skip)
+/// - source: PG 식별 ('polar' / 향후 다른 PG)
+/// - status: 'processed' | 'skipped' | 'failed'
+/// - payload: 정규화된 NormalizedWebhookEvent 박제 (디버깅용)
+/// 정본: `.claude/shared-contracts.md` §11 WebhookEventIdempotency
+model WebhookEvent {
+  id           String   @id @default(uuid())
+  eventId      String   @unique @map("event_id")
+  source       String   @default("polar")
+  eventType    String   @map("event_type")
+  payload      Json
+  status       String   @default("processed")
+  errorMessage String?  @map("error_message")
+  processedAt  DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+
+  @@index([eventType, processedAt])
+  @@map("webhook_events")
+}
+
 model DailyView {
   id     String   @id @default(uuid())
   workId String   @map("work_id")
@@ -375,4 +395,61 @@ model AdminAuditLog {
   @@index([adminId, createdAt])
   @@index([action])
   @@map("admin_audit_logs")
+}
+
+/// PG↔DB 정합성 검증 cron checkpoint (Sprint PAY-P0-2, 2026-05-03)
+/// 단일 row 보장 — id='singleton' 고정. cron 실행마다 동일 row를 upsert.
+/// 책 Ch 16 "shared state via DB single-row checkpoint" 패턴.
+model ReconciliationCheckpoint {
+  id              String   @id @default("singleton")
+  lastRunAt       DateTime @map("last_run_at") @db.Timestamptz(3)
+  processedCount  Int      @default(0) @map("processed_count")
+  boostCount      Int      @default(0) @map("boost_count")
+  mismatchCount   Int      @default(0) @map("mismatch_count")
+  expireCount     Int      @default(0) @map("expire_count")
+  errorMessage    String?  @map("error_message")
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("reconciliation_checkpoints")
+}
+
+/// 환불 정밀 처리 박제 (Sprint PAY-P1-1, 2026-05-03)
+/// - paymentId: 환불 대상 Payment FK (1:N — 향후 부분 환불 호환 위해 unique 미부여)
+/// - amount: PG 환불 금액 (KRW)
+/// - credits: 요청 환수 크레딧 (Author.credits 잔액 충분 시 = 실제 차감, 부족 시 actualDeducted = 잔액)
+/// - deficitCredits: 잔액 부족분 (양수 = 외상, 0 = 정상 환수). 운영자 회수 정책 결정 입력.
+/// - source: 'webhook' (Polar 자동) / 'manual' (운영자 수동, P2)
+/// 정본: `.claude/shared-contracts.md` §13 RefundPaymentAtomically
+model RefundLog {
+  id             String   @id @default(uuid())
+  paymentId      String   @map("payment_id")
+  amount         Int                                                    // PG 환불 금액 (KRW)
+  credits        Int                                                    // 실제 환수 크레딧 (actualDeducted)
+  deficitCredits Int      @default(0) @map("deficit_credits")           // 잔액 부족분 (외상)
+  reason         String
+  processedAt    DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+  source         String                                                 // 'webhook' | 'manual'
+
+  @@index([paymentId])
+  @@map("refund_logs")
+}
+
+/// PAY-P2-2: webhook 처리 실패 시 재시도 큐 (Postgres 기반 DLQ — 외부 인프라 의존 0건)
+/// - eventId: Polar webhook-id (멱등성 통합 — webhook_events.eventId @unique 정합)
+/// - payload: NormalizedWebhookEvent 전체 박제 (재처리 시 동일 페이로드 재호출)
+/// - retryCount: 누적 재시도 횟수 (0~10, 10 초과 시 permanent_failed 박제)
+/// - lastError: 마지막 실패 메시지 (디버깅용)
+/// - nextRetryAt: 다음 재시도 시각 — exp backoff (1m → 5m → 30m → 2h → 12h → 24h)
+/// 정본: `.claude/shared-contracts.md` §18 WebhookDLQ
+model WebhookRetryQueue {
+  id          String   @id @default(uuid())
+  eventId     String   @unique @map("event_id")                         // Polar webhook-id 멱등성
+  payload     Json                                                        // NormalizedWebhookEvent 전체
+  retryCount  Int      @default(0) @map("retry_count")
+  lastError   String?  @map("last_error")
+  nextRetryAt DateTime @map("next_retry_at") @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([nextRetryAt])
+  @@map("webhook_retry_queues")
 }

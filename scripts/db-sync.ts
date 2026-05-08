@@ -14,7 +14,7 @@
  * 환경변수:
  *   DB_PASSWORD                Azure DB 비밀번호 (미설정 시 기본값 사용)
  *   DB_SYNC_PRESERVE_EMAILS    --preserve-accounts 사용 시 마스킹 제외할 이메일 (콤마 분리)
- *                              예: deerdevil@grimoire.app,admin@grimoire.app
+ *                              예: deerdevil@example.com,admin@example.com
  */
 
 import { PrismaClient } from '@prisma/client'
@@ -108,7 +108,7 @@ async function main() {
   const preserveEmails = preserveAccounts ? getPreserveEmails() : new Set<string>()
   if (preserveAccounts && preserveEmails.size === 0) {
     console.error('❌ --preserve-accounts 사용 시 DB_SYNC_PRESERVE_EMAILS 환경변수에 콤마 분리 이메일 목록이 필요합니다')
-    console.error('   예: DB_SYNC_PRESERVE_EMAILS=deerdevil@grimoire.app,admin@grimoire.app')
+    console.error('   예: DB_SYNC_PRESERVE_EMAILS=deerdevil@example.com,admin@example.com')
     process.exit(1)
   }
 

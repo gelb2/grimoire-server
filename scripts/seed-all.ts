@@ -95,7 +95,7 @@ const AUTHORS_WITH_THEMES: AuthorSeedData[] = [
   {
     name: '사슴악마',
     slug: 'deerdevil',
-    email: 'deerdevil@grimoire.app',
+    email: 'deerdevil@example.com',
     preset: 'midnight',
     description: 'A24 감성 K-다크 판타지. 어둡고 묵직한 밤의 분위기. 사슴뿔 아이콘과 타이핑 애니메이션.',
     theme: {
@@ -108,52 +108,52 @@ const AUTHORS_WITH_THEMES: AuthorSeedData[] = [
     },
   },
   {
-    name: '이광수', slug: 'lee-gwangsu', email: 'lee-gwangsu@grimoire.app', preset: 'custom',
+    name: '이광수', slug: 'lee-gwangsu', email: 'lee-gwangsu@example.com', preset: 'custom',
     description: '근대 계몽기의 무게감. 낡은 양장본처럼 진한 세피아와 갈색.',
     theme: { bgPrimary: '#f4ece0', bgSecondary: '#ebe0ce', textPrimary: '#3b2e1e', textMuted: '#7a6b55', textDim: '#a89878', textBright: '#1a1208', accent: '#8b5e2f', accent2: '#a67236', border: '#d4c4a8', fontBody: 'serif', fontHeading: 'serif', animation: 'fade', tone: 'sepia', layout: 'grid', decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' } },
   },
   {
-    name: '김소월', slug: 'kim-sowol', email: 'kim-sowol@grimoire.app', preset: 'custom',
+    name: '김소월', slug: 'kim-sowol', email: 'kim-sowol@example.com', preset: 'custom',
     description: '진달래꽃이 흩날리는 봄. 연분홍과 라벤더의 부드러운 서정.',
     theme: { bgPrimary: '#fdf6f8', bgSecondary: '#f8eef2', textPrimary: '#3d2b33', textMuted: '#8a707a', textDim: '#b8a0aa', textBright: '#1a0e14', accent: '#c27088', accent2: '#d4899e', border: '#e8d4dc', fontBody: 'serif', fontHeading: 'serif', animation: 'fade', tone: 'light', layout: 'grid', decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' } },
   },
   {
-    name: '윤동주', slug: 'yun-dongju', email: 'yun-dongju@grimoire.app', preset: 'custom',
+    name: '윤동주', slug: 'yun-dongju', email: 'yun-dongju@example.com', preset: 'custom',
     description: '별 헤는 밤. 깊은 네이비 하늘에 금빛 별이 빛나는 고요함.',
     theme: { bgPrimary: '#0a0e1a', bgSecondary: '#101830', textPrimary: '#c8cad8', textMuted: '#6a6e88', textDim: '#404560', textBright: '#e0e2f0', accent: '#c8a854', accent2: '#e0c468', border: '#1e2440', fontBody: 'serif', fontHeading: 'serif', animation: 'fade', tone: 'dark', layout: 'grid', decorations: { dividerIcon: 'star', dividerColor: '#c8a854', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' } },
   },
   {
-    name: '이상', slug: 'yi-sang', email: 'yi-sang@grimoire.app', preset: 'custom',
+    name: '이상', slug: 'yi-sang', email: 'yi-sang@example.com', preset: 'custom',
     description: '날개를 펴는 실험. 극단적 흑백 대비와 기하학적 차가움.',
     theme: { bgPrimary: '#0a0a0a', bgSecondary: '#141414', textPrimary: '#e0e0e0', textMuted: '#808080', textDim: '#505050', textBright: '#ffffff', accent: '#ff3333', accent2: '#cc0000', border: '#2a2a2a', fontBody: 'monospace', fontHeading: 'sans-serif', animation: 'none', tone: 'dark', layout: 'grid', decorations: { dividerIcon: 'line', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'none', footerText: '' } },
   },
   {
-    name: '채만식', slug: 'chae-mansik', email: 'chae-mansik@grimoire.app', preset: 'custom',
+    name: '채만식', slug: 'chae-mansik', email: 'chae-mansik@example.com', preset: 'custom',
     description: '풍자의 붓. 따뜻한 황토빛과 머스타드의 해학적 온기.',
     theme: { bgPrimary: '#faf3e6', bgSecondary: '#f0e6cc', textPrimary: '#3a3020', textMuted: '#7a6e55', textDim: '#a89a78', textBright: '#1a1408', accent: '#c8961e', accent2: '#daa830', border: '#dcc898', fontBody: 'serif', fontHeading: 'sans-serif', animation: 'slide', tone: 'sepia', layout: 'grid', decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' } },
   },
   {
-    name: '이효석', slug: 'lee-hyoseok', email: 'lee-hyoseok@grimoire.app', preset: 'custom',
+    name: '이효석', slug: 'lee-hyoseok', email: 'lee-hyoseok@example.com', preset: 'custom',
     description: '메밀꽃 필 무렵의 달밤. 은은한 숲녹색과 크림빛 서정.',
     theme: { bgPrimary: '#f5f8f2', bgSecondary: '#e8ede4', textPrimary: '#2a3528', textMuted: '#6a7a66', textDim: '#98aa94', textBright: '#101a0e', accent: '#4a7a44', accent2: '#5e9456', border: '#c8d8c4', fontBody: 'serif', fontHeading: 'serif', animation: 'fade', tone: 'light', layout: 'grid', decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' } },
   },
   {
-    name: '김유정', slug: 'kim-yujeong', email: 'kim-yujeong@grimoire.app', preset: 'custom',
+    name: '김유정', slug: 'kim-yujeong', email: 'kim-yujeong@example.com', preset: 'custom',
     description: '봄봄의 흙내음. 적갈색 흙과 따스한 전원의 해학.',
     theme: { bgPrimary: '#f8f0e6', bgSecondary: '#ede2d2', textPrimary: '#382820', textMuted: '#7a6a58', textDim: '#a89480', textBright: '#1a100a', accent: '#a85a30', accent2: '#c46e3e', border: '#d8c4aa', fontBody: 'serif', fontHeading: 'serif', animation: 'slide', tone: 'sepia', layout: 'grid', decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' } },
   },
   {
-    name: '현진건', slug: 'hyun-jingeon', email: 'hyun-jingeon@grimoire.app', preset: 'custom',
+    name: '현진건', slug: 'hyun-jingeon', email: 'hyun-jingeon@example.com', preset: 'custom',
     description: '운수 좋은 날의 아이러니. 잿빛 비 오는 거리의 쓸쓸함.',
     theme: { bgPrimary: '#f0f0ee', bgSecondary: '#e4e4e0', textPrimary: '#2e2e2a', textMuted: '#6e6e68', textDim: '#a0a098', textBright: '#141412', accent: '#5a6a80', accent2: '#6e7e96', border: '#c8c8c4', fontBody: 'serif', fontHeading: 'serif', animation: 'fade', tone: 'light', layout: 'grid', decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' } },
   },
   {
-    name: '나도향', slug: 'na-dohyang', email: 'na-dohyang@grimoire.app', preset: 'custom',
+    name: '나도향', slug: 'na-dohyang', email: 'na-dohyang@example.com', preset: 'custom',
     description: '벙어리 삼룡이의 서러움. 짙은 황혼빛의 낭만적 비극.',
     theme: { bgPrimary: '#1a140e', bgSecondary: '#241c14', textPrimary: '#c8baa8', textMuted: '#7a6e5e', textDim: '#4e4438', textBright: '#e0d4c4', accent: '#c4884a', accent2: '#d49e5e', border: '#302820', fontBody: 'serif', fontHeading: 'serif', animation: 'fade', tone: 'dark', layout: 'grid', decorations: { dividerIcon: 'dot', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' } },
   },
   {
-    name: '한용운', slug: 'han-yongun', email: 'han-yongun@grimoire.app', preset: 'custom',
+    name: '한용운', slug: 'han-yongun', email: 'han-yongun@example.com', preset: 'custom',
     description: '님의 침묵. 먹빛 수묵화의 고요하고 단아한 기다림.',
     theme: { bgPrimary: '#f2f0ec', bgSecondary: '#e6e2da', textPrimary: '#282420', textMuted: '#686460', textDim: '#9a968e', textBright: '#0e0c0a', accent: '#4a4a4a', accent2: '#686868', border: '#ccc8c0', fontBody: 'serif', fontHeading: 'serif', animation: 'none', tone: 'light', layout: 'grid', decorations: { dividerIcon: 'line', dividerColor: '', headerIcon: 'none', headerSubtitle: '', cardAccentPosition: 'left', footerText: '' } },
   },

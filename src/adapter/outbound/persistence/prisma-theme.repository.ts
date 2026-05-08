@@ -100,7 +100,7 @@ export class PrismaThemeRepository implements ThemeRepositoryPort {
     await this.prisma.theme.delete({ where: { id: themeId } })
   }
 
-  async updateBakedCssUrl(themeId: string, url: string): Promise<void> {
+  async updateBakedCssUrl(themeId: string, url: string | null): Promise<void> {
     await this.prisma.theme.update({
       where: { id: themeId },
       data: { bakedCssUrl: url },

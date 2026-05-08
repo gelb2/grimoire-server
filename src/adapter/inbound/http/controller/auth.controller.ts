@@ -83,6 +83,11 @@ export class AuthController {
     await verifyRecaptcha(dto.recaptchaToken || '')
     const { ip, userAgent } = extractClientInfo(req)
 
+    // EMAIL-P0-3: identifier 통합 박제 — slug 로그인 시 slug, email 로그인 시 email
+    // AccessLog.email 컬럼은 schema 변경 0건 정책으로 양립 사용 (identifier 통합), detail에 type 박제
+    const identifier = dto.email ?? dto.slug ?? ''
+    const identifierType: 'email' | 'slug' = dto.email ? 'email' : 'slug'
+
     try {
       const { author, accessToken, refreshToken } = await this.authUseCase.login(dto)
 
@@ -95,16 +100,16 @@ export class AuthController {
         where: { authorId: author.id, isActive: true },
       })
       if (sanction) {
-        await this.accessLog.log({ action: 'login_blocked', authorId: author.id, email: dto.email, ip, userAgent, detail: `sanction:${sanction.type}` })
+        await this.accessLog.log({ action: 'login_blocked', authorId: author.id, email: identifier, ip, userAgent, detail: `sanction:${sanction.type};identifierType:${identifierType}` })
         throw new ForbiddenException(`계정이 정지되었습니다. 사유: ${sanction.reason}${sanction.endAt ? ` (해제: ${sanction.endAt.toISOString().split('T')[0]})` : ' (영구)'}`)
       }
 
       setTokenCookies(res, accessToken, refreshToken)
-      await this.accessLog.log({ action: 'login_success', authorId: author.id, email: dto.email, ip, userAgent })
+      await this.accessLog.log({ action: 'login_success', authorId: author.id, email: identifier, ip, userAgent, detail: `identifierType:${identifierType}` })
 
       return { user: userResponse(author) }
     } catch (err) {
-      await this.accessLog.log({ action: 'login_fail', email: dto.email, ip, userAgent, detail: (err as Error).message })
+      await this.accessLog.log({ action: 'login_fail', email: identifier, ip, userAgent, detail: `${(err as Error).message};identifierType:${identifierType}` })
       throw err
     }
   }

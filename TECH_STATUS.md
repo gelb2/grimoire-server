@@ -31,6 +31,9 @@
 | Reader (북마크/읽기 진행도) | 구현 완료 |
 | Discovery (검색/인기/최신 + 페이지네이션) | 구현 완료 |
 | Payment (Polar — 상품/웹훅/크레딧) | 구현 완료 |
+| Payment 웹훅 멱등성 (event_id @unique, PAY-P0-1) | 구현 완료 (2026-05-03) |
+| Payment PG↔DB 정합성 검증 cron (PAY-P0-2, 10분 주기) | 구현 완료 (2026-05-03) |
+| Payment 환불 정밀 처리 (PAY-P1-1, RefundLog + 크레딧 환수 트랜잭션 + deficit 분기) | 구현 완료 (2026-05-03) |
 | Admin (통계/사용자/콘텐츠/제재/신고/댓글/결제/접근로그/설정/감사로그 — 개수는 `docs/api-contract.md` 참조) | 구현 완료 |
 | Analysis (RAG 인덱싱/일관성 체크) | 구현 완료 |
 | Chat (AI 어시스턴트 — 세션/메시지/RAG) | 구현 완료 |
@@ -105,6 +108,9 @@
 - Redis 캐시 (테마 DB 호출 캐싱)
 - AI 채팅 스트리밍 (SSE)
 - HTML 파서 (최후순위)
+
+### 최근 완료 (P1)
+- **P1-#7 publishTheme bakedCssUrl 절대화 (2026-05-03)** — Blob 비활성/실패 시 NULL 박제 + 응답 시점 server 동적 절대화. 환경 전환 시 stale 박제 0건 보장. 마이그레이션 `20260503130451_baked_css_url_clear_relative` localhost 검증 완료. dev/prod는 사용자 명시 후 배포 — `MIGRATION.md` §7-Z 참조.
 
 ---
 

@@ -91,14 +91,41 @@ export class AdminUseCase {
   // ─── 크레딧 관리 ───
 
   async grantCredits(adminId: string, authorId: string, amount: number, reason: string): Promise<{ credits: number; log: CreditLog }> {
+    // PAY-P2-4: 잔액 사전 조회 → auditLog beforeState/afterState 박제
+    // 단순 패턴 (race condition은 §12 위험 영역 5번 별도 sprint로 분리)
+    const author = await this.authorRepo.findById(authorId)
+    if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
+    const balanceBefore = author.credits
+
     const result = await this.creditUseCase.grant(authorId, amount, `admin_grant:${reason}`)
-    await this.auditLog.log(adminId, 'credit_grant', authorId, { amount, reason })
+
+    await this.auditLog.log(
+      adminId,
+      'credit_grant',
+      authorId,
+      { amount, reason },
+      { credits: balanceBefore },
+      { credits: result.credits },
+    )
     return result
   }
 
   async deductCredits(adminId: string, authorId: string, amount: number, reason: string): Promise<{ credits: number; log: CreditLog }> {
+    // PAY-P2-4: 잔액 사전 조회 → auditLog beforeState/afterState 박제
+    const author = await this.authorRepo.findById(authorId)
+    if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
+    const balanceBefore = author.credits
+
     const result = await this.creditUseCase.deduct(authorId, amount, `admin_deduct:${reason}`)
-    await this.auditLog.log(adminId, 'credit_deduct', authorId, { amount, reason })
+
+    await this.auditLog.log(
+      adminId,
+      'credit_deduct',
+      authorId,
+      { amount, reason },
+      { credits: balanceBefore },
+      { credits: result.credits },
+    )
     return result
   }
 

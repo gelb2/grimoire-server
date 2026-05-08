@@ -2,9 +2,10 @@ import { PolarAdapter } from './polar.adapter'
 
 // Polar SDK 모킹 — 실제 HTTP 호출 방지
 const mockCreate = jest.fn()
+const mockList = jest.fn()
 jest.mock('@polar-sh/sdk', () => ({
   Polar: jest.fn().mockImplementation(() => ({
-    checkouts: { create: mockCreate },
+    checkouts: { create: mockCreate, list: mockList },
   })),
 }))
 
@@ -21,6 +22,7 @@ describe('PolarAdapter', () => {
 
   beforeEach(() => {
     mockCreate.mockReset()
+    mockList.mockReset()
     mockValidateEvent.mockReset()
     process.env.POLAR_ACCESS_TOKEN = 'test-token'
     process.env.POLAR_SERVER = 'sandbox'
@@ -149,7 +151,7 @@ describe('PolarAdapter', () => {
       'webhook-signature': 'v1,abc',
     }
 
-    it('order.paid 이벤트를 성공으로 정규화한다', () => {
+    it('order.paid 이벤트를 성공으로 정규화한다 (eventId 박제 포함, PAY-P0-1)', () => {
       mockValidateEvent.mockReturnValue({
         type: 'order.paid',
         data: {
@@ -164,12 +166,86 @@ describe('PolarAdapter', () => {
       const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
 
       expect(result).toEqual({
+        eventId: 'msg_123', // dummyHeaders['webhook-id']
         type: 'order.paid',
         tradeNo: 'checkout-abc',
         amount: 2000, // 199센트 → ₩2,000 (credit-5 상품 매핑, F1 2026-04-19 인상, Polar 패턴 $X.99=₩X,000)
         status: 'success',
         userId: 'author-1',
       })
+    })
+
+    // ============================================================================
+    // Sprint PAY-P0-1: webhook-id 헤더 추출 신규 검증
+    // ============================================================================
+
+    it('PAY-P0-1: webhook-id 헤더 누락 시 null 반환 (멱등성 보장 불가 → 안전 거부)', () => {
+      mockValidateEvent.mockReturnValue({
+        type: 'order.paid',
+        data: {
+          id: 'order-noeventid',
+          checkoutId: 'checkout-noeventid',
+          totalAmount: 199,
+          status: 'paid',
+          metadata: { authorId: 'author-1' },
+        },
+      })
+
+      const headersWithoutWebhookId = {
+        'webhook-timestamp': '1712345678',
+        'webhook-signature': 'v1,abc',
+        // webhook-id 누락
+      }
+
+      const result = adapter.verifyAndParseWebhook(dummyBody, headersWithoutWebhookId)
+
+      expect(result).toBeNull()
+    })
+
+    it('PAY-P0-1: webhook-id 헤더가 빈 문자열이면 null 반환', () => {
+      mockValidateEvent.mockReturnValue({
+        type: 'order.paid',
+        data: {
+          id: 'order-emptyid',
+          checkoutId: 'checkout-emptyid',
+          totalAmount: 199,
+          status: 'paid',
+          metadata: { authorId: 'author-1' },
+        },
+      })
+
+      const headersEmptyId = {
+        'webhook-id': '   ',
+        'webhook-timestamp': '1712345678',
+        'webhook-signature': 'v1,abc',
+      }
+
+      const result = adapter.verifyAndParseWebhook(dummyBody, headersEmptyId)
+
+      expect(result).toBeNull()
+    })
+
+    it('PAY-P0-1: 대문자 Webhook-Id fallback도 추출 가능 (프록시 정규화 안전망)', () => {
+      mockValidateEvent.mockReturnValue({
+        type: 'order.paid',
+        data: {
+          id: 'order-uppercase',
+          checkoutId: 'checkout-uppercase',
+          totalAmount: 199,
+          status: 'paid',
+          metadata: { authorId: 'author-1' },
+        },
+      })
+
+      const headersUpperCase = {
+        'Webhook-Id': 'msg_uppercase',
+        'webhook-timestamp': '1712345678',
+        'webhook-signature': 'v1,abc',
+      }
+
+      const result = adapter.verifyAndParseWebhook(dummyBody, headersUpperCase)
+
+      expect(result?.eventId).toBe('msg_uppercase')
     })
 
     it('checkoutId가 없으면 order id를 tradeNo로 폴백', () => {
@@ -328,6 +404,189 @@ describe('PolarAdapter', () => {
       expect(result).toBeNull()
 
       process.env.NODE_ENV = originalEnv
+    })
+  })
+
+  // ============================================================================
+  // Sprint PAY-P0-2: listRecentCheckouts (PG↔DB 정합성 cron용)
+  // ============================================================================
+  describe('listRecentCheckouts (Sprint PAY-P0-2)', () => {
+    it('Polar SDK list 호출 시 page/limit/sorting=-created_at 전달', async () => {
+      mockList.mockResolvedValue({ result: { items: [] } })
+
+      const since = new Date('2026-05-03T00:00:00Z')
+      await adapter.listRecentCheckouts(since, 100)
+
+      expect(mockList).toHaveBeenCalledWith({
+        page: 1,
+        limit: 100,
+        sorting: ['-created_at'],
+      })
+    })
+
+    it('limit이 100 초과면 100으로 캡, 1 미만이면 1로 보정', async () => {
+      mockList.mockResolvedValue({ result: { items: [] } })
+
+      await adapter.listRecentCheckouts(new Date(0), 500)
+      expect(mockList).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 100 }),
+      )
+
+      mockList.mockClear()
+      mockList.mockResolvedValue({ result: { items: [] } })
+      await adapter.listRecentCheckouts(new Date(0), 0)
+      expect(mockList).toHaveBeenCalledWith(
+        expect.objectContaining({ limit: 1 }),
+      )
+    })
+
+    it('checkout 결과를 NormalizedCheckout으로 정규화 (status/amount/createdAt)', async () => {
+      const checkoutCreatedAt = new Date('2026-05-03T12:00:00Z')
+      mockList.mockResolvedValue({
+        result: {
+          items: [
+            {
+              id: 'checkout-1',
+              status: 'succeeded',
+              totalAmount: 199, // credit-5 매핑
+              createdAt: checkoutCreatedAt,
+            },
+          ],
+        },
+      })
+
+      const since = new Date('2026-05-03T00:00:00Z')
+      const result = await adapter.listRecentCheckouts(since, 100)
+
+      expect(result).toHaveLength(1)
+      expect(result[0]).toEqual({
+        externalTransactionId: 'checkout-1',
+        status: 'succeeded',
+        amount: 2000, // credit-5 매핑 (priceUsd=199 → price=2000)
+        createdAt: checkoutCreatedAt,
+      })
+    })
+
+    it('since 이전 createdAt 도달 시 break (페이지 진행 중단)', async () => {
+      // page 1: 일부는 since 이후, 일부는 since 이전
+      const since = new Date('2026-05-03T12:00:00Z')
+      mockList.mockResolvedValueOnce({
+        result: {
+          items: [
+            {
+              id: 'recent-1',
+              status: 'succeeded',
+              totalAmount: 199,
+              createdAt: new Date('2026-05-03T13:00:00Z'),
+            },
+            {
+              id: 'old-1',
+              status: 'succeeded',
+              totalAmount: 199,
+              createdAt: new Date('2026-05-03T11:00:00Z'), // since 이전
+            },
+          ],
+        },
+      })
+
+      const result = await adapter.listRecentCheckouts(since, 100)
+
+      expect(result).toHaveLength(1)
+      expect(result[0].externalTransactionId).toBe('recent-1')
+      // since 이전 도달 → page 2 호출 안 됨
+      expect(mockList).toHaveBeenCalledTimes(1)
+    })
+
+    it('items.length < limit이면 마지막 페이지로 판정 → break', async () => {
+      // limit=100인데 page1에 50건만 → 다음 페이지 호출 안 됨
+      const items = Array.from({ length: 50 }, (_, i) => ({
+        id: `c-${i}`,
+        status: 'succeeded',
+        totalAmount: 199,
+        createdAt: new Date('2026-05-03T13:00:00Z'),
+      }))
+      mockList.mockResolvedValueOnce({ result: { items } })
+
+      const result = await adapter.listRecentCheckouts(
+        new Date('2026-05-03T00:00:00Z'),
+        100,
+      )
+
+      expect(result).toHaveLength(50)
+      expect(mockList).toHaveBeenCalledTimes(1)
+    })
+
+    it('Polar SDK list 호출 실패 시 래핑된 에러 throw', async () => {
+      mockList.mockRejectedValue(new Error('rate limit'))
+
+      await expect(
+        adapter.listRecentCheckouts(new Date(0), 100),
+      ).rejects.toThrow('Polar checkouts.list 호출 실패')
+    })
+
+    it('checkout.id가 없으면 collected에서 제외', async () => {
+      mockList.mockResolvedValueOnce({
+        result: {
+          items: [
+            {
+              // id 누락
+              status: 'succeeded',
+              totalAmount: 199,
+              createdAt: new Date('2026-05-03T13:00:00Z'),
+            },
+            {
+              id: 'valid-1',
+              status: 'succeeded',
+              totalAmount: 199,
+              createdAt: new Date('2026-05-03T13:00:00Z'),
+            },
+          ],
+        },
+      })
+
+      const result = await adapter.listRecentCheckouts(
+        new Date('2026-05-03T00:00:00Z'),
+        100,
+      )
+
+      expect(result).toHaveLength(1)
+      expect(result[0].externalTransactionId).toBe('valid-1')
+    })
+
+    it('checkout status를 NormalizedCheckout status로 정규화 (open/expired/failed)', async () => {
+      mockList.mockResolvedValueOnce({
+        result: {
+          items: [
+            {
+              id: 'c-open',
+              status: 'open',
+              totalAmount: 199,
+              createdAt: new Date('2026-05-03T13:00:00Z'),
+            },
+            {
+              id: 'c-expired',
+              status: 'expired',
+              totalAmount: 199,
+              createdAt: new Date('2026-05-03T13:00:00Z'),
+            },
+            {
+              id: 'c-failed',
+              status: 'failed',
+              totalAmount: 199,
+              createdAt: new Date('2026-05-03T13:00:00Z'),
+            },
+          ],
+        },
+      })
+
+      const result = await adapter.listRecentCheckouts(
+        new Date('2026-05-03T00:00:00Z'),
+        100,
+      )
+
+      expect(result.find((c) => c.externalTransactionId === 'c-open')?.status).toBe('open')
+      expect(result.find((c) => c.externalTransactionId === 'c-expired')?.status).toBe('failed')
+      expect(result.find((c) => c.externalTransactionId === 'c-failed')?.status).toBe('failed')
     })
   })
 })

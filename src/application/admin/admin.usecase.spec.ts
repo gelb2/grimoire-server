@@ -146,17 +146,63 @@ describe('AdminUseCase', () => {
   })
 
   describe('크레딧 관리', () => {
-    it('크레딧을 부여하고 감사 로그를 기록한다', async () => {
+    it('크레딧을 부여하고 감사 로그를 기록한다 (PAY-P2-4 — beforeState/afterState 박제)', async () => {
+      // mockAuthorRepo.findById는 author.credits=10 반환 (beforeEach 설정)
+      // mockCreditUseCase.grant는 result.credits=13 반환 (beforeEach 설정)
       const result = await useCase.grantCredits('admin-1', 'author-1', 10, '프로모션')
+
+      // findById 사전 조회 호출 확인 (PAY-P2-4 잔액 박제 게이트)
+      expect(mockAuthorRepo.findById).toHaveBeenCalledWith('author-1')
+
+      // creditUseCase.grant는 동일 인자
       expect(mockCreditUseCase.grant).toHaveBeenCalledWith('author-1', 10, 'admin_grant:프로모션')
-      expect(mockAuditLog.log).toHaveBeenCalledWith('admin-1', 'credit_grant', 'author-1', { amount: 10, reason: '프로모션' })
+
+      // PAY-P2-4: auditLog.log 6-arg 호출 — beforeState=10, afterState=13
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'admin-1',
+        'credit_grant',
+        'author-1',
+        { amount: 10, reason: '프로모션' },
+        { credits: 10 },  // balanceBefore
+        { credits: 13 },  // balanceAfter (creditUseCase.grant 반환값)
+      )
       expect(result.credits).toBe(13)
     })
 
-    it('크레딧을 차감하고 감사 로그를 기록한다', async () => {
+    it('크레딧을 차감하고 감사 로그를 기록한다 (PAY-P2-4 — beforeState/afterState 박제)', async () => {
       const result = await useCase.deductCredits('admin-1', 'author-1', 5, '정정')
+
+      expect(mockAuthorRepo.findById).toHaveBeenCalledWith('author-1')
       expect(mockCreditUseCase.deduct).toHaveBeenCalledWith('author-1', 5, 'admin_deduct:정정')
-      expect(mockAuditLog.log).toHaveBeenCalledWith('admin-1', 'credit_deduct', 'author-1', { amount: 5, reason: '정정' })
+
+      // PAY-P2-4: auditLog.log 6-arg 호출 — beforeState=10 (mock), afterState=5 (mock 반환값)
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'admin-1',
+        'credit_deduct',
+        'author-1',
+        { amount: 5, reason: '정정' },
+        { credits: 10 },  // balanceBefore
+        { credits: 5 },   // balanceAfter (creditUseCase.deduct 반환값)
+      )
+      expect(result.credits).toBe(5)
+    })
+
+    it('PAY-P2-4: grantCredits — author 미존재 시 NotFoundException + auditLog.log/grant 호출 0회', async () => {
+      mockAuthorRepo.findById.mockResolvedValueOnce(null)
+      await expect(
+        useCase.grantCredits('admin-1', 'missing-author', 10, '프로모션'),
+      ).rejects.toThrow(NotFoundException)
+      expect(mockCreditUseCase.grant).not.toHaveBeenCalled()
+      expect(mockAuditLog.log).not.toHaveBeenCalled()
+    })
+
+    it('PAY-P2-4: deductCredits — author 미존재 시 NotFoundException + auditLog.log/deduct 호출 0회', async () => {
+      mockAuthorRepo.findById.mockResolvedValueOnce(null)
+      await expect(
+        useCase.deductCredits('admin-1', 'missing-author', 5, '정정'),
+      ).rejects.toThrow(NotFoundException)
+      expect(mockCreditUseCase.deduct).not.toHaveBeenCalled()
+      expect(mockAuditLog.log).not.toHaveBeenCalled()
     })
   })
 

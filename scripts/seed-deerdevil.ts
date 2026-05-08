@@ -123,7 +123,7 @@ async function main() {
     const registerRes = await request<{ user: any }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({
-        email: 'deerdevil@grimoire.app',
+        email: 'deerdevil@example.com',
         password: process.env.SEED_PASSWORD ?? (() => { throw new Error('SEED_PASSWORD env 필수') })(),
         name: '사슴악마',
         slug: 'deerdevil',
@@ -137,7 +137,7 @@ async function main() {
     await request<{ user: any }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({
-        email: 'deerdevil@grimoire.app',
+        email: 'deerdevil@example.com',
         password: process.env.SEED_PASSWORD ?? (() => { throw new Error('SEED_PASSWORD env 필수') })(),
       }),
     })

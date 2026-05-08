@@ -194,6 +194,179 @@ npx prisma migrate resolve --applied {마이그레이션_이름}
 
 ---
 
+## 7-Z. 박제 이력: baked_css_url_clear_relative (2026-05-03, P1-#7)
+
+### 목적
+`themes.baked_css_url`에 박제된 stale 상대 경로(`/api/themes/css/...`)를 NULL로 정리. 응답 시점에 server가 환경별 `PUBLIC_API_BASE_URL`로 동적 절대화하는 정책으로 전환.
+
+### 변경 내용
+- DDL: 없음 (`bakedCssUrl: String?` 이미 NULL 허용 — schema.prisma 변경 0건)
+- DML: `UPDATE themes SET baked_css_url = NULL WHERE baked_css_url LIKE '/api/themes/css/%' OR baked_css_url = ''`
+- 무중단 OK (DDL 잠금 없음, NULL 일괄 업데이트만)
+
+### 적용 환경
+- localhost ✓ (2026-05-03 검증, stale row 0건)
+- development: 사용자 명시 후 배포 (다음 배포에서 자동 `migrate deploy`)
+- production: 사용자 명시 후 `RUN_MIGRATION=true`로 적용
+
+### 사전 백업 권장
+- localhost: 생략
+- dev/prod: `pg_dump --table=themes -d {DATABASE} > themes-backup-{ts}.sql` (1MB 미만)
+
+### 롤백 정책
+일방향 마이그레이션 (down 미작성). 운영 사고 시 publishTheme 재호출로 자동 재박제됨.
+메타만 정리 시 `npx prisma migrate resolve --rolled-back baked_css_url_clear_relative`.
+
+### 관련 환경변수
+- `PUBLIC_API_BASE_URL` 필수 (env.validation.ts에서 부팅 시 절대 URL 강제 검증)
+  - localhost: `http://localhost:3000/api`
+  - development: `https://dev-api.grimoire-book.com/api`
+  - production: `https://api.grimoire-book.com/api`
+
+### 관련 코드
+- `src/application/theme/bake-theme.usecase.ts` — Blob 비활성/실패 시 NULL 박제
+- `src/lib/url-resolver.ts` — 응답 절대화 헬퍼
+- `src/adapter/inbound/http/controller/theme.controller.ts` — publish/resolve/findByAuthorSlug 응답 절대화 적용
+
+---
+
+## 7-AA. 박제 이력: add_webhook_event_idempotency (2026-05-03, PAY-P0-1)
+
+### 목적
+PG (Polar 등) 웹훅 재전송 시 동일 `event_id`로 두 번째 호출이 들어와도 `completePaymentAtomically`가 단 1회만 실행되도록 멱등성 박제 테이블 신설. **돈은 냈는데 크레딧 두 번 들어가는 사고 0건** 보장.
+
+### 변경 내용
+- DDL: `CREATE TABLE webhook_events` + UNIQUE INDEX (`event_id`) + INDEX (`event_type`, `processed_at`)
+- DML: 없음 (신규 테이블 — 데이터 backfill 불필요)
+- 무중단 OK (기존 테이블 변경 0건)
+
+### 적용 환경
+- localhost ✓ (2026-05-03 검증, `\d webhook_events` PASS)
+- development: 사용자 명시 후 배포 (다음 배포에서 자동 `migrate deploy`)
+- production: 사용자 명시 후 `RUN_MIGRATION=true`로 적용
+
+### 사전 백업 권장
+- localhost: 생략
+- dev/prod: 신규 테이블만 추가 — 기존 데이터 백업 불필요. 단 안전망으로 `pg_dump --table=payments --data-only > backup-payments-{ts}.sql` 권장.
+
+### 롤백 정책
+일방향 마이그레이션 (down 미작성). 운영 사고 시:
+- 멱등성 게이트 비활성화: `webhookEventRepo.findByEventId` 결과 무시 패치 (긴급 핫픽스)
+- 데이터 정리: `DROP TABLE webhook_events;` (수동, 데이터 손실 허용)
+
+### 핵심 정책
+- `event_id` UNIQUE 제약으로 race condition 차단 (Prisma P2002 → safe skip → null 반환)
+- Polar `webhook-id` 헤더가 멱등성 키. 헤더 누락 시 어댑터가 null 반환 (안전 거부)
+- 처리 결과 박제: 'processed' / 'skipped' (already_completed, unknown_trade) / 'failed' (예외)
+
+### 관련 코드
+- `prisma/schema.prisma` — `model WebhookEvent`
+- `src/domain/port/outbound/webhook-event-repository.port.ts` — 포트
+- `src/adapter/outbound/persistence/prisma-webhook-event.repository.ts` — 어댑터 (P2002 catch)
+- `src/application/payment/payment.usecase.ts` — `processWebhook` 멱등성 게이트
+- `src/adapter/outbound/payment/polar.adapter.ts` — `webhook-id` 헤더 추출
+
+### 정본
+- `.claude/shared-contracts.md` §11 WebhookEventIdempotency
+- `reports/sprint-pay-p0-1-webhook-event-id-idempotency-progress.md` (Sprint 단일 진실)
+
+---
+
+## 7-Z. 박제 이력: add_reconciliation_checkpoint (2026-05-03, PAY-P0-2)
+
+### 목적
+PG↔DB 정합성 검증 cron이 사용할 단일 row checkpoint 테이블 신설. cron이 매 실행 시 `lastRunAt` 기준으로 since 필터를 결정하고, 카운터(processed/boost/mismatch/expire)를 박제. **사용자 신고 의존 0건 + webhook 누락 자동 보정 보장**.
+
+### 변경 내용
+- DDL: `CREATE TABLE reconciliation_checkpoints` (TEXT PK default 'singleton' + 타임스탬프 + 4 카운터 + errorMessage + updatedAt)
+- DML: `INSERT INTO reconciliation_checkpoints VALUES ('singleton', NOW() - INTERVAL '24 hours') ON CONFLICT DO NOTHING` (singleton seed 1회)
+- 무중단 OK (기존 테이블 변경 0건)
+
+### 적용 환경
+- localhost ✓ (2026-05-03 검증, `\d reconciliation_checkpoints` PASS + SELECT 결과 1 row 박제)
+- development: 사용자 명시 후 배포 (다음 배포에서 자동 `migrate deploy`)
+- production: 사용자 명시 후 `RUN_MIGRATION=true`로 적용
+
+### 사전 백업 권장
+- localhost: 생략
+- dev/prod: 신규 테이블만 추가 — 기존 데이터 백업 불필요. 단 안전망으로 `pg_dump --table=payments --data-only > backup-payments-{ts}.sql` 권장 (cron의 boost/expire가 PROD payments status 변경 가능).
+
+### 롤백 정책
+일방향 마이그레이션 (down 미작성). 운영 사고 시:
+- cron 비활성화 (즉시): `RECONCILIATION_DISABLED=1` 환경변수 (Container Apps env 갱신 → 재배포 없이 cron 진입 즉시 return)
+- 데이터 정리: `DROP TABLE reconciliation_checkpoints;` (수동, 데이터 손실 허용 — 단일 row만 손실)
+
+### 핵심 정책
+- 단일 row 보장: id default 'singleton' + INSERT seed 1회 + ON CONFLICT DO NOTHING
+- cron 주기: `@Cron('0 */10 * * * *')` 10분 (cost-accountant 권고 — Polar `/v1` rate limit 분당 500회 default 그룹 → 사용률 1% 미만, 안전 마진 100배+)
+- 4 시나리오: S1 boost(PG=succeeded+DB=pending) / S2 mismatch(PG=refunded+DB=completed → P1-1 위임) / S3 expire(pending 24h+ stale 정리) / S4 정합(skip)
+- 모든 자동 보정 action은 AdminAuditLog에 `operator='system_reconciliation'` 박제 (3 action: reconciliation_boost / reconciliation_refund_mismatch / reconciliation_expire)
+- 동시 cron 차단: in-memory `isRunning` lock + try-finally 해제 (replicas ≥2 시점에는 advisory_lock 보강 — PAY-P1)
+
+### 관련 코드
+- `prisma/schema.prisma` — `model ReconciliationCheckpoint`
+- `src/domain/port/outbound/reconciliation-checkpoint-repository.port.ts` — 포트
+- `src/adapter/outbound/persistence/prisma-reconciliation-checkpoint.repository.ts` — 어댑터 (singleton upsert)
+- `src/application/payment/payment-reconciliation.job.ts` — `@Injectable @Cron` 본체
+- `src/adapter/outbound/payment/polar.adapter.ts` — `listRecentCheckouts` (Polar SDK page+limit+sorting)
+- `src/adapter/outbound/persistence/prisma-payment.repository.ts` — `findPendingPaymentsOlderThan` + `expirePayment`
+
+### 정본
+- `.claude/shared-contracts.md` §12 PaymentReconciliation
+- `reports/sprint-pay-p0-2-payment-reconciliation-cron-progress.md` (Sprint 단일 진실)
+
+---
+
+## 7-AB. 박제 이력: add_refund_log (2026-05-03, PAY-P1-1)
+
+### 목적
+Polar 환불 webhook 수신 시 크레딧 환수 트랜잭션의 영구 박제 테이블 신설. 현재 갭(payment.usecase 'cancel' 분기에서 status='refunded' 마킹만, 크레딧 환수 부재 → 적자 위험)을 차단. RefundPaymentUseCase가 `paymentRepo.refundPaymentAtomically` $transaction 내부에서 `Author.credits decrement(0 fix)` + `CreditLog 음수 amount` + `RefundLog` 박제 + `AdminAuditLog(operator='system_refund')` 후행. **잔액 부족 시 0 fix + deficit_credits 박제로 음수 잔액 절대 차단**.
+
+### 변경 내용
+- DDL: `CREATE TABLE refund_logs` (TEXT PK + payment_id + amount/credits/deficit_credits Int + reason + processed_at Timestamptz(3) + source)
+- INDEX: `CREATE INDEX refund_logs_payment_id_idx ON refund_logs(payment_id)` (Payment별 환불 이력 조회)
+- INSERT seed: 0건 (신규 테이블 — 시드 강제 0)
+- 무중단 OK (기존 테이블 변경 0건, 신규 테이블 추가만)
+
+### 적용 환경
+- localhost ✓ (2026-05-03 검증, `\d refund_logs` PASS — 8 컬럼 + PK + payment_id_idx)
+- development: 사용자 명시 후 배포 (다음 배포에서 자동 `migrate deploy`)
+- production: 사용자 명시 후 `RUN_MIGRATION=true`로 적용
+
+### 사전 백업 권장
+- localhost: 생략
+- dev/prod: 신규 테이블만 추가 — 기존 데이터 백업 불필요. 단 안전망으로 `pg_dump --table=payments --table=authors --table=credit_logs --data-only > backup-{ts}.sql` 권장 (refund 트랜잭션이 Author.credits + CreditLog 변경).
+
+### 롤백 정책
+일방향 마이그레이션 (down 미작성). 운영 사고 시:
+- 환불 처리 비활성화 (즉시): payment.usecase 'cancel' 분기 revert (단일 commit) — refundPaymentUseCase 호출 라인 제거 → status='refunded' 마킹만 (현재 갭 그대로 복원)
+- 데이터 정리: `DROP TABLE refund_logs;` (수동, 환불 박제 손실 허용 — payment.status='refunded' + Author.credits + CreditLog는 그대로 보존)
+- DB 차원 환수 결과(Author.credits decrement)는 commit 후 복원 불가 → DB dump 활용 또는 운영자 수동 보정
+
+### 핵심 정책
+- **잔액 부족 시 0 fix**: `actualDeducted = Math.min(currentBalance, credits)` + `deficitCredits = Math.max(0, credits - currentBalance)`. Author.credits = 0 floor 절대 차단.
+- **CreditLog 음수 박제 대칭**: 같은 $transaction 내부에서 `credit_logs.amount = -actualDeducted` (계정 잔액 합산 정합 — `completePaymentAtomically` 양수와 정합)
+- **AdminAuditLog 후행**: `operator='system_refund'`, `action='refund_normal' | 'refund_deficit'`. $transaction 외부 호출 → AuditLog 실패 시 환수는 commit 유지 + logger.warn만.
+- **3중 멱등성**:
+  - L1: PAY-P0-1 `webhook_events.eventId @unique` (재전송 차단)
+  - L2: payment.usecase 진입 시 `payment.status='completed'` 체크 (이미 환불된 payment skip)
+  - L3: `refund_logs` 박제 (조회 + 추적). 단 L3는 unique 미부여 → P2-1 부분 환불 호환성 확보
+- **'fail' webhook 환수 대상 0**: `event.status='cancel'` 분기에서만 refund usecase 호출. `event.status='fail'`은 단순 status='failed' 갱신.
+
+### 관련 코드
+- `prisma/schema.prisma` — `model RefundLog`
+- `src/domain/port/outbound/payment-repository.port.ts` — `refundPaymentAtomically` 시그니처
+- `src/adapter/outbound/persistence/prisma-payment.repository.ts` — `refundPaymentAtomically` $transaction 구현 (Payment.update + Author.findUnique + Author.update + creditLog.create + refundLog.create)
+- `src/application/payment/refund-payment.usecase.ts` — `RefundPaymentUseCase.execute` (정상/deficit 분기 + AuditLog 후행)
+- `src/application/payment/payment.usecase.ts` — `processWebhook` 'cancel' 분기에서 refund usecase 호출
+- `src/app.module.ts` — `RefundPaymentUseCase` providers 추가
+
+### 정본
+- `.claude/shared-contracts.md` §13 RefundPaymentAtomically
+- `reports/sprint-pay-p1-1-refund-atomicity-progress.md` (Sprint 단일 진실)
+
+---
+
 ## 8. 마이그레이션 변경 이력 문서화
 
 > 마이그레이션 파일(`prisma/migrations/`)은 git이 관리하지만, **왜 변경했는지**는 코드에 남지 않는다.

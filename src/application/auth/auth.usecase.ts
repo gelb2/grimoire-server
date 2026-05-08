@@ -64,16 +64,36 @@ export class AuthUseCase {
     return { author, accessToken, refreshToken }
   }
 
-  /** 이메일 + 비밀번호 로그인 */
-  async login(input: { email: string; password: string }) {
-    const author = await this.authorRepo.findByEmail(input.email)
+  /**
+   * 이메일 또는 슬러그 + 비밀번호 로그인 — EMAIL-P0-3 slug 로그인 마이그레이션
+   *
+   * 정책 (LoginDto class-validator XOR 강제와 정합):
+   * - email 박제 → findByEmail 분기 (기존 email 로그인 후향호환)
+   * - slug 박제 → findBySlug 분기 (신규 slug 로그인)
+   * - 둘 다 박제 → BadRequest ("이메일 또는 슬러그 중 하나만 박제하세요")
+   * - 둘 다 미박제 → BadRequest ("이메일 또는 슬러그가 필요합니다")
+   * - author 미존재 또는 비번 불일치 → UnauthorizedException 통일 메시지 (식별자 노출 회피)
+   */
+  async login(input: { email?: string; slug?: string; password: string }) {
+    // class-validator를 통과해도 트랜스포트 단계에서 우회될 수 있어 도메인에서도 강제 검증
+    if (input.email && input.slug) {
+      throw new BadRequestException('이메일 또는 슬러그 중 하나만 박제하세요')
+    }
+    if (!input.email && !input.slug) {
+      throw new BadRequestException('이메일 또는 슬러그가 필요합니다')
+    }
+
+    const author = input.email
+      ? await this.authorRepo.findByEmail(input.email)
+      : await this.authorRepo.findBySlug(input.slug!)
+
     if (!author || !author.passwordHash) {
-      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다')
+      throw new UnauthorizedException('이메일/슬러그 또는 비밀번호가 올바르지 않습니다')
     }
 
     const valid = await bcrypt.compare(input.password, author.passwordHash)
     if (!valid) {
-      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다')
+      throw new UnauthorizedException('이메일/슬러그 또는 비밀번호가 올바르지 않습니다')
     }
 
     const accessToken = this.generateAccessToken(author)
@@ -91,6 +111,15 @@ export class AuthUseCase {
     })
     const payload = ticket.getPayload()
     if (!payload?.email) throw new UnauthorizedException('Google 인증 실패')
+
+    // OAuth 자동 링크 보안 강화 (트랙 F 강화안 A — sprint #10_7)
+    // RFC 6819 §5.1.1 / OWASP A07:2021 — email_verified=false 차단으로
+    // victim 이메일의 미인증 OAuth 계정이 기존 일반 회원 계정을 자동 인수하는 위험 차단.
+    if (payload.email_verified === false) {
+      throw new UnauthorizedException(
+        'Google 이메일이 아직 인증되지 않았습니다. Google 계정에서 이메일 인증 후 다시 시도해주세요.',
+      )
+    }
 
     // 이미 소셜 계정으로 연결된 유저 찾기
     let author = await this.authorRepo.findBySocialAccount('google', payload.sub!)

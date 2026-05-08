@@ -1,5 +1,225 @@
 # Changelog — grimoire-server
 
+## [0.34.0] - 2026-05-04
+
+### Feat — 결제 실패 retry 정책 + pending 24h 재사용 + cleanup cron (PAY-P1-3, sprint-pay-p1-3-retry-policy)
+
+#### Added
+- `application/payment/payment-cleanup.job.ts` — `PaymentCleanupJob` 신설 (`@Cron('0 0 4 * * *')` 매일 새벽 4시). `findPendingPaymentsOlderThan(24)` → row 별 `expirePayment` + `auditLog.log('system_cleanup', 'payment_expire', ...)`. `process.env.PAYMENT_CLEANUP_DISABLED === '1'` 비활성화 게이트 + `isRunning` 동시 실행 차단 + try-finally lock 해제 + 개별 row 실패 resilient (다음 row 처리 계속)
+- `application/payment/payment-cleanup.job.spec.ts` — 6 it 블록 (정상 다건 / 빈 목록 / 24h 이내 보존 / disabled env / isRunning lock / row 단건 실패 시 다음 row 계속)
+- `adapter/outbound/persistence/prisma-payment.repository.spec.ts` — `findReusablePendingPayment` 5 it (정상 재사용 / 24h 초과 / 다른 productId / 다른 authorId / orderBy createdAt DESC + LIMIT 1)
+- `domain/port/outbound/payment-repository.port.ts` — `findReusablePendingPayment(authorId, productId, expireSince)` 시그니처 추가
+- `adapter/outbound/persistence/prisma-payment.repository.ts` — `findReusablePendingPayment` `findFirst` 구현 (WHERE: authorId AND productId AND status='pending' AND createdAt > expireSince, ORDER BY createdAt DESC, LIMIT 1)
+- `application/payment/payment.usecase.spec.ts` — PAY-P1-3 4 it 블록 (재사용 적중 + create 0회 + Polar URL 재발급 / 24h 초과 신규 create / expireSince 시간 정합 / race 시뮬 — Polar SDK 1회 + tradeNo 갱신 1회)
+
+#### Changed
+- `application/payment/payment.usecase.ts` — `initiatePayment` 진입 게이트 추가. `expireSince = now-24h` → `findReusablePendingPayment` 호출 → 적중 시 paymentId 재사용 + create 호출 0회, null 시 신규 생성. `paymentGateway.initiatePayment` + `updateExternalTransactionId`는 분기 무관 항상 호출 (Polar SDK 매 호출 신규 URL 발급 정책 정합).
+- `app.module.ts` — `PaymentCleanupJob` providers 등록 (PAY-P0-2 `PaymentReconciliationJob` 패턴 정합)
+
+#### Unchanged
+- DB schema 변경 0건 — `Payment.status` enum 'expired'는 PAY-P0-2에서 도입됨, 본 sprint에서 활용
+- web 변경 0건 — server 도메인만
+
+#### Tests
+- `npm test`: 558/558 PASS (43 suites, 신규 spec +15건 — cleanup job 6 + repo 5 + usecase 4)
+- `npx tsc --noEmit`: 0 errors
+- `npm run build`: 0 errors
+
+#### Docs
+- `docs/api-contract.md` — `POST /payments/initiate` 재사용 정책 박제 (paymentId 동일 반환 + Polar URL 신규 발급)
+- `docs/data-model.md` — Payment status enum 'expired' 사용 명세 (PAY-P0-2 도입 + PAY-P1-3 활용)
+
+#### CERTI_PROJ 차용 결정
+- 부적합: 구독제 매월 5일 배치 vs Grimoire 일회성 + 즉시 재시도 UX → 다른 구조
+- 차용: pending 만료 cron 패턴은 자체 PAY-P0-2 reconciliation 패턴 정합 (외부 인용 0건)
+
+---
+
+## [0.33.0] - 2026-05-03
+
+### Feat — Refund 정밀 처리 + 크레딧 환수 트랜잭션 (PAY-P1-1, sprint-pay-p1-1-refund-atomicity)
+
+#### Added
+- `prisma/schema.prisma` — `model RefundLog` 신설 (id/paymentId/amount/credits/deficitCredits @default(0)/reason/processedAt/source + @@index([paymentId]) + @@map("refund_logs"))
+- `prisma/migrations/20260503160000_add_refund_log/migration.sql` — `refund_logs` 테이블 + INDEX(payment_id). INSERT seed 0건. 무중단 OK (신규 테이블 추가만)
+- `domain/port/outbound/payment-repository.port.ts` — `refundPaymentAtomically(input): Promise<{ actualDeducted, deficitCredits }>` 시그니처 추가 (객체 인자 1개 + 반환 객체)
+- `adapter/outbound/persistence/prisma-payment.repository.ts` — `refundPaymentAtomically` $transaction 구현. 처리 순서: tx.payment.update(status='refunded') → tx.author.findUnique(잔액) → actualDeducted/deficitCredits 계산(Math.min/Math.max) → tx.author.update(decrement) → tx.creditLog.create(amount=-actualDeducted) → tx.refundLog.create. 음수 잔액 절대 차단(0 fix).
+- `application/payment/refund-payment.usecase.ts` — `RefundPaymentUseCase` 신설. paymentRepo.refundPaymentAtomically 호출 후 auditLogService.log('system_refund', deficitCredits>0 ? 'refund_deficit' : 'refund_normal', paymentId, detail) 후행. AuditLog 실패는 환수 commit에 영향 없음(logger.warn만).
+- `application/payment/refund-payment.usecase.spec.ts` — 9 it 블록 (정상 환수 / source=manual reason 박제 / deficit 분기 잔액 30 / 잔액 0 / boundary 잔액=credits / 음수 입력 BadRequest / repo throw 위임 / AuditLog 실패 후 환수 결과 반환 / reason 박제 정합)
+- `application/payment/payment.usecase.spec.ts` — PAY-P1-1 회귀 4 it 신규 (cancel → refund usecase 1회 호출 + 입력 정합 / fail → refund usecase 호출 0회 / cancel + deficit 응답 박제 / cancel + refund 트랜잭션 실패 시 webhook event 'failed' 박제 + throw)
+
+#### Changed
+- `application/payment/payment.usecase.ts` — `processWebhook` 'cancel' 분기 신설. `event.status === 'cancel'`일 때 RefundPaymentUseCase.execute 호출(paymentId/authorId/credits/refundedAmount/reason='polar_webhook_${type}'/source='webhook'). 응답에 deficitCredits 포함. refund 실패 시 webhook event 'failed' 박제 후 throw. `event.status === 'fail'`은 기존 status='failed' 갱신만 유지(환수 대상 아님).
+- `app.module.ts` — `RefundPaymentUseCase` providers 추가 (DI)
+- `payment.usecase.spec.ts` — PaymentUseCase 생성자 시그니처 변경(refundPaymentUseCase 인자 추가) 정합 갱신
+
+#### Tests
+- `npm test`: 543/543 PASS (41 suites, 신규 spec +11건 — refund usecase 9 + payment usecase 4 회귀 - 1 기존 'cancel' it 갱신)
+- `npx tsc --noEmit`: 0 errors
+- `npm run build`: 0 errors
+
+#### Docs
+- `docs/data-model.md` — refund_logs 테이블 박제 (테이블 23개)
+- `SCHEMA.md` — RefundLog Prisma 매핑 + 잔액 부족 0 fix 정책 + 3중 멱등성 박제
+- `MIGRATION.md` §7-AB — add_refund_log 마이그레이션 절차 + 롤백 정책 + 핵심 정책(0 fix / CreditLog 음수 대칭 / AuditLog 후행 / 3중 멱등성 / 'fail' 환수 대상 0)
+- `TECH_STATUS.md` — Payment 환불 정밀 처리 (PAY-P1-1) 박제
+- `.claude/shared-contracts.md` §13 — RefundPaymentAtomically 인터페이스 정본 (planner Initializer 사전 박제 완료)
+- `eval/tasks/regression-55-refund-atomicity.json` — 9 eval_criteria
+- `.claude/scripts/sensor-refund-atomicity.sh` — 10 검증 항목 (PASS 10/10)
+- `research/HARNESS_ENGINEERING.md` §14.4 — Sensors 28 → 29 갱신 + sensor-refund-atomicity 행 박제 (drift 0)
+
+#### Rationale
+- 기존 갭(PAYMENT_SYSTEM_PLAN §1-5 #4): payment.usecase 'cancel' 분기에서 `paymentRepo.updateStatus(payment.id, 'refunded')` 마킹만 호출. **크레딧 환수 트랜잭션 부재** → 환불 시 사용자가 크레딧 그대로 보유 + 환불금 수령 → 적자 위험.
+- 이번: Polar 환불 webhook 수신 시 RefundPaymentUseCase가 단일 $transaction(Payment.status='refunded' + Author.credits decrement + CreditLog 음수 + RefundLog 박제) + AuditLog 후행. 잔액 부족 시 0 fix + deficitCredits 박제 → 운영자가 RefundLog 조회 후 외상 회수/손실/사용자 협상 정책 결정.
+- 3중 멱등성: PAY-P0-1 webhook_events.eventId @unique(L1) + payment.status='completed' 사전 체크(L2) + RefundLog 박제(L3). L3는 unique 미부여 → P2-1 부분 환불 호환성 확보.
+- 책 Ch 16 Anthropic 3-에이전트(Initializer→Generator→Evaluator) 묶음 II 6회차. Sprint 계약 정본: `reports/sprint-pay-p1-1-refund-atomicity-progress.md`. cost-accountant 면제(AI 호출 0건) + VCK 면제(시각 정본 변경 0건).
+
+### DB 마이그레이션: add_refund_log
+- **목적**: 환불 webhook 시 크레딧 환수 트랜잭션의 영구 박제 + 잔액 부족 추적(deficit_credits)
+- **변경 내용**: 신규 테이블 `refund_logs` (TEXT PK + payment_id + amount/credits/deficit_credits Int + reason + processed_at Timestamptz(3) + source) + INDEX(payment_id). 기존 테이블 변경 0건. INSERT seed 0건.
+- **롤백 방법**: 일방향 (down 미작성). 환불 처리 비활성화: payment.usecase 'cancel' 분기 revert (단일 commit). 데이터 정리: `DROP TABLE refund_logs;` (수동, 환불 박제 손실 허용 — Author.credits + CreditLog는 보존)
+- **적용 환경**: localhost ✓ (2026-05-03 검증, `\d refund_logs` PASS) / development - / production -
+
+---
+
+## [0.32.0] - 2026-05-03
+
+### Feat — PG↔DB 정합성 검증 cron (PAY-P0-2, sprint-pay-p0-2-payment-reconciliation-cron)
+
+#### Added
+- `prisma/schema.prisma` — `model ReconciliationCheckpoint` 신설 (id default 'singleton', lastRunAt/processedCount/boostCount/mismatchCount/expireCount/errorMessage/updatedAt). 단일 row 보장
+- `prisma/migrations/20260503150000_add_reconciliation_checkpoint/migration.sql` — `reconciliation_checkpoints` 테이블 + INSERT singleton seed (lastRunAt = NOW() - 24h, ON CONFLICT DO NOTHING). 신규 테이블 추가만 — 무중단 OK
+- `domain/port/outbound/reconciliation-checkpoint-repository.port.ts` — ReconciliationCheckpointRepositoryPort 신설 (findSingleton + update)
+- `domain/port/outbound/payment-gateway.port.ts` — `NormalizedCheckout` 타입 + `listRecentCheckouts(since, limit)` 시그니처 신설
+- `domain/port/outbound/payment-repository.port.ts` — `findPendingPaymentsOlderThan(hours)` + `expirePayment(paymentId)` 신설
+- `adapter/outbound/persistence/prisma-reconciliation-checkpoint.repository.ts` — Prisma 어댑터 (singleton upsert, default seed fallback)
+- `adapter/outbound/persistence/prisma-reconciliation-checkpoint.repository.spec.ts` — findSingleton (정상/seed) + update (errorMessage 박제 / null 초기화)
+- `adapter/outbound/payment/polar.adapter.ts` — `listRecentCheckouts` 메서드 + `mapCheckoutStatus` 헬퍼. Polar SDK `polar.checkouts.list({ page, limit, sorting: ['-created_at'] })` 호출 + clientSide `since` 필터 + 페이지네이션 (since 도달/마지막 페이지 break). 안전 상한 page 20
+- `application/payment/payment-reconciliation.job.ts` — `@Injectable @Cron('0 */10 * * * *')` 신설. 4 시나리오 (S1 boost/S2 mismatch/S3 expire/S4 정합) + isRunning lock + try-finally 해제 + checkpoint update + 3 action AuditLog (operator='system_reconciliation') + RECONCILIATION_DISABLED env 게이트
+- `application/payment/payment-reconciliation.job.spec.ts` — 9 it 블록 (S1~S4 + 동시실행 lock + 예외 errorMessage + lastRunAt 갱신 + 빈 응답 + RECONCILIATION_DISABLED)
+
+#### Changed
+- `adapter/outbound/persistence/prisma-payment.repository.ts` — `findPendingPaymentsOlderThan` (status='pending' + createdAt < NOW() - hours) + `expirePayment` (updateMany WHERE status='pending' SET status='expired') 박제
+- `app.module.ts` — `ScheduleModule.forRoot()` import + `PaymentReconciliationJob` providers + `ReconciliationCheckpointRepositoryPort` DI 바인딩
+- `package.json` — `@nestjs/schedule@^6.1.3` 의존성 추가
+
+#### Tests
+- `application/payment/payment-reconciliation.job.spec.ts` — 9건 (4 시나리오 mock 정밀 검증 + 동시 실행 lock + 예외 errorMessage 박제 + checkpoint lastRunAt 갱신 + 빈 응답 안전 종료 + RECONCILIATION_DISABLED 게이트)
+- `adapter/outbound/payment/polar.adapter.spec.ts` — 7건 신규 it (page/limit/sorting/limit cap/정규화/since break/마지막페이지/SDK 실패/id 누락/status 매핑)
+- `adapter/outbound/persistence/prisma-reconciliation-checkpoint.repository.spec.ts` — 5건 (findSingleton 정상/seed 폴백, update upsert/errorMessage/null 초기화)
+- 전체 `npm test`: 532/532 PASS (40 suites, 신규 spec 22건)
+- `npx tsc --noEmit`: 0 errors
+- `npm run build`: 0 errors
+
+#### Docs
+- `docs/data-model.md` — reconciliation_checkpoints 테이블 박제
+- `SCHEMA.md` — ReconciliationCheckpoint Prisma 매핑 + singleton 정책 박제
+- `docs/api-contract.md` — 내부 cron 명세 박제 (HTTP 미노출)
+- `MIGRATION.md` §7-Z — 본 마이그레이션 절차 + INSERT singleton seed 박제
+- `TECH_STATUS.md` — PAY-P0-2 완료 박제
+- `INFRASTRUCTURE.md` — Container Apps cron 모니터링 안내 (PaymentReconciliationJob 로그 패턴)
+- `.claude/shared-contracts.md` §12 — PaymentReconciliation 인터페이스 정본 (claude-docs 사전 박제 완료)
+
+#### Rationale
+- 기존: PG 측 webhook 누락 발견 0건 (사용자 신고 의존). Polar 장애/네트워크 단절/Container Apps cold start 동안 webhook timeout 시 영구 누락 가능 → 사용자 "크레딧 안 들어왔다" CS 신고 전까지 운영자가 모름
+- 이번: 10분 주기 cron이 Polar checkouts.list로 PG 측 truth와 DB 비교 → S1 boost(자동 보정) / S2 mismatch(P1-1 위임 마크) / S3 expire(stale pending 정리) / S4 정합(skip). **사용자 신고 의존 0건** + **자동 보정 보장**
+- cron 주기 10분 결정 근거 (cost-accountant): Polar `/v1` rate limit 분당 500회 default 그룹 → 10분 cron 사용률 1% 미만 (안전 마진 100배+). §0 면제 (인프라 비용 ₩0 증분)
+- 책 Ch 16 Anthropic 3-에이전트 (Initializer → Generator → Evaluator) 묶음 II 4회차. 책 Ch 16 충돌 2번 해결책 (shared state via DB single-row checkpoint). 의료 결제 시스템의 `@Cron('*/10 * * * * *')` 정합성 검증 패턴 참고 → Grimoire 결제 규모에 맞춰 10분으로 완화. Sprint 계약 정본: `reports/sprint-pay-p0-2-payment-reconciliation-cron-progress.md`
+
+### DB 마이그레이션: add_reconciliation_checkpoint
+- **목적**: PG↔DB 정합성 cron checkpoint 박제 — 단일 row(id='singleton')로 cron lastRunAt + 카운터 추적
+- **변경 내용**: 신규 테이블 `reconciliation_checkpoints` (TEXT PK default 'singleton' + lastRunAt + 4 카운터 + errorMessage + updatedAt). 기존 테이블 변경 0건. INSERT seed 1회 (lastRunAt = NOW() - 24h, ON CONFLICT DO NOTHING)
+- **롤백 방법**: 일방향 (down 미작성). cron 비활성화: `RECONCILIATION_DISABLED=1` 환경변수 또는 `DROP TABLE reconciliation_checkpoints;` 핫픽스
+- **적용 환경**: localhost ✓ / development - / production -
+
+---
+
+## [0.31.0] - 2026-05-03
+
+### Feat — Webhook event_id 멱등성 게이트 (PAY-P0-1, sprint-pay-p0-1-webhook-event-id-idempotency)
+
+#### Added
+- `prisma/schema.prisma` — `model WebhookEvent` 신설 (event_id @unique, source/event_type/payload/status/error_message/processed_at)
+- `prisma/migrations/20260503143403_add_webhook_event_idempotency/migration.sql` — `webhook_events` 테이블 + UNIQUE INDEX (event_id) + INDEX (event_type, processed_at). 신규 테이블 추가만 — 무중단 OK, 기존 테이블 변경 0건
+- `domain/port/outbound/webhook-event-repository.port.ts` — WebhookEventRepositoryPort 신설 (findByEventId / createIfAbsent / markStatus). createIfAbsent는 P2002 시 null 반환 (race 안전)
+- `adapter/outbound/persistence/prisma-webhook-event.repository.ts` — Prisma 어댑터. P2002 unique 제약 위반 시 null 반환
+- `adapter/outbound/persistence/prisma-webhook-event.repository.spec.ts` — 8건 (findByEventId 정상/null, createIfAbsent 정상/P2002/기타예외/기본값/errorMessage, markStatus 2건)
+
+#### Changed
+- `domain/port/outbound/payment-gateway.port.ts` — NormalizedWebhookEvent에 `eventId: string` 필드 신설. 어댑터가 PG 발급 unique ID를 박제 (Polar의 `webhook-id` 헤더)
+- `adapter/outbound/payment/polar.adapter.ts` — `extractWebhookId` 헬퍼 신설 (`webhook-id` 소문자 + 대문자 fallback). 헤더 누락/빈 문자열 시 null 반환 (멱등성 보장 불가 → 안전 거부)
+- `application/payment/payment.usecase.ts` — `processWebhook`에 멱등성 게이트 박제. 흐름: verifyAndParseWebhook → findByEventId(중복 → duplicate_event skip) → findByExternalTransactionId → completePaymentAtomically → createIfAbsent(processed). 실패/스킵 케이스도 webhook event 박제 (status='skipped' 또는 'failed')
+- `app.module.ts` — `WebhookEventRepositoryPort` DI 바인딩 추가
+
+#### Tests
+- `application/payment/payment.usecase.spec.ts` — 4건 신규 it 추가:
+  1. 동일 eventId 두 번 호출 시 첫 호출만 completePaymentAtomically (`toHaveBeenCalledTimes(1)` 검증)
+  2. createIfAbsent race(null 반환) 시에도 정상 처리
+  3. completePaymentAtomically 실패 시 webhook event를 'failed' 박제 후 throw
+  4. 빈 eventId 안전성 검증
+  + 기존 unknown_trade / already_completed 테스트에 webhook event 박제 검증 추가
+- `adapter/outbound/payment/polar.adapter.spec.ts` — 3건 신규 it: webhook-id 헤더 누락/빈 문자열/대문자 fallback
+- 전체 `npm test`: 510/510 PASS (38 suites, 신규 spec 16건 포함)
+
+#### Docs
+- `docs/data-model.md` — webhook_events 테이블 박제 (테이블 22개로 갱신)
+- `SCHEMA.md` — webhook_events Prisma 매핑 + 관계 다이어그램에 WebhookEvent 추가
+- `docs/api-contract.md` — POST /api/payments/webhook 응답 reason 박제 (`duplicate_event` 신규 + 기존 reason 명세)
+- `MIGRATION.md` §7-AA — 본 마이그레이션 절차 + 롤백 정책 + 핵심 정책 박제
+- `TECH_STATUS.md` — Payment 웹훅 멱등성 항목 추가
+- `.claude/shared-contracts.md` §11 — WebhookEventIdempotency 인터페이스 정본 신설 (claude-docs Generator 단계 박제 예정)
+
+#### Rationale
+- 기존: `payment.status === 'completed'` 약식 멱등성은 같은 payment 중복 처리는 막지만, **Polar 측 webhook 재전송 큐**가 동일 eventId로 빠르게 두 번 보내는 race condition에서 둘 다 status='pending' 본 후 `completePaymentAtomically` 두 번 실행 가능 → **돈은 1회 결제했는데 크레딧 2배 부여 사고 위험**
+- 이번: DB `event_id` UNIQUE 제약으로 race 원천 차단 (P2002 → safe skip → null 반환). 첫 호출만 `completePaymentAtomically` 실행 보장. **돈은 냈는데 크레딧 두 번 들어가는 사고 0건** 보장
+- 책 Ch 16 Anthropic 3-에이전트 패턴 (Initializer → Generator → Evaluator) 묶음 II 3회차. 책 Ch 16 충돌 2번 해결책 (shared state via DB unique constraint) 정합. Sprint 계약 정본: `reports/sprint-pay-p0-1-webhook-event-id-idempotency-progress.md`
+
+### DB 마이그레이션: add_webhook_event_idempotency
+- **목적**: PG 웹훅 재전송 멱등성 박제 — 동일 eventId 두 번째 호출 시 completePaymentAtomically 0회 실행 보장
+- **변경 내용**: 신규 테이블 `webhook_events` (UUID PK + event_id UNIQUE + (event_type, processed_at) INDEX). 기존 테이블 변경 0건
+- **롤백 방법**: 일방향 (down 미작성). 운영 사고 시 `DROP TABLE webhook_events;` 또는 게이트 비활성화 핫픽스
+- **적용 환경**: localhost ✓ / development - / production -
+
+---
+
+## [0.30.0] - 2026-05-03
+
+### Feat — publishTheme bakedCssUrl 절대화 (P1-#7, sprint-baked-css-url-absolute)
+
+#### Changed
+- `application/theme/bake-theme.usecase.ts` — Blob 비활성/실패 시 `cssUrl = null` 박제 (이전: `/api/themes/css/{slug}` 상대 경로 박제). 반환 시그니처 `Promise<{ cssUrl: string | null; css: string }>`
+- `domain/port/outbound/theme-repository.port.ts` — `updateBakedCssUrl(themeId, url: string | null)`로 시그니처 확장
+- `adapter/outbound/persistence/prisma-theme.repository.ts` — 시그니처 확장 반영 (Prisma update는 이미 `string | null` 허용)
+- `adapter/inbound/http/controller/theme.controller.ts` — `publish` / `findByAuthorSlug` / `resolveTheme` 응답에 `resolveBakedCssUrl()` 적용. 응답 `bakedCssUrl`은 항상 절대 URL (Blob URL 또는 `${PUBLIC_API_BASE_URL}/themes/css/{slug}` 폴백)
+- `infrastructure/config/env.validation.ts` — `PUBLIC_API_BASE_URL` 필수 환경변수 + 절대 URL 형식 검증 (미설정/비절대 URL 시 부팅 차단)
+
+#### Added
+- `lib/url-resolver.ts` — `resolveBakedCssUrl(dbValue, slug, baseUrl)` 헬퍼. NULL/상대경로/빈문자 → 환경별 폴백 절대 URL, 절대 URL → 그대로 반환
+- `lib/url-resolver.spec.ts` — 8건 (NULL/절대/트레일링슬래시/빈문자/상대경로/특수문자)
+- `infrastructure/config/env.validation.spec.ts` — 5건 (필수 통과/누락/비절대 URL/누락 다른 키)
+- `prisma/migrations/20260503130451_baked_css_url_clear_relative/migration.sql` — stale 상대 경로 row를 NULL로 일괄 정리 (DDL 0건, DML 단발, 무중단 OK)
+
+#### Tests
+- `application/theme/bake-theme.usecase.spec.ts` — Blob 미설정/업로드 실패 시 `cssUrl=null` + DB null 박제 검증 + 상대 경로 박제 회귀 차단 검증
+- 전체 `npm test`: 494/494 PASS
+
+#### Docs
+- `docs/data-model.md` / `SCHEMA.md` — `themes.baked_css_url` 박제 정책 명시 ("절대 URL OR NULL", 상대 경로 박제 금지)
+- `docs/environments.md` — `PUBLIC_API_BASE_URL` 환경변수 + 환경별 값 박제
+- `docs/api-contract.md` — `GET /api/themes/{slug}` / `POST /api/themes/publish/{slug}` / `GET /api/themes/resolve/{slug}` 응답 `bakedCssUrl` 절대 URL 명세
+- `MIGRATION.md` §7-Z — 본 마이그레이션 절차 + 롤백 정책 박제
+
+#### Rationale
+- 기존: localhost ↔ dev ↔ prod 환경 전환 시 DB의 상대 경로(`/api/themes/css/...`) 박제가 BFF hop을 강제 + CDN 캐싱 무효 + stale URL 잔존 위험
+- 이번: server 단일 환경변수(`PUBLIC_API_BASE_URL`)로 응답 절대화 → DB는 절대 URL 또는 NULL만 박제, 환경 분리 강제. CDN 가용성 보존 (Blob 활성 시 절대 URL 그대로)
+- 책 Ch 16 Anthropic 3-에이전트 패턴 (Initializer → Generator → Evaluator) 묶음 II 2회차 시범. Sprint 계약 정본: `reports/sprint-baked-css-url-absolute-progress.md`
+
+### DB 마이그레이션: baked_css_url_clear_relative
+- **목적**: stale 상대 경로 박제(`/api/themes/css/...`)를 NULL로 정리. 응답 시 server가 환경별 절대화 정책 전환
+- **변경 내용**: DDL 없음 (스키마 무변경). DML 단발 — `UPDATE themes SET baked_css_url = NULL WHERE baked_css_url LIKE '/api/themes/css/%' OR baked_css_url = ''`
+- **롤백 방법**: 일방향 (down 미작성). publishTheme 재호출로 자동 재박제 가능
+- **적용 환경**: localhost ✓ / development - / production -
+
 ## [0.29.2] - 2026-04-26
 
 ### Feat — Anthropic SDK signal 완전 전파 (HARNESS §10 Phase 4)

@@ -46,7 +46,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '이광수',
     slug: 'lee-gwangsu',
-    email: 'lee-gwangsu@grimoire.app',
+    email: 'lee-gwangsu@example.com',
     password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
@@ -153,7 +153,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '김소월',
     slug: 'kim-sowol',
-    email: 'kim-sowol@grimoire.app',
+    email: 'kim-sowol@example.com',
     password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
@@ -367,7 +367,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '윤동주',
     slug: 'yun-dongju',
-    email: 'yun-dongju@grimoire.app',
+    email: 'yun-dongju@example.com',
     password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
@@ -584,7 +584,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '이상',
     slug: 'yi-sang',
-    email: 'yi-sang@grimoire.app',
+    email: 'yi-sang@example.com',
     password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
@@ -669,7 +669,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '채만식',
     slug: 'chae-mansik',
-    email: 'chae-mansik@grimoire.app',
+    email: 'chae-mansik@example.com',
     password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
@@ -740,7 +740,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '이효석',
     slug: 'lee-hyoseok',
-    email: 'lee-hyoseok@grimoire.app',
+    email: 'lee-hyoseok@example.com',
     password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
@@ -811,7 +811,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '김유정',
     slug: 'kim-yujeong',
-    email: 'kim-yujeong@grimoire.app',
+    email: 'kim-yujeong@example.com',
     password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
@@ -918,7 +918,7 @@ const AUTHORS: AuthorSeed[] = [
   {
     name: '현진건',
     slug: 'hyun-jingeon',
-    email: 'hyun-jingeon@grimoire.app',
+    email: 'hyun-jingeon@example.com',
     password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [
@@ -989,7 +989,7 @@ B사감은 학생들의 편지를 검열했다. 남학생한테서 온 편지가
   {
     name: '나도향',
     slug: 'na-dohyang',
-    email: 'na-dohyang@grimoire.app',
+    email: 'na-dohyang@example.com',
     password: process.env.SEED_PASSWORD ?? '__MISSING_SEED_PASSWORD__',
     isNew: false,
     works: [

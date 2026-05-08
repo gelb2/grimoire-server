@@ -192,6 +192,82 @@ az containerapp revision list \
   -o table
 ```
 
+### 7-A. Cron 모니터링 — PaymentReconciliationJob (PAY-P0-2, 2026-05-03)
+
+10분 주기 cron이 정상 동작 중인지 Container Apps 로그에서 확인:
+
+```bash
+# PaymentReconciliationJob 로그 필터 (10분 주기 PG↔DB 정합성 검증)
+az containerapp logs show \
+  --name grimoire-server-dev \
+  --resource-group zenith-rg \
+  --tail 200 \
+  | grep "PaymentReconciliationJob"
+
+# 기대 로그 패턴 (정상 동작):
+# [PaymentReconciliationJob] PaymentReconciliationJob 시작 — since=2026-05-03T...
+# [PaymentReconciliationJob] PaymentReconciliationJob 완료 — processed=N boost=N mismatch=N expire=N
+#
+# 보정 발생 로그:
+# [PaymentReconciliationJob] [boost] paymentId=... credits=N authorId=...
+# [PaymentReconciliationJob] [refund_mismatch] paymentId=... PG=refunded DB=completed (수동 환수 필요)
+# [PaymentReconciliationJob] [expire] paymentId=... pending 24h 경과 만료 처리
+#
+# 예외 발생 로그 (운영자 즉시 점검):
+# [PaymentReconciliationJob] PaymentReconciliationJob 예외 — ...
+# [PaymentReconciliationJob] Polar list API 호출 실패 — ...
+```
+
+**cron 비활성화 (긴급 핫픽스)**:
+```bash
+# Container Apps 환경변수 추가 — 즉시 cron 진입 시 return
+az containerapp update \
+  --name grimoire-server-dev \
+  --resource-group zenith-rg \
+  --set-env-vars RECONCILIATION_DISABLED=1
+```
+
+**replicas 정책**:
+- 현재 replicas=1 가정 (Container Apps 기본 설정). 같은 process 내 in-memory `isRunning` lock으로 동시 실행 차단.
+- replicas ≥2 시점에는 `pg_try_advisory_lock` 보강 필요 (PAY-P1).
+
+### 7-B. Cron 모니터링 — PaymentCleanupJob (PAY-P1-3, 2026-05-04)
+
+매일 새벽 4시 cron으로 24h 초과 pending Payment 'expired' 마킹. PAY-P0-2 reconciliation cron(10분 주기)이 처리하지 못하는 PG 미진입 row 추가 정리.
+
+```bash
+# PaymentCleanupJob 로그 필터 (매일 새벽 4시 cron)
+az containerapp logs show \
+  --name grimoire-server-dev \
+  --resource-group zenith-rg \
+  --tail 200 \
+  | grep "PaymentCleanupJob"
+
+# 기대 로그 패턴 (정상 동작):
+# [PaymentCleanupJob] PaymentCleanupJob 시작 — startedAt=2026-05-05T04:00:00.000Z expireHours=24
+# [PaymentCleanupJob] PaymentCleanupJob 완료 — expireCount=N stalePendingCount=N
+# [PaymentCleanupJob] [cleanup] paymentId=... authorId=... elapsed=Nh → expired
+#
+# 비활성화 / 동시 실행 차단 로그:
+# [PaymentCleanupJob] PAYMENT_CLEANUP_DISABLED=1 — cleanup cron 비활성화 (skip)
+# [PaymentCleanupJob] PaymentCleanupJob 이미 실행 중 — 동시 실행 차단 (skip)
+#
+# 개별 row 실패 로그 (resilient — 다음 row 처리 계속):
+# [PaymentCleanupJob] [cleanup] paymentId=... expire 실패 — ...
+```
+
+**cron 비활성화 (긴급 핫픽스)**:
+```bash
+az containerapp update \
+  --name grimoire-server-dev \
+  --resource-group zenith-rg \
+  --set-env-vars PAYMENT_CLEANUP_DISABLED=1
+```
+
+**시간대 정합**:
+- PAY-P0-2 reconciliation: 새벽 3시 + 10분 주기
+- PAY-P1-3 cleanup: 새벽 4시 1회만 (시간대/주기 분리, 동시 발동 방지)
+
 ---
 
 ## 8. 방화벽 관리 (마이그레이션용)

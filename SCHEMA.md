@@ -45,7 +45,7 @@
 | preset | preset | String | default("midnight") | 프리셋명 (파생 출처 기록용) |
 | overrides | overrides | Json? | - | AuthorTheme 전체 값 (`docs/theme-spec.md` 참조) |
 | rawDescription | raw_description | String? | - | 작가 원본 구술 텍스트 |
-| bakedCssUrl | baked_css_url | String? | - | Baking된 CSS 파일 URL |
+| bakedCssUrl | baked_css_url | String? | - | Baking된 CSS 파일 URL. **항상 절대 URL(Blob CDN) OR NULL**. NULL이면 응답 시점에 server가 `PUBLIC_API_BASE_URL`로 동적 절대화 (P1-#7, 2026-05-03). 상대 경로(`/api/themes/css/...`) 박제 금지 — 환경 전환 stale 방지 |
 | isSlotted | is_slotted | Boolean | default(true) | 활성 슬롯 배치 여부 |
 | source | source | String | default("user") | 테마 출처 (system/ai/user) |
 | updatedAt | updated_at | DateTime | @updatedAt | 수정일 |
@@ -189,6 +189,67 @@
 | createdAt | created_at | DateTime | default(now()) | 결제 요청일 |
 | completedAt | completed_at | DateTime? | - | 결제 완료일 |
 
+### webhook_events (Sprint PAY-P0-1, 2026-05-03)
+
+PG 웹훅 재전송 멱등성 박제 — `event_id` UNIQUE 제약으로 race condition 차단. 정본: `.claude/shared-contracts.md` §11.
+
+| Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
+|-------------|---------|------|------|------|
+| id | id | String (uuid) | PK | 박제 식별자 |
+| eventId | event_id | String | unique | PG 발급 이벤트 ID (Polar `webhook-id` 헤더) |
+| source | source | String | default("polar") | PG 식별 |
+| eventType | event_type | String | - | 이벤트 타입 ('order.paid' 등) |
+| payload | payload | Json | - | NormalizedWebhookEvent 박제 (디버깅용) |
+| status | status | String | default("processed") | 'processed' \| 'skipped' \| 'failed' |
+| errorMessage | error_message | String? | - | 실패/스킵 사유 |
+| processedAt | processed_at | DateTime | default(now()) | 박제 시각 |
+
+@@index: `[eventType, processedAt]` — 최근 이벤트 조회 성능
+
+### reconciliation_checkpoints (Sprint PAY-P0-2, 2026-05-03)
+
+PG↔DB 정합성 검증 cron의 단일 row checkpoint — `id` default `'singleton'` + INSERT seed로 항상 1 row 보장. 정본: `.claude/shared-contracts.md` §12.
+
+| Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
+|-------------|---------|------|------|------|
+| id | id | String | PK, default("singleton") | 단일 row 보장 — 항상 'singleton' |
+| lastRunAt | last_run_at | DateTime (Timestamptz(3)) | - | 마지막 cron 시작 시각 (다음 cron의 since 필터) |
+| processedCount | processed_count | Int | default(0) | 마지막 실행에서 처리한 row 수 |
+| boostCount | boost_count | Int | default(0) | 자동 보정 row 수 (S1) |
+| mismatchCount | mismatch_count | Int | default(0) | refund mismatch row 수 (S2) |
+| expireCount | expire_count | Int | default(0) | pending 만료 row 수 (S3) |
+| errorMessage | error_message | String? | - | 마지막 실행 예외 메시지 (null이면 정상) |
+| updatedAt | updated_at | DateTime (Timestamptz(3)) | @updatedAt | 갱신 시각 |
+
+**정책**:
+- 단일 row 보장: 마이그레이션 INSERT seed (`id='singleton'`, `last_run_at=NOW()-INTERVAL '24 hours'`, `ON CONFLICT DO NOTHING`)
+- 어댑터 fallback: row 미존재 시 default seed 반환 (lastRunAt = 24h 전, 모든 카운터 0)
+- update는 항상 upsert (where id='singleton')
+- cron 주기: `@Cron('0 */10 * * * *')` 10분 (cost-accountant 권고)
+
+### refund_logs (Sprint PAY-P1-1, 2026-05-03)
+
+Polar 환불 webhook 시 크레딧 환수 트랜잭션의 영구 박제. RefundPaymentUseCase가 `paymentRepo.refundPaymentAtomically` $transaction 내부에서 박제. 정본: `.claude/shared-contracts.md` §13.
+
+| Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
+|-------------|---------|------|------|------|
+| id | id | String (uuid) | PK | 환불 로그 식별자 |
+| paymentId | payment_id | String | @@index | 환불 대상 Payment id (1:N — 부분 환불 호환 unique 미부여) |
+| amount | amount | Int | - | PG 환불 금액 (KRW) |
+| credits | credits | Int | - | 실제 환수된 크레딧 (actualDeducted) |
+| deficitCredits | deficit_credits | Int | default(0) | 잔액 부족분 (양수=외상, 0=정상) |
+| reason | reason | String | - | 환불 사유 (예: 'polar_webhook_order.refunded') |
+| processedAt | processed_at | DateTime (Timestamptz(3)) | default(now()) | 환수 처리 시각 |
+| source | source | String | - | 'webhook' \| 'manual' |
+
+@@index: `[paymentId]` — Payment별 환불 이력 조회
+
+**정책**:
+- 잔액 부족 시 0 fix: `Author.credits = Math.max(0, currentBalance - credits)` (음수 절대 차단)
+- CreditLog 음수 박제 대칭: 같은 $transaction 내부에서 `credit_logs.amount = -actualDeducted`
+- AdminAuditLog 후행: `operator='system_refund'`, `action='refund_normal' | 'refund_deficit'` ($transaction 외)
+- 3중 멱등성: L1 webhook_events.eventId @unique / L2 payment.status='completed' 사전 체크 / L3 refund_logs 박제
+
 ### chat_sessions
 
 | Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
@@ -259,6 +320,9 @@ Like (authorId + episodeId — FK 없음, 독자 행위 기록)
 Subscription (subscriberId + targetAuthorId — FK 없음, 구독 관계)
 Comment (authorId + episodeId — FK 없음, 소셜 기록)
 Payment (authorId — FK 없음, 결제 기록)
+WebhookEvent (eventId @unique — PG 웹훅 멱등성 박제, FK 없음)
+ReconciliationCheckpoint (id='singleton' — PG↔DB 정합성 cron checkpoint, 단일 row, FK 없음)
+RefundLog (paymentId — Polar 환불 webhook 환수 트랜잭션 박제, FK 없음 — 1:N 부분 환불 호환)
 UserSanction (authorId + adminId — 제재/정지 이력)
 Report (targetType + targetId — 신고 큐)
 SystemSetting (key-value — 동적 설정)
