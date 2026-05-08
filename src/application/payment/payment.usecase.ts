@@ -184,6 +184,24 @@ export class PaymentUseCase {
       })
       return { processed: false, reason: 'already_completed' }
     }
+    // PAY-P3-A 구멍-A 차단: payment.status='refunded' 또는 'partial_refunded' 사전 게이트
+    // (이미 환불 완료된 payment에 대한 재처리 방어 — 환불 후 재차감 0건 보장)
+    // 정본: shared-contracts §22 PaymentRaceCondition
+    if (payment.status === 'refunded' || payment.status === 'partial_refunded') {
+      const reasonKey = `already_${payment.status}` as 'already_refunded' | 'already_partial_refunded'
+      this.logger.warn(
+        `[PaymentRaceCondition] ${reasonKey} eventId=${event.eventId} paymentId=${payment.id}`,
+      )
+      await this.webhookEventRepo.createIfAbsent({
+        eventId: event.eventId,
+        source: 'polar',
+        eventType: event.type,
+        payload: event as unknown as object,
+        status: 'skipped',
+        errorMessage: reasonKey,
+      })
+      return { processed: false, reason: reasonKey }
+    }
 
     if (event.status === 'success') {
       // PAY-P2-4: 트랜잭션 진입 직전 잔액 조회 (beforeState 박제용)

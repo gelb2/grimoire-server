@@ -645,6 +645,138 @@ describe('PaymentUseCase', () => {
         )
       })
 
+      // ============================================================================
+      // Sprint PAY-P3-A: race condition 차단 — 구멍-A 사전 게이트 (refunded / partial_refunded)
+      // 정본: .claude/shared-contracts.md §22 PaymentRaceCondition
+      // AC-1: payment.status='refunded' 상태에서 succeeded webhook 진입 skip
+      // AC-2: payment.status='partial_refunded' 상태에서 추가 부분 환불 webhook 진입 skip
+      // AC-6 변형: 호출 흐름 게이트 우회 불가 검증 (직접 호출 + status 검증)
+      // ============================================================================
+      describe('PAY-P3-A: refunded/partial_refunded 사전 게이트 (구멍-A 차단)', () => {
+        it('AC-1: payment.status=refunded 시 succeeded webhook 재진입은 skip + completePaymentAtomically 호출 0건', async () => {
+          mockPrisma.findByExternalTransactionId.mockResolvedValue({
+            ...mockPayment,
+            status: 'refunded',
+            externalTransactionId: 'TRADE-001',
+          })
+
+          const result = await useCase.processWebhook(dummyBody, dummyHeaders)
+
+          // 사전 게이트 차단 — completePaymentAtomically 호출 0건 (재차감 0건 보장)
+          expect(mockPrisma.completePaymentAtomically).not.toHaveBeenCalled()
+          // refund usecase도 호출 0건 (succeeded webhook이므로 cancel 분기 미진입)
+          expect(mockRefundPaymentUseCase.execute).not.toHaveBeenCalled()
+
+          // skipped 박제 — webhookEventRepo.createIfAbsent { status: 'skipped', errorMessage: 'already_refunded' }
+          expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              eventId: 'evt_test_001',
+              source: 'polar',
+              status: 'skipped',
+              errorMessage: 'already_refunded',
+            }),
+          )
+
+          // 응답 정합 — { processed: false, reason: 'already_refunded' }
+          expect(result.processed).toBe(false)
+          expect(result.reason).toBe('already_refunded')
+        })
+
+        it('AC-2: payment.status=partial_refunded 시 추가 환불 webhook 진입은 skip + refundPaymentAtomically 호출 0건', async () => {
+          mockPrisma.findByExternalTransactionId.mockResolvedValue({
+            ...mockPayment,
+            status: 'partial_refunded',
+            externalTransactionId: 'TRADE-001',
+          })
+          mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(
+            makeEvent({ type: 'order.refunded', status: 'cancel' }),
+          )
+
+          const result = await useCase.processWebhook(dummyBody, dummyHeaders)
+
+          // 사전 게이트 차단 — refund usecase 호출 0건 (잔액 중복 차감 0건 보장)
+          expect(mockRefundPaymentUseCase.execute).not.toHaveBeenCalled()
+          // completePaymentAtomically도 0건 (cancel 분기이지만 게이트가 우선 차단)
+          expect(mockPrisma.completePaymentAtomically).not.toHaveBeenCalled()
+
+          // skipped 박제
+          expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              eventId: 'evt_test_001',
+              source: 'polar',
+              status: 'skipped',
+              errorMessage: 'already_partial_refunded',
+            }),
+          )
+
+          // 응답 정합
+          expect(result.processed).toBe(false)
+          expect(result.reason).toBe('already_partial_refunded')
+        })
+
+        it('AC-3 시뮬: 동시 환불 webhook 2건 race — 첫 트랜잭션 완료 후 두 번째는 사전 게이트 통과 안 됨', async () => {
+          // 첫 호출: status='pending' (정상 cancel webhook 진입 대상) → refund usecase 호출
+          // 두 번째 호출: status='refunded' (첫 트랜잭션 commit 후 상태) → 사전 게이트 차단
+          mockPrisma.findByExternalTransactionId
+            .mockResolvedValueOnce({
+              ...mockPayment,
+              status: 'pending', // cancel webhook은 pending payment 대상
+              externalTransactionId: 'TRADE-001',
+            })
+            .mockResolvedValueOnce({
+              ...mockPayment,
+              status: 'refunded', // 첫 트랜잭션이 갱신한 상태
+              externalTransactionId: 'TRADE-001',
+            })
+          mockPaymentGateway.verifyAndParseWebhook
+            .mockReturnValueOnce(makeEvent({ eventId: 'evt_A', type: 'order.refunded', status: 'cancel' }))
+            .mockReturnValueOnce(makeEvent({ eventId: 'evt_B', type: 'order.refunded', status: 'cancel' }))
+          mockRefundPaymentUseCase.execute.mockResolvedValueOnce({
+            actualDeducted: 5,
+            deficitCredits: 0,
+            proportionalCredits: 5,
+            isPartial: false,
+          })
+
+          const r1 = await useCase.processWebhook(dummyBody, dummyHeaders)
+          const r2 = await useCase.processWebhook(dummyBody, dummyHeaders)
+
+          // 첫 호출만 refund usecase 호출 1회 (재차감 0건 보장)
+          expect(mockRefundPaymentUseCase.execute).toHaveBeenCalledTimes(1)
+          // 두 번째 호출은 사전 게이트 차단
+          expect(r1.processed).toBe(true)
+          expect(r2.processed).toBe(false)
+          expect(r2.reason).toBe('already_refunded')
+        })
+
+        it('AC-6: completePaymentAtomically 트랜잭션 실패 (CAS_MISMATCH 시뮬) 시 webhook event failed 박제 + DLQ enqueue + throw', async () => {
+          // PAY-P3-A: refundPaymentAtomically CAS_MISMATCH throw → 호출자 catch → webhookEvent failed
+          // 본 spec은 success 분기로 시뮬 (cancel 분기는 refund usecase 내부 catch로 동일 패턴)
+          mockPrisma.findByExternalTransactionId.mockResolvedValue({
+            ...mockPayment,
+            status: 'pending', // 사전 게이트 통과 (success 분기 정상 진입)
+            externalTransactionId: 'TRADE-001',
+          })
+          // CAS_MISMATCH 시뮬 — completePaymentAtomically가 race window throw
+          mockPrisma.completePaymentAtomically.mockRejectedValueOnce(
+            new Error('CAS_MISMATCH — race condition detected on author.credits'),
+          )
+
+          await expect(useCase.processWebhook(dummyBody, dummyHeaders)).rejects.toThrow(
+            'CAS_MISMATCH',
+          )
+
+          // webhook event failed 박제 (DLQ retry 진입)
+          expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              eventId: 'evt_test_001',
+              status: 'failed',
+              errorMessage: expect.stringContaining('CAS_MISMATCH'),
+            }),
+          )
+        })
+      })
+
       it('eventId가 빈 문자열이어도 게이트 진입 자체는 발생 (어댑터에서 null 반환되어야 정상)', async () => {
         // 어댑터가 비어있는 eventId로 event를 반환하는 비정상 시나리오 — usecase는 그대로 진행하지만
         // findByEventId('') 결과에 따라 분기. 본 케이스는 어댑터 책임 검증이지만 usecase 안전성도 확인.
