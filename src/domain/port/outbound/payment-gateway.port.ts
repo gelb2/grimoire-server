@@ -46,6 +46,31 @@ export interface NormalizedWebhookEvent {
 }
 
 /**
+ * PAY-P3-B 구멍-C 차단: Polar SDK exception 5분류 매트릭스.
+ * 정본: shared-contracts §24 PolarSDKTimeoutPolicy.
+ *
+ * - timeout: AbortError, TimeoutError, message 'timeout' (retry 의미 있음 — 일시적 장애)
+ * - network: ECONNRESET, ENOTFOUND, ETIMEDOUT, EPIPE, ECONNREFUSED (retry 의미 있음)
+ * - server_5xx: HTTP 500/502/503/504 (retry 의미 있음 — Polar 서버 일시적 장애)
+ * - client_4xx: HTTP 400/401/403/404/422 (retry **무의미** — 요청 결함, 즉시 permanent_failed)
+ * - unknown: 분류 실패 시 안전 측면 fallback (retry 가능 영역)
+ */
+export type PolarErrorClass =
+  | 'timeout'
+  | 'network'
+  | 'server_5xx'
+  | 'client_4xx'
+  | 'unknown'
+
+export interface PolarErrorClassification {
+  errorClass: PolarErrorClass
+  /** HTTP status 추출 가능 시만 박제 (server_5xx / client_4xx 분류 시 필수) */
+  httpStatus?: number
+  /** 원본 에러 메시지 (로깅 + AuditLog detail용 — 500자 이내 truncate 권장) */
+  message: string
+}
+
+/**
  * 정규화된 PG 측 checkout — Sprint PAY-P0-2 PG↔DB 정합성 검증 cron에서 사용.
  *
  * - PG (Polar)에서 list로 조회한 checkout을 어댑터가 정규화해서 반환.
@@ -88,4 +113,13 @@ export interface PaymentGatewayPort {
    * Polar SDK는 server-side since 필터 미지원이므로 clientSide 필터링 의무.
    */
   listRecentCheckouts(since: Date, limit: number): Promise<NormalizedCheckout[]>
+
+  /**
+   * PAY-P3-B 구멍-C 차단: SDK exception 5분류 (Optional).
+   * 정본: shared-contracts §24 PolarSDKTimeoutPolicy.
+   *
+   * Optional 메서드 — 미구현 adapter (예: 향후 PayApp)에서는 호출자가 'unknown' fallback 처리.
+   * payment.usecase가 catch 블록에서 호출 → client_4xx → permanent_failed 즉시 박제, 외 4분류 → retry queue.
+   */
+  classifyPolarError?(e: unknown): PolarErrorClassification
 }

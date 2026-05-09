@@ -8,6 +8,8 @@ import {
   PaymentInitResponse,
   NormalizedWebhookEvent,
   NormalizedCheckout,
+  PolarErrorClass,
+  PolarErrorClassification,
 } from '@domain/port/outbound/payment-gateway.port'
 import { CREDIT_PRODUCTS } from '@domain/model/config'
 import { isProduction } from '@infrastructure/config/app-env'
@@ -34,20 +36,108 @@ export class PolarAdapter implements PaymentGatewayPort {
   private readonly logger = new Logger(PolarAdapter.name)
   private readonly polar: Polar
   private readonly webhookSecret: string
+  /**
+   * PAY-P3-B 구멍-C 차단: SDK 호출 timeout (워커 자원 leak 차단).
+   * 정본: shared-contracts §24 PolarSDKTimeoutPolicy.
+   * 기본값 30000ms, env `POLAR_SDK_TIMEOUT_MS` 오버라이드.
+   */
+  private readonly timeoutMs: number
 
   constructor() {
     const accessToken = process.env.POLAR_ACCESS_TOKEN ?? ''
     const server = (process.env.POLAR_SERVER ?? 'production') as 'sandbox' | 'production'
     this.webhookSecret = process.env.POLAR_WEBHOOK_SECRET ?? ''
 
+    // PAY-P3-B: 옵션 A 채택 — Polar SDK v0.47.0 SDKOptions.timeoutMs 내장 옵션 사용 (config.d.ts L38 검증).
+    // env POLAR_SDK_TIMEOUT_MS 미설정 시 기본 30s. parseInt 실패 시(NaN) 30s fallback.
+    const parsed = parseInt(process.env.POLAR_SDK_TIMEOUT_MS ?? '', 10)
+    this.timeoutMs = Number.isFinite(parsed) && parsed > 0 ? parsed : 30000
+
     this.polar = new Polar({
       accessToken,
       server,
+      timeoutMs: this.timeoutMs,
     })
 
     if (!accessToken) {
       this.logger.warn('POLAR_ACCESS_TOKEN 미설정 — 결제 기능 비활성화')
     }
+  }
+
+  /**
+   * PAY-P3-B 구멍-C 차단: Polar SDK exception 5분류.
+   * 정본: shared-contracts §24 PolarSDKTimeoutPolicy.
+   *
+   * 분류 매트릭스:
+   * - timeout: AbortError, TimeoutError, RequestTimeoutError, RequestAbortedError, message에 'timeout' 포함
+   * - network: ECONNRESET, ENOTFOUND, ETIMEDOUT, EPIPE, ECONNREFUSED, ConnectionError
+   * - server_5xx: HTTP 500/502/503/504 등 (PolarError.statusCode 추출)
+   * - client_4xx: HTTP 400/401/403/404/422 등 (retry 무의미 → permanent_failed)
+   * - unknown: 분류 실패 시 안전 fallback (retry 가능 영역)
+   *
+   * Duck typing 사용 — SDK 내부 import 의존 최소화 (SDK 버전 업그레이드 회귀 차단).
+   */
+  classifyPolarError(e: unknown): PolarErrorClassification {
+    const message = e instanceof Error ? e.message : String(e)
+    const errorName = e instanceof Error ? e.name : ''
+
+    // 1. AbortError / TimeoutError / Polar SDK RequestTimeoutError·RequestAbortedError → timeout 분류
+    if (
+      errorName === 'AbortError' ||
+      errorName === 'TimeoutError' ||
+      errorName === 'RequestTimeoutError' ||
+      errorName === 'RequestAbortedError' ||
+      /\btimeout\b/i.test(message) ||
+      /\baborted?\b/i.test(message)
+    ) {
+      return { errorClass: 'timeout', message }
+    }
+
+    // 2. Network 에러 (Node.js system errors + Polar SDK ConnectionError)
+    if (
+      errorName === 'ConnectionError' ||
+      /^(ECONNRESET|ENOTFOUND|ETIMEDOUT|EPIPE|ECONNREFUSED)/.test(message) ||
+      /\b(ECONNRESET|ENOTFOUND|ETIMEDOUT|EPIPE|ECONNREFUSED)\b/.test(message)
+    ) {
+      return { errorClass: 'network', message }
+    }
+
+    // 3. HTTP 응답 분류 — Polar SDK PolarError 또는 fetch Response status 추출 (duck typing)
+    const httpStatus = this.extractHttpStatus(e)
+    if (httpStatus !== undefined) {
+      if (httpStatus >= 500 && httpStatus < 600) {
+        return { errorClass: 'server_5xx', httpStatus, message }
+      }
+      if (httpStatus >= 400 && httpStatus < 500) {
+        return { errorClass: 'client_4xx', httpStatus, message }
+      }
+    }
+
+    // 4. 기타 (unknown — 안전 측면 fallback, retry 가능 영역)
+    return { errorClass: 'unknown', message }
+  }
+
+  /**
+   * Polar SDK 에러 객체에서 HTTP status 추출 (duck typing).
+   * SDK 버전별 형식 호환:
+   * - PolarError.statusCode (Polar SDK v0.47.0+ 정본)
+   * - error.response?.status (legacy fetch 패턴)
+   * - error.status (axios-like 패턴)
+   */
+  private extractHttpStatus(e: unknown): number | undefined {
+    if (typeof e !== 'object' || e === null) return undefined
+    const err = e as {
+      statusCode?: unknown
+      response?: { status?: unknown }
+      status?: unknown
+    }
+    const candidates = [err.statusCode, err.response?.status, err.status]
+    for (const c of candidates) {
+      if (typeof c === 'number' && Number.isFinite(c) && c >= 100 && c < 600) {
+        return c
+      }
+    }
+    return undefined
   }
 
   /**
@@ -86,9 +176,14 @@ export class PolarAdapter implements PaymentGatewayPort {
         tradeNo: checkout.id,
       }
     } catch (e: unknown) {
-      this.logger.error(`Polar checkout 생성 실패: ${String(e)}`)
-      const message = e instanceof Error ? e.message : '알 수 없는 오류'
-      throw new Error(`Polar checkout 생성 실패: ${message}`)
+      // PAY-P3-B 구멍-C 차단: SDK exception 분류 + 로깅
+      // 정본: shared-contracts §24 PolarSDKTimeoutPolicy
+      const polarError = this.classifyPolarError(e)
+      const httpStatusLabel = polarError.httpStatus ?? 'N/A'
+      this.logger.error(
+        `[PolarSDK] initiatePayment ${polarError.errorClass} httpStatus=${httpStatusLabel} message="${polarError.message.slice(0, 200)}"`,
+      )
+      throw new Error(`Polar checkout 생성 실패: ${polarError.message}`)
     }
   }
 
@@ -313,9 +408,14 @@ export class PolarAdapter implements PaymentGatewayPort {
         page += 1
       }
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e)
-      this.logger.error(`Polar checkouts.list 호출 실패 (page=${page}): ${message}`)
-      throw new Error(`Polar checkouts.list 호출 실패: ${message}`)
+      // PAY-P3-B 구멍-C 차단: SDK exception 분류 + 로깅 (Reconciliation 정합)
+      // 정본: shared-contracts §24 PolarSDKTimeoutPolicy
+      const polarError = this.classifyPolarError(e)
+      const httpStatusLabel = polarError.httpStatus ?? 'N/A'
+      this.logger.error(
+        `[PolarSDK] listRecentCheckouts ${polarError.errorClass} httpStatus=${httpStatusLabel} page=${page} message="${polarError.message.slice(0, 200)}"`,
+      )
+      throw new Error(`Polar checkouts.list 호출 실패: ${polarError.message}`)
     }
 
     return collected

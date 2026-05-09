@@ -777,6 +777,206 @@ describe('PaymentUseCase', () => {
         })
       })
 
+      // ============================================================================
+      // Sprint PAY-P3-B: Polar SDK exception 5분류 + retry/permanent 분기 처리 (구멍-C 차단)
+      // 정본: .claude/shared-contracts.md §24 PolarSDKTimeoutPolicy
+      // AC-3 (5xx → retry) / AC-4 (4xx → permanent_failed 즉시 박제, retry queue 0건)
+      // ============================================================================
+      describe('PAY-P3-B: Polar SDK exception 분기 처리 (구멍-C 차단)', () => {
+        it('AC-4 success 분기: client_4xx exception → AuditLog webhook_permanent_failed 박제 + retry queue 0건', async () => {
+          // retryQueueRepo mock + classifyPolarError mock 주입
+          const mockRetryQueueRepo = {
+            upsert: jest.fn().mockResolvedValue(undefined),
+            findDueRetries: jest.fn().mockResolvedValue([]),
+            markRetry: jest.fn().mockResolvedValue(undefined),
+            deleteByEventId: jest.fn().mockResolvedValue(undefined),
+            deleteById: jest.fn().mockResolvedValue(undefined),
+          }
+          mockPaymentGateway.classifyPolarError = jest.fn().mockReturnValue({
+            errorClass: 'client_4xx',
+            httpStatus: 400,
+            message: 'Bad Request: invalid metadata',
+          })
+
+          // 별도 useCase 인스턴스 (retryQueueRepo + classifyPolarError 주입)
+          const useCaseWithRetry = new PaymentUseCase(
+            mockPrisma as any,
+            mockPaymentGateway,
+            mockWebhookEventRepo,
+            mockRefundPaymentUseCase,
+            mockAuthorRepo,
+            mockAuditLog,
+            mockRetryQueueRepo as any,
+          )
+
+          mockPrisma.findByExternalTransactionId.mockResolvedValue({
+            ...mockPayment,
+            status: 'pending',
+            externalTransactionId: 'TRADE-001',
+          })
+          // 4xx 시뮬 — completePaymentAtomically가 PolarError 4xx throw
+          const polarBadRequest = Object.assign(new Error('Bad Request: invalid metadata'), {
+            statusCode: 400,
+          })
+          mockPrisma.completePaymentAtomically.mockRejectedValueOnce(polarBadRequest)
+
+          await expect(useCaseWithRetry.processWebhook(dummyBody, dummyHeaders)).rejects.toThrow(
+            'Bad Request',
+          )
+
+          // classifyPolarError 호출 검증
+          expect(mockPaymentGateway.classifyPolarError).toHaveBeenCalledWith(polarBadRequest)
+
+          // retry queue 박제 0건 (4xx → permanent_failed 분기)
+          expect(mockRetryQueueRepo.upsert).not.toHaveBeenCalled()
+
+          // AuditLog webhook_permanent_failed 박제 (operator='system_dlq')
+          expect(mockAuditLog.log).toHaveBeenCalledWith(
+            'system_dlq',
+            'webhook_permanent_failed',
+            'evt_test_001',
+            expect.objectContaining({
+              reason: 'polar_4xx_no_retry',
+              errorClass: 'client_4xx',
+              httpStatus: 400,
+              paymentId: 'pay-1',
+              branch: 'success',
+            }),
+          )
+
+          // webhook event 'failed' 박제 + errorMessage 분류 prefix
+          expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              eventId: 'evt_test_001',
+              status: 'failed',
+              errorMessage: expect.stringContaining('polar_client_4xx'),
+            }),
+          )
+        })
+
+        it('AC-3 cancel 분기: server_5xx exception → retry queue 박제 (기존 PAY-P2-2 흐름 유지)', async () => {
+          const mockRetryQueueRepo = {
+            upsert: jest.fn().mockResolvedValue(undefined),
+            findDueRetries: jest.fn().mockResolvedValue([]),
+            markRetry: jest.fn().mockResolvedValue(undefined),
+            deleteByEventId: jest.fn().mockResolvedValue(undefined),
+            deleteById: jest.fn().mockResolvedValue(undefined),
+          }
+          mockPaymentGateway.classifyPolarError = jest.fn().mockReturnValue({
+            errorClass: 'server_5xx',
+            httpStatus: 503,
+            message: 'Service Unavailable',
+          })
+
+          const useCaseWithRetry = new PaymentUseCase(
+            mockPrisma as any,
+            mockPaymentGateway,
+            mockWebhookEventRepo,
+            mockRefundPaymentUseCase,
+            mockAuthorRepo,
+            mockAuditLog,
+            mockRetryQueueRepo as any,
+          )
+
+          mockPrisma.findByExternalTransactionId.mockResolvedValue({
+            ...mockPayment,
+            status: 'pending', // cancel webhook은 pending payment 대상
+            externalTransactionId: 'TRADE-001',
+          })
+          mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(
+            makeEvent({ type: 'order.refunded', status: 'cancel' }),
+          )
+          // 5xx 시뮬 — refund usecase 실행 중 PolarError 5xx throw
+          const polarServiceUnavailable = Object.assign(new Error('Service Unavailable'), {
+            statusCode: 503,
+          })
+          mockRefundPaymentUseCase.execute.mockRejectedValueOnce(polarServiceUnavailable)
+
+          await expect(useCaseWithRetry.processWebhook(dummyBody, dummyHeaders)).rejects.toThrow(
+            'Service Unavailable',
+          )
+
+          // classifyPolarError 호출 검증
+          expect(mockPaymentGateway.classifyPolarError).toHaveBeenCalledWith(polarServiceUnavailable)
+
+          // retry queue 박제 1회 (5xx → retry 분기, 기존 PAY-P2-2 흐름 유지)
+          expect(mockRetryQueueRepo.upsert).toHaveBeenCalledTimes(1)
+          expect(mockRetryQueueRepo.upsert).toHaveBeenCalledWith(
+            expect.objectContaining({
+              eventId: 'evt_test_001',
+              nextRetryAt: expect.any(Date),
+            }),
+          )
+
+          // AuditLog webhook_permanent_failed 박제 0건 (5xx는 retry 분기)
+          const permanentLogCalls = mockAuditLog.log.mock.calls.filter(
+            (call: unknown[]) => call[1] === 'webhook_permanent_failed',
+          )
+          expect(permanentLogCalls).toHaveLength(0)
+
+          // webhook event 'failed' 박제 + errorMessage 분류 prefix
+          expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              eventId: 'evt_test_001',
+              status: 'failed',
+              errorMessage: expect.stringContaining('polar_server_5xx'),
+            }),
+          )
+        })
+
+        it('AC-5 fallback: classifyPolarError 미구현 adapter (예: 향후 PayApp) → unknown fallback + retry queue 박제', async () => {
+          const mockRetryQueueRepo = {
+            upsert: jest.fn().mockResolvedValue(undefined),
+            findDueRetries: jest.fn().mockResolvedValue([]),
+            markRetry: jest.fn().mockResolvedValue(undefined),
+            deleteByEventId: jest.fn().mockResolvedValue(undefined),
+            deleteById: jest.fn().mockResolvedValue(undefined),
+          }
+          // classifyPolarError 미구현 시뮬 (Optional 메서드 미주입)
+          mockPaymentGateway.classifyPolarError = undefined
+
+          const useCaseWithRetry = new PaymentUseCase(
+            mockPrisma as any,
+            mockPaymentGateway,
+            mockWebhookEventRepo,
+            mockRefundPaymentUseCase,
+            mockAuthorRepo,
+            mockAuditLog,
+            mockRetryQueueRepo as any,
+          )
+
+          mockPrisma.findByExternalTransactionId.mockResolvedValue({
+            ...mockPayment,
+            status: 'pending',
+            externalTransactionId: 'TRADE-001',
+          })
+          mockPrisma.completePaymentAtomically.mockRejectedValueOnce(
+            new Error('Some unexpected DB error'),
+          )
+
+          await expect(useCaseWithRetry.processWebhook(dummyBody, dummyHeaders)).rejects.toThrow(
+            'Some unexpected DB error',
+          )
+
+          // unknown fallback → retry queue 박제 1회 (안전 측면)
+          expect(mockRetryQueueRepo.upsert).toHaveBeenCalledTimes(1)
+
+          // AuditLog webhook_permanent_failed 박제 0건 (unknown은 retry 분기)
+          const permanentLogCalls = mockAuditLog.log.mock.calls.filter(
+            (call: unknown[]) => call[1] === 'webhook_permanent_failed',
+          )
+          expect(permanentLogCalls).toHaveLength(0)
+
+          // errorMessage prefix는 polar_unknown
+          expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              status: 'failed',
+              errorMessage: expect.stringContaining('polar_unknown'),
+            }),
+          )
+        })
+      })
+
       it('eventId가 빈 문자열이어도 게이트 진입 자체는 발생 (어댑터에서 null 반환되어야 정상)', async () => {
         // 어댑터가 비어있는 eventId로 event를 반환하는 비정상 시나리오 — usecase는 그대로 진행하지만
         // findByEventId('') 결과에 따라 분기. 본 케이스는 어댑터 책임 검증이지만 usecase 안전성도 확인.

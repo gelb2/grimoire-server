@@ -232,6 +232,60 @@ main    → 같은 이미지 → Container Apps update (prod)
 
 ---
 
+## ADR-006: Polar SDK timeout 정책 + exception 분기 처리 (PAY-P3-B, 2026-05-09)
+
+### 문제
+
+Polar SDK 호출 시 (PAYMENT_AUDIT §1 구멍-C):
+1. **Timeout 미명시**: `new Polar({ accessToken, server })`만 호출 → SDK 기본값 의존 → 네트워크 hang 시 워커 자원 leak 가능
+2. **Exception 미분류**: 모든 catch 블록에서 `e.message` 단순 추출만 → SDK가 throw하는 다양한 에러 (`RequestTimeoutError`, `ConnectionError`, `PolarError 4xx/5xx`)를 동일 처리
+3. **Retry 정책 모순**: 모든 exception → DLQ 박제 → MAX_RETRY 10회 누적 → permanent_failed
+   - `timeout`/`network`/`5xx`: retry 의미 있음 (일시적 장애)
+   - `4xx` (예: Bad Request, Unauthorized): retry 의미 **없음** (요청 결함, 10회 시도 무의미) → 운영 부담 + 50분 cron 지연
+
+### 결정
+
+**옵션 A 채택** — Polar SDK v0.47.0 SDKOptions.timeoutMs 내장 옵션 (config.d.ts L38 `timeoutMs?: number` 직접 지원).
+
+```typescript
+this.polar = new Polar({ accessToken, server, timeoutMs: this.timeoutMs })
+```
+
+**Exception 5분류 매트릭스** (`classifyPolarError(e)`):
+
+| errorClass | 트리거 | retry 분기 |
+|---|---|---|
+| `timeout` | AbortError, TimeoutError, RequestTimeoutError, RequestAbortedError, /timeout/i | retry |
+| `network` | ECONNRESET, ENOTFOUND, ETIMEDOUT, EPIPE, ECONNREFUSED, ConnectionError | retry |
+| `server_5xx` | HTTP 500/502/503/504 (PolarError.statusCode 추출) | retry |
+| `client_4xx` | HTTP 400/401/403/404/422 | **permanent_failed 즉시** |
+| `unknown` | 분류 실패 시 안전 fallback | retry |
+
+### 구현
+
+- `polar.adapter.ts` — `classifyPolarError` public method (duck typing, SDK 내부 import 의존 0)
+- `payment.usecase.ts` — `classifyAndRouteWebhookError` private helper (success/cancel 양 분기 catch에서 호출)
+- `payment-gateway.port.ts` — `classifyPolarError?` Optional 메서드 (옵션 B 채택, 다른 adapter 정합)
+- `enqueueWebhookRetry(event, eventId, eventClass)` 시그니처 보강 (`eventClass='permanent_failed'` 시 retry queue 박제 0건)
+
+### 왜 이 방식인가 (Trade-off)
+
+| 후보 | 장점 | 단점 |
+|---|---|---|
+| **옵션 A (SDK 내장 timeoutMs)** | SDK 정본 옵션 활용 + 모든 호출에 자동 적용 + env 오버라이드 가능 | SDK 버전 종속 (v0.47.0+ 필수) |
+| 옵션 B (호출별 AbortSignal.timeout wrapper) | SDK 버전 독립 | 호출 위치마다 wrap 필요 + 코드 중복 |
+| 옵션 C (호출별 retry policy custom) | 세밀한 제어 | 복잡도 증가 + Polar SDK retryConfig와 충돌 가능 |
+
+**duck typing 사용 사유**: `e.statusCode` / `e.response?.status` / `e.status` 후보 다중 검증 → SDK 내부 import 의존 최소화 (SDK 버전 업그레이드 회귀 차단).
+
+### 감수하는 리스크
+
+- **timeoutMs 30s 기본값**: 일시적 네트워크 지연 시 timeout 분기 진입 → retry 시도. 운영에서 너무 짧으면 env로 60s 등 조정 가능.
+- **classifyPolarError Optional**: 다른 adapter (예: 향후 PayApp) 미구현 시 호출자가 'unknown' fallback 처리 (retry 분기 → 안전 측면)
+- **4xx 즉시 permanent_failed**: AuditLog `webhook_permanent_failed` 박제로 운영 추적 가능. 운영 중 4xx 트리거 패턴 발견 시 root cause 즉시 분석 가능.
+
+---
+
 ## 참조
 
 - 트랜잭션: `src/application/payment/payment.usecase.ts`
@@ -239,3 +293,4 @@ main    → 같은 이미지 → Container Apps update (prod)
 - N+1 방어: `src/adapter/outbound/persistence/prisma-work.repository.ts`
 - 인덱스: `prisma/schema.prisma`
 - Docker: `Dockerfile`, `.github/workflows/deploy-*.yml`
+- Polar SDK timeout: `src/adapter/outbound/payment/polar.adapter.ts`, `.claude/shared-contracts.md §24 PolarSDKTimeoutPolicy`

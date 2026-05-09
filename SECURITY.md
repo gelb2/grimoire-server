@@ -139,6 +139,13 @@
 - 결제 시작 → 완료 사이: pending 상태로 추적
 - 서명 검증 실패 시: 즉시 null 반환 + 로그 기록
 
+### Polar SDK timeout 정책 (PAY-P3-B, 2026-05-09)
+
+- **워커 자원 leak 차단**: `new Polar({ timeoutMs })` Polar SDK v0.47.0 SDKOptions.timeoutMs 내장 옵션 (옵션 A 채택). env `POLAR_SDK_TIMEOUT_MS` 오버라이드 (기본값 30000ms).
+- **exception 5분류 + 분기 처리**: `classifyPolarError(e)` (timeout/network/server_5xx/client_4xx/unknown). client_4xx (HTTP 400/401/403/404/422) 즉시 `webhook_permanent_failed` 박제 + retry queue 박제 0건 (요청 결함은 retry 무의미). 외 4분류 → 기존 PAY-P2-2 DLQ 흐름 유지.
+- **AuditLog 박제**: 4xx 즉시 permanent → `operator='system_dlq' action='webhook_permanent_failed'` (PAY-P3-B 신설). detail에 `{ reason: 'polar_4xx_no_retry', errorClass, httpStatus, paymentId, branch, originalMessage }` 박제 → 운영 추적 가능.
+- 정본: `.claude/shared-contracts.md §24 PolarSDKTimeoutPolicy`
+
 ### 재가입 방지
 - signup_history: OAuth provider ID로 추적
 - 재가입 시 보너스 크레딧 미지급
