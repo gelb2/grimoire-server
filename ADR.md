@@ -286,6 +286,83 @@ this.polar = new Polar({ accessToken, server, timeoutMs: this.timeoutMs })
 
 ---
 
+## ADR-007: FK Cascade 정책 (모순-F 차단, PAY-P3-E, 2026-05-10)
+
+### 결정
+
+Prisma schema 33 FK 관계 모두 `onDelete` directive 명시 강제. 4 전략 (Cascade / Restrict / SetNull / NoAction) 도메인 의미 + 보존 정책 + 감사 정합 기준 결정. raw FK 25 영역에 `@relation` directive 신설 + PG FK 제약 마이그레이션 적용 (ALTER TABLE 33 + DROP NOT NULL 2 영역).
+
+### 4 전략 분포 (33 FK 정합, Sprint §3-1 매트릭스 정합)
+
+#### Cascade 16건 (사용자 종속 + Work/Episode 종속 + 통계)
+
+`refresh_tokens.authorId` / `chat_sessions.authorId` / `chat_sessions.workId` / `bookmarks.authorId` / `bookmarks.episodeId` / `reading_progress.authorId` / `reading_progress.episodeId` / `social_accounts.authorId` / `subscriptions.subscriberId` / `subscriptions.targetAuthorId` / `daily_views.workId` / `featured_works.workId` / `comments.episodeId` / `likes.episodeId` / `episodes.workId` / `chat_messages.sessionId` (이미 박제)
+
+**사유**: 사용자 삭제 시 즉시 무효 (refresh_tokens) + Work 삭제 시 모든 episode/통계 동시 삭제 (작가 의도 정합) + 사용자 행위 기록 (북마크/읽기/구독)은 사용자 종속.
+
+#### Restrict 8건 (회계/세무/감사 영구 보존, **Author hard delete 차단 강제**)
+
+`payments.authorId` / `credit_logs.authorId` / `works.authorId` / `user_sanctions.authorId` / `analysis_reports.authorId` / `admin_audit_logs.adminId` / `refund_logs.paymentId`
+
+**사유**: Author hard delete 시 PG가 자동 차단 영역 정합 (USER-SOFT-DELETE sprint 영역 진입 전 본 sprint 영역에서 차단 강제). 회계/세무 7년 보존 정책 + 감사 영구 보존 정책 + 작가 콘텐츠 영구 보존 + 재가입 추적 영역 정합. 사용자 결정 A 정합 (5/9 박제) — Author hard delete 자체는 USER-SOFT-DELETE sprint 영역 분리.
+
+#### SetNull 9건 (익명화 + 운영자 변경 보존 + 기본값 유지)
+
+`themes.authorId` / `works.themeId` / `likes.authorId` / `comments.authorId` / `comments.parentId` / `reports.reporterId` / `reports.resolvedBy` / `access_logs.authorId` / `featured_works.adminId` / `user_sanctions.adminId`
+
+**사유**: 작가 자율 탈퇴 시 콘텐츠 영구 보존 + 본인 식별 정보만 익명화 (Comment.content 보존, Like 카운트 보존). 운영자 변경 시 처리 기록 보존 (FeaturedWork/UserSanction.adminId). Theme 삭제 시 Work는 default theme 유지. AccessLog 보안 감사 영구 보존 (IP/UA 보존, authorId 익명화).
+
+### 단계 1+2 raw 박제 영역 정합 (시나리오 B 영역 회복)
+
+**dev DB 측정 결과 (단계 1, 2026-05-10)**:
+- 33 FK 중 31 = 시나리오 A (orphan=0)
+- 2 FK = 시나리오 B (`credit_logs.author_id` 1 + `admin_audit_logs.admin_id` 2 = 3 row)
+
+**옵션 C archive 강제 박제 (단계 2, 2026-05-10)**:
+- archive 테이블 신설: `credit_logs_archive_pay_p3_e` + `admin_audit_logs_archive_pay_p3_e` (LIKE INCLUDING ALL clone)
+- INSERT 3 row → DELETE 3 row → 33/33 시나리오 A 회복 강제 박제
+- 회계/감사 영역 영구 보존 정합 (옵션 B 직접 삭제 절대 금지 영역)
+
+### 자동 동작 영역 매트릭스 (33 FK 영역)
+
+| FK | onDelete | Author/Work 삭제 시 동작 |
+|---|---|---|
+| works.authorId | Restrict | Author 삭제 차단 (FK 제약 위반 throw P2003) |
+| credit_logs.authorId | Restrict | Author 삭제 차단 |
+| payments.authorId | Restrict | Author 삭제 차단 |
+| episodes.workId | Cascade | Work 삭제 시 episode 자동 삭제 |
+| social_accounts.authorId | Cascade | Author 삭제 시 자동 cascade (단 위 Restrict 영역 0건일 때만) |
+| comments.authorId | SetNull | Author 삭제 시 authorId → null (content 보존) |
+| likes.authorId | SetNull | Author 삭제 시 authorId → null (카운트 보존) |
+| access_logs.authorId | SetNull | Author 삭제 시 authorId → null (보안 감사 보존) |
+
+### 회귀 차단
+
+- jest server 661 → **669 PASS** (+8 it 신설, `prisma-fk-cascade.spec.ts`)
+- eval regression: 사용자 검증 후 신설 영역
+- sensor: `sensor-fk-cascade-policy.sh` 사용자 검증 후 신설 영역
+
+### 감수하는 리스크
+
+- **Author 모델 비대화**: Prisma 양방향 @relation 강제 영역 정합 — Author 모델 27 역참조 박제 강제 (themes/works/socialAccounts 외 24 추가). 단 raw FK 영역 자체 강제 영역 정합 (회피 영역 0건).
+- **Optional 변경 영역**: FeaturedWork.adminId / UserSanction.adminId Required → Optional 변경 (SetNull 정합). 기존 row 영향 0건 (단계 1 측정 정합) + 향후 신설 row 영역 변경 강제.
+- **dev 영역 24h 안정성 박제 후만 prod 진입**: prod 영역 영향 (33 FK 묵시 Restrict → 명시 4 전략 변경) 정합 박제 영역.
+
+### 정본 영역
+
+- `prisma/schema.prisma` (33 FK 영역 + 25 raw FK @relation 박제)
+- `prisma/migrations/20260510_pay_p3_e_fk_cascade_policy/migration.sql` (ALTER TABLE 33 + DROP NOT NULL 2 영역)
+- `src/adapter/outbound/persistence/prisma-fk-cascade.spec.ts` (8 it 박제)
+- `docs/data-model.md` 관계 다이어그램 영역 갱신
+- `.claude/shared-contracts.md §25 FKCascadePolicy` (예정)
+- `.claude/state/sprint-pay-p3-e-fk-cascade-draft.md` (Initializer 정본, 1233 lines)
+- `.claude/state/pay-p3-e-fk-measure-raw.md` (단계 1 raw)
+- `.claude/state/pay-p3-e-fk-backfill-raw.md` (단계 2 raw)
+- `.claude/state/pay-p3-e-pre-migration-audit-draft.md` (단계 3 진입 audit, PASS)
+- `.claude/state/pay-p3-e-dev-migration-raw.md` (단계 3+4 진행 박제, 본 작업 영역)
+
+---
+
 ## 참조
 
 - 트랜잭션: `src/application/payment/payment.usecase.ts`
@@ -294,3 +371,4 @@ this.polar = new Polar({ accessToken, server, timeoutMs: this.timeoutMs })
 - 인덱스: `prisma/schema.prisma`
 - Docker: `Dockerfile`, `.github/workflows/deploy-*.yml`
 - Polar SDK timeout: `src/adapter/outbound/payment/polar.adapter.ts`, `.claude/shared-contracts.md §24 PolarSDKTimeoutPolicy`
+- FK Cascade 정책: `prisma/schema.prisma` 33 FK 영역 + `prisma/migrations/20260510_pay_p3_e_fk_cascade_policy/migration.sql` + `.claude/shared-contracts.md §25 FKCascadePolicy`
