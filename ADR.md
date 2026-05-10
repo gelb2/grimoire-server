@@ -363,6 +363,42 @@ Prisma schema 33 FK 관계 모두 `onDelete` directive 명시 강제. 4 전략 (
 
 ---
 
+## ADR-008: audit log 영구 보존 + PII 마스킹 정책 (PAY-P2-5, 2026-05-10)
+
+### 컨텍스트
+- 4 audit 모델 (AdminAuditLog / WebhookEvent / WebhookRetryQueue / AccessLog)에 보존 정책 부재 (PAYMENT_AUDIT-2026-05-07.md §3 L84-85)
+- 전자상거래법 5년 보존 의무 + 개인정보 보호법 마스킹 의무 정합 필요
+- dev 측정 결과 (5/10): 전체 row 22 / 90일 경과 row 0건 (시나리오 A)
+
+### 결정 (사용자 5/10 verbatim "d로 하고")
+- **영구 보존**: DELETE 0건 강제 (audit gap 0)
+- **90일 후 PII 마스킹**: audit-mask.scheduler 매일 03:00 KST cron
+- **PII 7 키 자동 검출**: email / phone / ipAddress / userAgent / passwordHash / token / secret
+- **보존 키 매트릭스**: id / userId / authorId / adminId / action / createdAt / amount / credits 등 audit 본질 보존
+
+### 구현
+- 4 모델 schema: `maskedAt DateTime?` + `retentionTier String @default("active")` 컬럼 신설
+- migration: `prisma/migrations/20260510_pay_p2_5_audit_retention_policy/migration.sql` (4 ALTER TABLE + 8 ADD COLUMN + 4 INDEX)
+- helper: `src/adapter/outbound/persistence/audit-mask-helper.ts` (PII 7 키 자동 검출 + JSON deep masking)
+- scheduler: `src/scheduler/audit-mask.scheduler.ts` (`@Cron('0 0 3 * * *')` 매일 03:00 KST)
+
+### 결과
+- audit gap 0 (DELETE 0건)
+- 법적 정합 (5년 보존 + PIPA 마스킹)
+- 사용자 식별자 보존 (audit 본질)
+- 마스킹 cron 첫 실행 noop 정합 (dev 90일 경과 row 0건)
+
+### 정본 영역
+- `prisma/schema.prisma` (4 모델 컬럼 추가)
+- `prisma/migrations/20260510_pay_p2_5_audit_retention_policy/migration.sql`
+- `src/adapter/outbound/persistence/audit-mask-helper.ts` (신설)
+- `src/scheduler/audit-mask.scheduler.ts` (신설)
+- `.claude/shared-contracts.md §26 AuditRetentionPolicy` (예정)
+- `.claude/state/sprint-pay-p2-5-audit-retention-draft.md` (Initializer 정본, 17 섹션)
+- `.claude/state/pay-p2-5-dev-measure-raw.md` (단계 1 측정 raw, 시나리오 A)
+
+---
+
 ## 참조
 
 - 트랜잭션: `src/application/payment/payment.usecase.ts`
@@ -372,3 +408,4 @@ Prisma schema 33 FK 관계 모두 `onDelete` directive 명시 강제. 4 전략 (
 - Docker: `Dockerfile`, `.github/workflows/deploy-*.yml`
 - Polar SDK timeout: `src/adapter/outbound/payment/polar.adapter.ts`, `.claude/shared-contracts.md §24 PolarSDKTimeoutPolicy`
 - FK Cascade 정책: `prisma/schema.prisma` 33 FK 영역 + `prisma/migrations/20260510_pay_p3_e_fk_cascade_policy/migration.sql` + `.claude/shared-contracts.md §25 FKCascadePolicy`
+- audit retention 정책: `prisma/migrations/20260510_pay_p2_5_audit_retention_policy/migration.sql` + `src/adapter/outbound/persistence/audit-mask-helper.ts` + `src/scheduler/audit-mask.scheduler.ts` + `.claude/shared-contracts.md §26 AuditRetentionPolicy`

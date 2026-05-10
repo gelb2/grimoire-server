@@ -259,16 +259,20 @@ model Payment {
 /// - payload: 정규화된 NormalizedWebhookEvent 박제 (디버깅용)
 /// 정본: `.claude/shared-contracts.md` §11 WebhookEventIdempotency
 model WebhookEvent {
-  id           String   @id @default(uuid())
-  eventId      String   @unique @map("event_id")
-  source       String   @default("polar")
-  eventType    String   @map("event_type")
-  payload      Json
-  status       String   @default("processed")
-  errorMessage String?  @map("error_message")
-  processedAt  DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+  id            String    @id @default(uuid())
+  eventId       String    @unique @map("event_id")
+  source        String    @default("polar")
+  eventType     String    @map("event_type")
+  payload       Json
+  status        String    @default("processed")
+  errorMessage  String?   @map("error_message")
+  processedAt   DateTime  @default(now()) @map("processed_at") @db.Timestamptz(3)
+  // PAY-P2-5 audit retention (영구 보존 + 90일 후 PII 마스킹)
+  maskedAt      DateTime? @map("masked_at") @db.Timestamptz(3)
+  retentionTier String    @default("active") @map("retention_tier")
 
   @@index([eventType, processedAt])
+  @@index([retentionTier, processedAt])
   @@map("webhook_events")
 }
 
@@ -387,19 +391,23 @@ model SystemSetting {
 }
 
 model AccessLog {
-  id        String   @id @default(uuid())
-  action    String // register, login_success, login_fail, password_change
-  authorId  String?  @map("author_id")
-  author    Author?  @relation(fields: [authorId], references: [id], onDelete: SetNull)
-  email     String? // 로그인 실패 시 시도한 이메일 (작가 미식별)
-  ip        String?
-  userAgent String?  @map("user_agent")
-  detail    String? // 실패 사유 등
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  id            String    @id @default(uuid())
+  action        String // register, login_success, login_fail, password_change
+  authorId      String?   @map("author_id")
+  author        Author?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  email         String? // 로그인 실패 시 시도한 이메일 (작가 미식별)
+  ip            String?
+  userAgent     String?   @map("user_agent")
+  detail        String? // 실패 사유 등
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  // PAY-P2-5 audit retention (영구 보존 + 90일 후 PII 마스킹)
+  maskedAt      DateTime? @map("masked_at") @db.Timestamptz(3)
+  retentionTier String    @default("active") @map("retention_tier")
 
   @@index([action, createdAt])
   @@index([ip])
   @@index([authorId])
+  @@index([retentionTier, createdAt])
   @@map("access_logs")
 }
 
@@ -446,16 +454,20 @@ model AnalysisReport {
 }
 
 model AdminAuditLog {
-  id        String   @id @default(uuid())
-  adminId   String   @map("admin_id")
-  admin     Author   @relation(fields: [adminId], references: [id], onDelete: Restrict)
-  action    String // 예: author_create, credit_grant, episode_delete, plan_change
-  targetId  String?  @map("target_id")
-  detail    Json? // 변경 전/후 값, 사유 등
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  id            String    @id @default(uuid())
+  adminId       String    @map("admin_id")
+  admin         Author    @relation(fields: [adminId], references: [id], onDelete: Restrict)
+  action        String // 예: author_create, credit_grant, episode_delete, plan_change
+  targetId      String?   @map("target_id")
+  detail        Json? // 변경 전/후 값, 사유 등
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  // PAY-P2-5 audit retention (영구 보존 + 90일 후 PII 마스킹)
+  maskedAt      DateTime? @map("masked_at") @db.Timestamptz(3)
+  retentionTier String    @default("active") @map("retention_tier")
 
   @@index([adminId, createdAt])
   @@index([action])
+  @@index([retentionTier, createdAt])
   @@map("admin_audit_logs")
 }
 
@@ -505,14 +517,18 @@ model RefundLog {
 /// - nextRetryAt: 다음 재시도 시각 — exp backoff (1m → 5m → 30m → 2h → 12h → 24h)
 /// 정본: `.claude/shared-contracts.md` §18 WebhookDLQ
 model WebhookRetryQueue {
-  id          String   @id @default(uuid())
-  eventId     String   @unique @map("event_id") // Polar webhook-id 멱등성
-  payload     Json // NormalizedWebhookEvent 전체
-  retryCount  Int      @default(0) @map("retry_count")
-  lastError   String?  @map("last_error")
-  nextRetryAt DateTime @map("next_retry_at") @db.Timestamptz(3)
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  id            String    @id @default(uuid())
+  eventId       String    @unique @map("event_id") // Polar webhook-id 멱등성
+  payload       Json // NormalizedWebhookEvent 전체
+  retryCount    Int       @default(0) @map("retry_count")
+  lastError     String?   @map("last_error")
+  nextRetryAt   DateTime  @map("next_retry_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  // PAY-P2-5 audit retention (영구 보존 + 90일 후 PII 마스킹)
+  maskedAt      DateTime? @map("masked_at") @db.Timestamptz(3)
+  retentionTier String    @default("active") @map("retention_tier")
 
   @@index([nextRetryAt])
+  @@index([retentionTier, createdAt])
   @@map("webhook_retry_queues")
 }
