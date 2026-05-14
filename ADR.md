@@ -424,6 +424,65 @@ ACCEPTED (사용자 5/15 결정 Draft §16 권장값 전부 채택 정합)
 
 ---
 
+## ADR-010: Status enum + Polar 매핑 정책 (PAY-P3-D, 2026-05-15)
+
+### 상태
+ACCEPTED (사용자 5/15 verbatim 4번째 sprint 정합)
+
+### 컨텍스트
+- 결제 도메인 영역 status literal 영역 분산 (5 영역):
+  - DB `payments.status` String (5 values)
+  - DB `webhook_events.status` String (3 values)
+  - Port `NormalizedWebhookEvent.status` literal (3 values)
+  - Port `NormalizedCheckout.status` literal (4 values)
+  - DB `refund_logs.source` String (2 values)
+- 매핑 함수 영역 polar.adapter.ts private 메서드 2개 (`mapOrderStatus` + `mapCheckoutStatus`) → 도메인 영역 분리 부재 (헥사고날 DIP 결함)
+- 어휘 통일 부재 → IDE 자동완성 X / 오타 영역 컴파일 단계 차단 X / race condition 게이트 분산 (`payment.status === 'refunded' || === 'partial_refunded'` 영역 반복)
+- 사용자 5/15 verbatim 정합: schema 변경 0 / dev migration 0 / 외부 API 0 강제
+
+### 결정
+- TypeScript `as const` 객체 영역 5 enum 박제 (zero runtime cost + IDE 자동완성)
+- 매핑 함수 2건 도메인 model 이전 (`mapPolarOrderStatus` + `mapPolarCheckoutStatus`)
+- helper 3건 박제 (race condition 통합 + Polar status 판정)
+- 호출자 통합 영역: polar.adapter.ts (위임) + payment.usecase.ts (어휘 통합 + race helper 통합)
+- DB schema 영역 변경 0건 (Prisma `String` 컬럼 유지)
+- sensor-payment-race-condition 패턴 영역 helper 호출 영역 정합화 (회귀 보존 강제)
+
+### 대안
+- (A) DB enum 변환 — Prisma `enum` schema 마이그레이션 (사용자 5/15 정합 X, 거부 — dev migration 0 강제)
+- (B) Branded type — Runtime 검증 부재 (거부)
+- (C) zod schema — 외부 npm 의존 추가 (사용자 5/15 정합 X, 거부)
+- (D) `as const` 객체 + TypeScript literal type ← **채택** (zero runtime cost + 외부 의존 0건)
+
+### 구현
+- domain/model: `src/domain/model/payment-status.ts`
+- domain/model spec: `src/domain/model/payment-status.spec.ts` (34 it)
+- polar.adapter 통합: `src/adapter/outbound/payment/polar.adapter.ts` (import + private 메서드 위임)
+- payment.usecase 통합: `src/application/payment/payment.usecase.ts` (import + 4 영역 어휘 통합)
+- sensor: `.claude/scripts/sensor-payment-status-mapping.sh` (10 검증)
+- regression: `eval/tasks/regression-72-payment-status-mapping.json` (10 criteria)
+
+### 결과
+- 헥사고날 DIP 정합 강화 (매핑 함수 도메인 model 이전)
+- 어휘 통일 — TypeScript IDE 자동완성 + 오타 영역 컴파일 단계 차단
+- jest 735 → 769 PASS (+34 it — payment-status spec)
+- sensor-payment-race-condition 영역 helper 호출 영역 정합화 (회귀 보존)
+- DB schema 0건 / dev migration 0건 / 외부 API 0건 정합 강제
+
+### 잔존 영역
+- DB schema 영역 enum 변환 (별도 sprint PAY-P4-x 영역 후보)
+- 4 status literal 위치 영역 통합 — payment.usecase.ts 영역 `status: 'processed'` 영역 추가 통합 (회귀 최소화 정합으로 1회만 박제, 후속 sprint 후보)
+- 다른 사용 영역 (admin.usecase / refund-payment.usecase 등) — 어휘 통합 후속 sprint 후보
+
+### 정본 영역
+- `src/domain/model/payment-status.ts`
+- `src/domain/model/payment-status.spec.ts`
+- `.claude/shared-contracts.md §28 PaymentStatusMapping`
+- `.claude/scripts/sensor-payment-status-mapping.sh`
+- `eval/tasks/regression-72-payment-status-mapping.json`
+
+---
+
 ## ADR-008: audit log 영구 보존 + PII 마스킹 정책 (PAY-P2-5, 2026-05-10)
 
 ### 컨텍스트

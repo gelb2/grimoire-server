@@ -8,6 +8,13 @@ import { CREDIT_PRODUCTS, Product } from '@domain/model/config'
 import { RefundPaymentUseCase } from './refund-payment.usecase'
 import { AuditLogService } from '@application/admin/audit-log.service'
 import { CircuitOpenError } from '@domain/model/circuit-breaker-state'
+// PAY-P3-D Status enum mapping (도메인 어휘 통일 — shared-contracts §28 / ADR-010)
+import {
+  PAYMENT_STATUS,
+  WEBHOOK_EVENT_STATUS,
+  NORMALIZED_WEBHOOK_STATUS,
+  isPaymentAlreadyRefunded,
+} from '@domain/model/payment-status'
 
 // re-export for backward compatibility
 export { CREDIT_PRODUCTS, type Product }
@@ -272,7 +279,7 @@ export class PaymentUseCase {
       })
       return { processed: false, reason: 'unknown_trade' }
     }
-    if (payment.status === 'completed') {
+    if (payment.status === PAYMENT_STATUS.COMPLETED) {
       // 약식 게이트 (이전 webhook 박제 누락된 PROD 데이터 안전망)
       await this.webhookEventRepo.createIfAbsent({
         eventId: event.eventId,
@@ -286,8 +293,9 @@ export class PaymentUseCase {
     }
     // PAY-P3-A 구멍-A 차단: payment.status='refunded' 또는 'partial_refunded' 사전 게이트
     // (이미 환불 완료된 payment에 대한 재처리 방어 — 환불 후 재차감 0건 보장)
-    // 정본: shared-contracts §22 PaymentRaceCondition
-    if (payment.status === 'refunded' || payment.status === 'partial_refunded') {
+    // 정본: shared-contracts §22 PaymentRaceCondition + §28 PaymentStatusMapping (PAY-P3-D)
+    // 도메인 helper 위임 — 환불 종료 어휘 통합 (refunded + partial_refunded REFUNDED_STATES 영역 정합)
+    if (isPaymentAlreadyRefunded(payment.status)) {
       const reasonKey = `already_${payment.status}` as 'already_refunded' | 'already_partial_refunded'
       this.logger.warn(
         `[PaymentRaceCondition] ${reasonKey} eventId=${event.eventId} paymentId=${payment.id}`,
@@ -303,7 +311,7 @@ export class PaymentUseCase {
       return { processed: false, reason: reasonKey }
     }
 
-    if (event.status === 'success') {
+    if (event.status === NORMALIZED_WEBHOOK_STATUS.SUCCESS) {
       // PAY-P2-4: 트랜잭션 진입 직전 잔액 조회 (beforeState 박제용)
       // authorRepo Optional — 미주입 시 박제 skip (회귀 보존)
       let balanceBefore: number | null = null
@@ -377,7 +385,7 @@ export class PaymentUseCase {
         source: 'polar',
         eventType: event.type,
         payload: event as unknown as object,
-        status: 'processed',
+        status: WEBHOOK_EVENT_STATUS.PROCESSED,
       })
       if (!created) {
         this.logger.warn(
@@ -385,7 +393,7 @@ export class PaymentUseCase {
         )
       }
       return { processed: true, credits: payment.credits }
-    } else if (event.status === 'cancel') {
+    } else if (event.status === NORMALIZED_WEBHOOK_STATUS.CANCEL) {
       // 환불 처리 (Sprint PAY-P1-1) — 크레딧 환수 트랜잭션 + RefundLog + AuditLog(operator='system_refund')
       // refund-payment.usecase가 paymentRepo.refundPaymentAtomically $transaction 호출 (정본: shared-contracts §13)
       let deficitCredits = 0

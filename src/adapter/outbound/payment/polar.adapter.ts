@@ -13,6 +13,11 @@ import {
 } from '@domain/port/outbound/payment-gateway.port'
 import { CircuitBreakerPort } from '@domain/port/outbound/circuit-breaker.port'
 import { CREDIT_PRODUCTS } from '@domain/model/config'
+// PAY-P3-D Status enum mapping (도메인 매핑 함수 영역 정합 — shared-contracts §28 / ADR-010)
+import {
+  mapPolarOrderStatus,
+  mapPolarCheckoutStatus,
+} from '@domain/model/payment-status'
 import { isProduction } from '@infrastructure/config/app-env'
 
 /**
@@ -359,17 +364,13 @@ export class PolarAdapter implements PaymentGatewayPort {
     return typeof value === 'string' ? value : undefined
   }
 
-  /** Polar order status → 정규화된 status */
+  /**
+   * Polar order status → 정규화된 status.
+   * PAY-P3-D 영역 도메인 매핑 함수 영역 위임 (정본: shared-contracts §28).
+   * 호출자 패턴 보존 (private 메서드 영역 유지 — 호출 영역 변경 0건).
+   */
   private mapOrderStatus(status?: string): 'success' | 'fail' | 'cancel' {
-    switch (status) {
-      case 'paid':
-      case 'succeeded':
-        return 'success'
-      case 'refunded':
-        return 'cancel'
-      default:
-        return 'fail'
-    }
+    return mapPolarOrderStatus(status)
   }
 
   /**
@@ -492,17 +493,8 @@ export class PolarAdapter implements PaymentGatewayPort {
   private mapCheckoutStatus(
     status?: string,
   ): 'succeeded' | 'refunded' | 'failed' | 'open' {
-    switch (status) {
-      case 'succeeded':
-        return 'succeeded'
-      case 'expired':
-      case 'failed':
-        return 'failed'
-      case 'open':
-      case 'confirmed':
-        return 'open'
-      default:
-        return 'open'
-    }
+    // PAY-P3-D 영역 도메인 매핑 함수 영역 위임 (정본: shared-contracts §28).
+    // 기존 default → 'open' 동작 보존 (reconciliation false positive 차단).
+    return mapPolarCheckoutStatus(status)
   }
 }
