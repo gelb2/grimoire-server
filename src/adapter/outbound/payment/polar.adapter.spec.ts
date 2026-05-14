@@ -778,4 +778,106 @@ describe('PolarAdapter', () => {
       })
     })
   })
+
+  describe('PAY-P3-H: Circuit Breaker 적용 (3 호출점 래핑)', () => {
+    /**
+     * AC-1: CircuitBreakerPort 미주입 시 (기존 인스턴스화) — 회귀 보존 정합.
+     *       기존 spec은 PolarAdapter() 직접 호출로 검증 (Circuit Breaker DI 미주입 = undefined).
+     * AC-2: Circuit Breaker 주입 시 — initiatePayment가 execute 'polar:checkouts:create' 래핑.
+     * AC-3: Circuit Breaker 주입 시 — listRecentCheckouts가 execute 'polar:checkouts:list' 래핑.
+     * AC-4: OPEN 상태 — initiatePayment 호출 시 SDK 호출 0건 + CircuitOpenError 그대로 throw.
+     */
+    it('AC-1: Circuit Breaker 미주입 — 기존 흐름 그대로 동작 (회귀 0건)', async () => {
+      // adapter는 beforeEach에서 new PolarAdapter() — circuitBreaker undefined
+      mockCreate.mockResolvedValueOnce({ url: 'https://polar/checkout/cb-test', id: 'cb-trade-001' })
+      process.env.POLAR_PRODUCT_BASIC = 'polar-product-basic'
+
+      const result = await adapter.initiatePayment({
+        productId: 'credit-5',
+        productName: 'Basic',
+        amount: 5000,
+        userId: 'author-cb',
+        returnUrl: 'https://app/return',
+      })
+      expect(result.paymentUrl).toBe('https://polar/checkout/cb-test')
+      expect(result.tradeNo).toBe('cb-trade-001')
+    })
+
+    it('AC-2: Circuit Breaker 주입 — initiatePayment가 execute("polar:checkouts:create", fn) 래핑', async () => {
+      const executeMock = jest.fn().mockImplementation(async (_key: string, fn: () => Promise<unknown>) => fn())
+      const breaker = {
+        execute: executeMock,
+        getState: jest.fn(),
+        getStats: jest.fn(),
+        forceOpen: jest.fn(),
+        forceClose: jest.fn(),
+      }
+      const adapterWithCb = new PolarAdapter(breaker as never)
+      mockCreate.mockResolvedValueOnce({ url: 'https://polar/cb-create', id: 'trade-cb' })
+      process.env.POLAR_PRODUCT_BASIC = 'polar-product-basic'
+
+      await adapterWithCb.initiatePayment({
+        productId: 'credit-5',
+        productName: 'Basic',
+        amount: 5000,
+        userId: 'author-1',
+        returnUrl: 'https://app/return',
+      })
+
+      expect(executeMock).toHaveBeenCalledTimes(1)
+      expect(executeMock).toHaveBeenCalledWith('polar:checkouts:create', expect.any(Function))
+    })
+
+    it('AC-3: Circuit Breaker 주입 — listRecentCheckouts가 execute("polar:checkouts:list", fn) 래핑', async () => {
+      const executeMock = jest.fn().mockImplementation(async (_key: string, fn: () => Promise<unknown>) => fn())
+      const breaker = {
+        execute: executeMock,
+        getState: jest.fn(),
+        getStats: jest.fn(),
+        forceOpen: jest.fn(),
+        forceClose: jest.fn(),
+      }
+      const adapterWithCb = new PolarAdapter(breaker as never)
+      mockList.mockResolvedValueOnce({ result: { items: [] } })
+
+      await adapterWithCb.listRecentCheckouts(new Date('2026-05-01T00:00:00Z'), 50)
+
+      expect(executeMock).toHaveBeenCalledWith('polar:checkouts:list', expect.any(Function))
+    })
+
+    it('AC-4: OPEN 상태 — initiatePayment 호출 시 SDK 호출 0건 + CircuitOpenError 그대로 throw', async () => {
+      // CircuitOpenError 클래스를 직접 import — 도메인 영역 정합
+      const { CircuitOpenError } = await import('@domain/model/circuit-breaker-state')
+      const circuitErr = new CircuitOpenError('polar:checkouts:create', {
+        state: 'open' as never,
+        failureCount: 5,
+        halfOpenTrialCount: 0,
+        halfOpenSuccessCount: 0,
+      })
+      const executeMock = jest.fn().mockRejectedValue(circuitErr)
+      const breaker = {
+        execute: executeMock,
+        getState: jest.fn(),
+        getStats: jest.fn(),
+        forceOpen: jest.fn(),
+        forceClose: jest.fn(),
+      }
+      const adapterWithCb = new PolarAdapter(breaker as never)
+      process.env.POLAR_PRODUCT_BASIC = 'polar-product-basic'
+
+      // CircuitOpenError 그대로 throw — SDK 호출 0건 (execute가 fn 호출 자체 차단)
+      await expect(
+        adapterWithCb.initiatePayment({
+          productId: 'credit-5',
+          productName: 'Basic',
+          amount: 5000,
+          userId: 'author-1',
+          returnUrl: 'https://app/return',
+        }),
+      ).rejects.toThrow(CircuitOpenError)
+
+      // 실제 SDK create 호출 0건 검증 (execute가 fn 자체 실행 안 함)
+      expect(mockCreate).not.toHaveBeenCalled()
+    })
+  })
 })
