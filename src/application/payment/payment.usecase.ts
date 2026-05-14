@@ -1,4 +1,4 @@
-import { Injectable, Inject, BadRequestException, Logger, Optional } from '@nestjs/common'
+import { Injectable, Inject, BadRequestException, Logger, Optional, ServiceUnavailableException } from '@nestjs/common'
 import { PaymentRepositoryPort } from '@domain/port/outbound/payment-repository.port'
 import { PaymentGatewayPort } from '@domain/port/outbound/payment-gateway.port'
 import { WebhookEventRepositoryPort } from '@domain/port/outbound/webhook-event-repository.port'
@@ -7,6 +7,7 @@ import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.po
 import { CREDIT_PRODUCTS, Product } from '@domain/model/config'
 import { RefundPaymentUseCase } from './refund-payment.usecase'
 import { AuditLogService } from '@application/admin/audit-log.service'
+import { CircuitOpenError } from '@domain/model/circuit-breaker-state'
 
 // re-export for backward compatibility
 export { CREDIT_PRODUCTS, type Product }
@@ -186,9 +187,25 @@ export class PaymentUseCase {
       )
     }
 
-    const result = await this.paymentGateway.initiatePayment({
-      productId: product.id, productName: product.name, amount: product.price, userId: authorId, returnUrl,
-    })
+    // PAY-P3-H: CircuitOpenError 분기 — fail-fast 영역 (retry queue 박제 0건 강제).
+    // Circuit Breaker가 OPEN 상태면 SDK 호출 0건 + 즉시 503 응답.
+    // 정본: shared-contracts §27 CircuitBreakerPolicy, ADR-009.
+    let result
+    try {
+      result = await this.paymentGateway.initiatePayment({
+        productId: product.id, productName: product.name, amount: product.price, userId: authorId, returnUrl,
+      })
+    } catch (e: unknown) {
+      if (e instanceof CircuitOpenError) {
+        this.logger.warn(
+          `[CircuitBreaker] initiatePayment fail-fast — circuit=${e.circuitKey} authorId=${authorId} productId=${productId}`,
+        )
+        // AuditLog circuit_breaker.reject 박제는 in-memory-circuit-breaker.adapter 영역에서 이미 박제.
+        // 본 usecase = 사용자 친화 503 응답 (운영 영역 사용자 재시도 결정 영역).
+        throw new ServiceUnavailableException('결제 서비스 일시 차단 중 — 잠시 후 재시도')
+      }
+      throw e
+    }
 
     // 재사용 분기에서도 항상 호출 — Polar 정책상 매 결제 시도마다 신규 tradeNo 발급되므로 갱신 필수
     await this.paymentRepo.updateExternalTransactionId(payment.id, result.tradeNo)

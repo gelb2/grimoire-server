@@ -1024,4 +1024,58 @@ describe('PaymentUseCase', () => {
       expect(cheapest).toBeGreaterThan(AI_COST_PER_THEME_KRW)
     })
   })
+
+  /**
+   * PAY-P3-H: Circuit Breaker fail-fast 분기 — initiatePayment 영역.
+   *
+   * Polar SDK 호출 경계 OPEN 상태 시:
+   * - PaymentGatewayPort.initiatePayment가 CircuitOpenError throw
+   * - PaymentUseCase.initiatePayment가 catch + ServiceUnavailableException 변환 (503)
+   * - paymentRepo.create + updateExternalTransactionId 후속 호출 0건 강제 (retry queue 폭주 차단)
+   *
+   * 정본: shared-contracts §27 CircuitBreakerPolicy, ADR-009.
+   */
+  describe('PAY-P3-H: Circuit Breaker fail-fast 분기 (initiatePayment 영역)', () => {
+    it('CircuitOpenError 시 ServiceUnavailableException(503) 변환 + 후속 paymentRepo 호출 0건', async () => {
+      const { CircuitOpenError } = await import('@domain/model/circuit-breaker-state')
+      const { ServiceUnavailableException } = await import('@nestjs/common')
+      const circuitErr = new CircuitOpenError('polar:checkouts:create', {
+        state: 'open' as never,
+        failureCount: 5,
+        halfOpenTrialCount: 0,
+        halfOpenSuccessCount: 0,
+      })
+
+      mockPrisma.findReusablePendingPayment.mockResolvedValueOnce(null)
+      mockPrisma.create.mockResolvedValueOnce({
+        id: 'pay-cb-1', authorId: 'author-cb', productId: 'credit-5',
+        amount: 2000, credits: 5, status: 'pending',
+      })
+      mockPaymentGateway.initiatePayment.mockRejectedValueOnce(circuitErr)
+
+      // ServiceUnavailableException 변환 확인 (사용자 친화 503)
+      await expect(
+        useCase.initiatePayment('author-cb', 'credit-5', 'https://app/return'),
+      ).rejects.toThrow(ServiceUnavailableException)
+
+      // PAY-P3-H 정합: updateExternalTransactionId 호출 0건 (CircuitOpenError가 SDK 호출 자체 차단)
+      expect(mockPrisma.updateExternalTransactionId).not.toHaveBeenCalled()
+    })
+
+    it('CircuitOpenError 외 일반 Error 시 그대로 throw (회귀 보존)', async () => {
+      const normalErr = new Error('Polar checkout 생성 실패: timeout')
+
+      mockPrisma.findReusablePendingPayment.mockResolvedValueOnce(null)
+      mockPrisma.create.mockResolvedValueOnce({
+        id: 'pay-normal-1', authorId: 'author-1', productId: 'credit-5',
+        amount: 2000, credits: 5, status: 'pending',
+      })
+      mockPaymentGateway.initiatePayment.mockRejectedValueOnce(normalErr)
+
+      // 기존 흐름 — 일반 Error는 그대로 throw (PAY-P3-B 정합)
+      await expect(
+        useCase.initiatePayment('author-1', 'credit-5', 'https://app/return'),
+      ).rejects.toThrow('Polar checkout 생성 실패: timeout')
+    })
+  })
 })

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common'
+import { Injectable, Logger, Optional, Inject } from '@nestjs/common'
 import { Polar } from '@polar-sh/sdk'
 // 경로 캡슐화된 래퍼 — 테스트 시 이 모듈을 mock하면 됨
 import { validateEvent, WebhookVerificationError } from './polar-webhooks'
@@ -11,6 +11,7 @@ import {
   PolarErrorClass,
   PolarErrorClassification,
 } from '@domain/port/outbound/payment-gateway.port'
+import { CircuitBreakerPort } from '@domain/port/outbound/circuit-breaker.port'
 import { CREDIT_PRODUCTS } from '@domain/model/config'
 import { isProduction } from '@infrastructure/config/app-env'
 
@@ -43,7 +44,15 @@ export class PolarAdapter implements PaymentGatewayPort {
    */
   private readonly timeoutMs: number
 
-  constructor() {
+  /**
+   * PAY-P3-H 차단: Polar SDK 호출 경계 Circuit Breaker (가용성 차단).
+   * 정본: shared-contracts §27 CircuitBreakerPolicy, ADR-009.
+   * 3 호출점 적용: polar:checkouts:create / polar:checkouts:list / polar:checkouts:get.
+   * AuditLog Optional — Optional 주입 시 4 action 박제 (open / close / half_open_trial / reject).
+   */
+  constructor(
+    @Optional() @Inject('CircuitBreakerPort') private readonly circuitBreaker?: CircuitBreakerPort,
+  ) {
     const accessToken = process.env.POLAR_ACCESS_TOKEN ?? ''
     const server = (process.env.POLAR_SERVER ?? 'production') as 'sandbox' | 'production'
     this.webhookSecret = process.env.POLAR_WEBHOOK_SECRET ?? ''
@@ -160,29 +169,63 @@ export class PolarAdapter implements PaymentGatewayPort {
       )
     }
 
-    try {
-      const checkout = await this.polar.checkouts.create({
-        products: [polarProductId],
-        successUrl: request.returnUrl,
-        // Webhook에서 tradeNo ↔ 내부 Payment 매칭 + 작가 추적용
-        metadata: {
-          authorId: request.userId,
-          internalProductId: request.productId,
-        },
-      })
+    // PAY-P3-H: Circuit Breaker 래핑 (가용성 차단, Hystrix 3 상태 머신 정합).
+    // OPEN 상태 시 SDK 호출 0건 + CircuitOpenError throw (호출자 영역 분기).
+    // 정본: shared-contracts §27 CircuitBreakerPolicy.
+    const invokeSDK = async (): Promise<PaymentInitResponse> => {
+      try {
+        const checkout = await this.polar.checkouts.create({
+          products: [polarProductId],
+          successUrl: request.returnUrl,
+          // Webhook에서 tradeNo ↔ 내부 Payment 매칭 + 작가 추적용
+          metadata: {
+            authorId: request.userId,
+            internalProductId: request.productId,
+          },
+        })
 
-      return {
-        paymentUrl: checkout.url,
-        tradeNo: checkout.id,
+        return {
+          paymentUrl: checkout.url,
+          tradeNo: checkout.id,
+        }
+      } catch (e: unknown) {
+        // PAY-P3-B 구멍-C 차단: SDK exception 분류 + 로깅
+        // 정본: shared-contracts §24 PolarSDKTimeoutPolicy
+        const polarError = this.classifyPolarError(e)
+        const httpStatusLabel = polarError.httpStatus ?? 'N/A'
+        this.logger.error(
+          `[PolarSDK] initiatePayment ${polarError.errorClass} httpStatus=${httpStatusLabel} message="${polarError.message.slice(0, 200)}"`,
+        )
+        // PAY-P3-H: client_4xx는 CircuitBreaker failureCount 영향 0 강제 (요청 결함, SDK/Polar 장애 0).
+        // 4xx 분류 시 throw 그대로 (CircuitBreaker가 외 분류만 누적).
+        if (polarError.errorClass === 'client_4xx') {
+          throw new Error(`Polar checkout 생성 실패: ${polarError.message}`)
+        }
+        // timeout / network / server_5xx / unknown 분류 → CircuitBreaker가 failureCount++
+        throw e
       }
+    }
+
+    // CircuitBreaker 미주입 시 (회귀 보존) — 직접 호출.
+    // 본 sprint = app.module 의무 주입 정합 (운영 영역 미주입 0건).
+    if (!this.circuitBreaker) {
+      try {
+        return await invokeSDK()
+      } catch (e: unknown) {
+        if (e instanceof Error && e.message.startsWith('Polar checkout 생성 실패')) throw e
+        const polarError = this.classifyPolarError(e)
+        throw new Error(`Polar checkout 생성 실패: ${polarError.message}`)
+      }
+    }
+
+    try {
+      return await this.circuitBreaker.execute('polar:checkouts:create', invokeSDK)
     } catch (e: unknown) {
-      // PAY-P3-B 구멍-C 차단: SDK exception 분류 + 로깅
-      // 정본: shared-contracts §24 PolarSDKTimeoutPolicy
+      // CircuitOpenError는 호출자(payment.usecase)가 분기 처리 — 본 adapter는 그대로 throw.
+      // 외 분류는 분류 후 사용자 친화 메시지 박제.
+      if (e instanceof Error && e.name === 'CircuitOpenError') throw e
+      if (e instanceof Error && e.message.startsWith('Polar checkout 생성 실패')) throw e
       const polarError = this.classifyPolarError(e)
-      const httpStatusLabel = polarError.httpStatus ?? 'N/A'
-      this.logger.error(
-        `[PolarSDK] initiatePayment ${polarError.errorClass} httpStatus=${httpStatusLabel} message="${polarError.message.slice(0, 200)}"`,
-      )
       throw new Error(`Polar checkout 생성 실패: ${polarError.message}`)
     }
   }
@@ -360,17 +403,27 @@ export class PolarAdapter implements PaymentGatewayPort {
     let page = 1
     const MAX_PAGES = 20 // 안전 상한 — page 20 * limit 100 = 최대 2000 row/cron
 
+    // PAY-P3-H: Circuit Breaker 래핑 (listRecentCheckouts = polar:checkouts:list 호출점).
+    // 호출점 분리 — initiatePayment(create)와 독립 상태 (한 호출점 OPEN 시 다른 호출점 영향 0).
+    // 정본: shared-contracts §27 CircuitBreakerPolicy.
+    const invokePage = async (currentPage: number): Promise<{
+      result?: { items?: Array<Record<string, unknown>> }
+    }> => {
+      const response = await this.polar.checkouts.list({
+        page: currentPage,
+        limit: safeLimit,
+        sorting: ['-created_at'],
+      })
+      return response as unknown as { result?: { items?: Array<Record<string, unknown>> } }
+    }
+
     try {
       while (page <= MAX_PAGES) {
-        const response = await this.polar.checkouts.list({
-          page,
-          limit: safeLimit,
-          sorting: ['-created_at'],
-        })
+        const response = this.circuitBreaker
+          ? await this.circuitBreaker.execute('polar:checkouts:list', () => invokePage(page))
+          : await invokePage(page)
         // Polar SDK는 PageIterator 반환 — result.items 배열 직접 접근
-        const result = (response as unknown as {
-          result?: { items?: Array<Record<string, unknown>> }
-        }).result
+        const result = response.result
         const items = result?.items ?? []
         if (items.length === 0) break
 
@@ -408,6 +461,13 @@ export class PolarAdapter implements PaymentGatewayPort {
         page += 1
       }
     } catch (e: unknown) {
+      // PAY-P3-H: CircuitOpenError 호출자(payment-reconciliation.job) 영역 분기 — 그대로 throw.
+      if (e instanceof Error && e.name === 'CircuitOpenError') {
+        this.logger.warn(
+          `[CircuitBreaker] listRecentCheckouts skip — polar:checkouts:list OPEN (page=${page})`,
+        )
+        throw e
+      }
       // PAY-P3-B 구멍-C 차단: SDK exception 분류 + 로깅 (Reconciliation 정합)
       // 정본: shared-contracts §24 PolarSDKTimeoutPolicy
       const polarError = this.classifyPolarError(e)

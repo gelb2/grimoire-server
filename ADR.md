@@ -363,6 +363,67 @@ Prisma schema 33 FK 관계 모두 `onDelete` directive 명시 강제. 4 전략 (
 
 ---
 
+## ADR-009: Polar SDK 호출 경계 Circuit Breaker 도입 (PAY-P3-H, 2026-05-15)
+
+### 상태
+ACCEPTED (사용자 5/15 결정 Draft §16 권장값 전부 채택 정합)
+
+### 컨텍스트
+- PAY-P3-B (Polar SDK timeout 정책, ADR-006 + shared-contracts §24) 종료 시점 잔존 문제:
+  - Polar SDK 장애 누적 시 retry queue 폭주 (timeout 30s × N 누적)
+  - 회복 시점 자동 감지 부재 (5분 cron 폭주 지속)
+  - fail-fast 부재 (사용자 응답 30s 대기)
+- 사용자 5/10 명시 정합: 외부 API 0건 / DB schema 0건 / dev migration 0건 강제
+- 외부 npm 라이브러리 (opossum / cockatiel) 도입 0건 정합 (자체 구현)
+- 사용자 5/15 결정 정합: Draft §16 권장값 전부 채택 (옵션 B Hystrix 정합 + 3 호출점 + env 4건 + AuditLog 4 action + 관리자 UI 별도 sprint)
+
+### 결정
+- Hystrix 3 상태 머신 패턴 채택 (CLOSED / OPEN / HALF_OPEN)
+- 임계값 정책: 옵션 B Hystrix 정합 (failureThreshold=5, cooldownMs=30_000, halfOpenTrial=3, resetWindowMs=60_000)
+- 상태 저장: in-memory (단일 인스턴스 가정, 다중 인스턴스는 별도 sprint)
+- 적용 영역: Polar SDK 2 호출점 박제 (checkouts.create / checkouts.list) — checkouts.get는 현재 코드 미존재 (Draft §8-1 "있을 시" 정합, 향후 추가 시 자동 적용)
+- AuditLog 박제 매트릭스: `circuit_breaker.open` / `circuit_breaker.close` / `circuit_breaker.half_open_trial` / `circuit_breaker.reject` (4 action)
+- env 4건: `POLAR_CB_FAILURE_THRESHOLD` / `POLAR_CB_COOLDOWN_MS` / `POLAR_CB_HALF_OPEN_TRIAL` / `POLAR_CB_RESET_WINDOW_MS`
+- CircuitOpenError 분기: PaymentUseCase.initiatePayment → ServiceUnavailableException(503) 변환, PaymentReconciliationJob → cron skip
+
+### 대안
+- (A) opossum npm 라이브러리 — 외부 의존 추가 (사용자 5/10 정합 X, 거부)
+- (B) cockatiel npm 라이브러리 — 동일 사유 거부
+- (C) Redis 기반 분산 상태 — 인프라 추가 (사용자 5/10 정합 X, 거부) — 다중 인스턴스 시점 별도 sprint
+- (D) 자체 구현 + in-memory ← **채택** (외부 의존 0건 + 인프라 0건 + DB 0건)
+
+### 구현
+- domain/model: `src/domain/model/circuit-breaker-state.ts` (enum + Policy + Stats + CircuitOpenError)
+- domain/port: `src/domain/port/outbound/circuit-breaker.port.ts` (CircuitBreakerPort 인터페이스)
+- adapter: `src/adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter.ts` (Map 기반 단일 인스턴스 구현)
+- app.module DI: `'CircuitBreakerPort' → InMemoryCircuitBreakerAdapter` (PolarAdapter 영역 Optional 주입)
+- 적용 영역: `src/adapter/outbound/payment/polar.adapter.ts` (initiatePayment + listRecentCheckouts 래핑)
+- 호출자 분기: `src/application/payment/payment.usecase.ts` (CircuitOpenError → ServiceUnavailableException), `src/application/payment/payment-reconciliation.job.ts` (cron skip)
+- spec: `in-memory-circuit-breaker.adapter.spec.ts` (18 it) + `polar.adapter.spec.ts` (+4 it) + `payment.usecase.spec.ts` (+2 it) — 합계 +24 it
+
+### 결과
+- Polar 장애 시 retry queue 폭주 0건 (OPEN 상태에서 SDK 호출 0건)
+- 회복 자동 감지 (HALF-OPEN 3회 trial 모두 성공 시 CLOSED 복귀)
+- 사용자 응답 시간 ↓ (fail-fast 즉시 503 응답)
+- 운영 로그 noise ↓ (대량 timeout 박제 0건)
+- AuditLog 4 action 박제 강제 (운영 모니터링 + 사후 분석 정합)
+
+### 잔존 영역
+- 다중 인스턴스 환경 — in-memory 상태 분리 (Redis 별도 sprint)
+- 정책 변경 시 Container Apps 재시작 필요 (in-memory 0 초기화)
+- 관리자 UI (forceOpen/forceClose) — P3-I 별도 sprint 분리 (port 인터페이스만 본 sprint 박제)
+- 호출 빈도 인벤토리 박제 필요 (운영 모니터링 영역)
+
+### 정본 영역
+- `src/domain/model/circuit-breaker-state.ts`
+- `src/domain/port/outbound/circuit-breaker.port.ts`
+- `src/adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter.ts`
+- `src/adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter.spec.ts`
+- `.claude/shared-contracts.md §27 CircuitBreakerPolicy`
+- `.claude/state/sprint-pay-p3-h-circuit-breaker-draft.md` (Initializer 정본, 17 섹션)
+
+---
+
 ## ADR-008: audit log 영구 보존 + PII 마스킹 정책 (PAY-P2-5, 2026-05-10)
 
 ### 컨텍스트
@@ -409,3 +470,4 @@ Prisma schema 33 FK 관계 모두 `onDelete` directive 명시 강제. 4 전략 (
 - Polar SDK timeout: `src/adapter/outbound/payment/polar.adapter.ts`, `.claude/shared-contracts.md §24 PolarSDKTimeoutPolicy`
 - FK Cascade 정책: `prisma/schema.prisma` 33 FK 영역 + `prisma/migrations/20260510_pay_p3_e_fk_cascade_policy/migration.sql` + `.claude/shared-contracts.md §25 FKCascadePolicy`
 - audit retention 정책: `prisma/migrations/20260510_pay_p2_5_audit_retention_policy/migration.sql` + `src/adapter/outbound/persistence/audit-mask-helper.ts` + `src/scheduler/audit-mask.scheduler.ts` + `.claude/shared-contracts.md §26 AuditRetentionPolicy`
+- Circuit Breaker 정책: `src/domain/model/circuit-breaker-state.ts` + `src/domain/port/outbound/circuit-breaker.port.ts` + `src/adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter.ts` + `.claude/shared-contracts.md §27 CircuitBreakerPolicy` + ADR-009
