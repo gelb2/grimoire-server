@@ -33,7 +33,6 @@ import { AccessLogService } from '@infrastructure/security/access-log.service'
 import { UserSoftDeleteUseCase } from '@application/author/user-soft-delete.usecase'
 import { UserHardDeleteJob } from '@application/author/user-hard-delete.job'
 import { DefaultUserAnonymizerAdapter } from '@adapter/outbound/persistence/default-user-anonymizer.adapter'
-import { applySoftDeleteMiddleware } from '@adapter/outbound/persistence/prisma-soft-delete.middleware'
 import { ThemeSlotUseCase } from '@application/theme/theme-slot.usecase'
 import { PlanUseCase } from '@application/plan/plan.usecase'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
@@ -193,14 +192,13 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
 })
 export class AppModule {
   /**
-   * USER-SOFT-DELETE sprint (2026-05-15) — Prisma soft delete middleware 영역 등록 영역.
+   * USER-SOFT-DELETE sprint (2026-05-15) — Author soft delete 적용 영역.
    *
-   * NestJS Module 영역 onModuleInit 영역 영역 영역 영역 영역 영역 — PrismaService 영역 영역 영역 영역 후 영역 영역 영역 영역 호출 영역.
-   * 정본: .claude/state/sprint-user-soft-delete-draft.md §10-1 middleware 자동 적용 영역
+   * Prisma 6.x 정합 (revision 159 ActivationFailed hotfix):
+   * - Prisma 5.x `$use` 는 6.x 에서 제거됨 → AppModule constructor 에서 `$use` 호출 시
+   *   `TypeError: prisma.$use is not a function` 으로 컨테이너 부팅 실패(ActivationFailed).
+   * - soft delete 적용 책임을 `PrismaService.onModuleInit` (Client Extensions `$extends`)
+   *   으로 이관 — AppModule constructor 의 직접 호출은 제거한다.
+   * 정본: .claude/state/sprint-user-soft-delete-draft.md §10-1, ADR (Prisma 6.x 마이그레이션)
    */
-  constructor(private readonly prisma: PrismaService) {
-    // Module 생성 시점 영역 — middleware 영역 영역 한 번만 영역 영역 영역 영역 강제 영역 영역.
-    // (Prisma $use 영역 영역 영역 영역 영역 영역 영역 영역 영역 영역 — Prisma 영역 영역 영역 영역 영역 영역 영역 영역.)
-    applySoftDeleteMiddleware(this.prisma)
-  }
 }

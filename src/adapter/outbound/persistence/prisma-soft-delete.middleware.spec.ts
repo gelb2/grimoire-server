@@ -1,142 +1,149 @@
-import { applySoftDeleteMiddleware } from './prisma-soft-delete.middleware'
+import {
+  decideAuthorSoftDelete,
+  withSoftDeleteFilter,
+  AUTHOR_FIND_OPERATIONS,
+} from './prisma-soft-delete.middleware'
 
-describe('PrismaSoftDeleteMiddleware (USER-SOFT-DELETE sprint 2026-05-15)', () => {
-  let registeredMiddleware: ((params: any, next: any) => Promise<any>) | null
-  let mockPrisma: { $use: jest.Mock }
+/**
+ * USER-SOFT-DELETE sprint (2026-05-15) — Author soft delete 변환 단위 테스트.
+ *
+ * Prisma 6.x 정합 (revision 159 ActivationFailed hotfix):
+ * - 기존 `$use` middleware 기반 spec 을 `$extends` 정본의 순수 결정 함수
+ *   `decideAuthorSoftDelete` 검증으로 재작성.
+ * - `decideAuthorSoftDelete` 는 실 DB 없이 변환 규칙(filtered / redirect / passthrough)
+ *   을 결정하는 순수 함수이므로, extension 의 핵심 동작을 결정성 있게 검증한다.
+ */
+describe('PrismaSoftDeleteExtension — decideAuthorSoftDelete (USER-SOFT-DELETE 2026-05-15)', () => {
+  // 결정성을 위한 고정 시각
+  const FIXED_NOW = new Date('2026-05-15T10:00:00.000Z')
 
-  beforeEach(() => {
-    registeredMiddleware = null
-    mockPrisma = {
-      $use: jest.fn().mockImplementation((mw) => {
-        registeredMiddleware = mw
-      }),
-    }
-    applySoftDeleteMiddleware(mockPrisma as any)
-  })
+  describe('조회 액션 → deletedAt: null 자동 추가 (filtered)', () => {
+    it('findUnique — WHERE deletedAt IS NULL 자동 추가', () => {
+      const d = decideAuthorSoftDelete('findUnique', { where: { id: 'author-1' } }, FIXED_NOW)
 
-  function makeNext(returnValue: unknown = undefined) {
-    return jest.fn().mockResolvedValue(returnValue)
-  }
+      expect(d.kind).toBe('filtered')
+      if (d.kind !== 'filtered') throw new Error('unreachable')
+      expect(d.args.where).toEqual({ id: 'author-1', deletedAt: null })
+    })
 
-  describe('findUnique → findFirst 변환 + deletedAt: null 자동 추가', () => {
-    it('findUnique — WHERE deletedAt IS NULL 자동 추가 + findFirst 변환', async () => {
-      const next = makeNext({ id: 'author-1' })
-      const params: any = {
-        model: 'Author',
-        action: 'findUnique',
-        args: { where: { id: 'author-1' } },
+    it('findUniqueOrThrow — WHERE deletedAt IS NULL 자동 추가', () => {
+      const d = decideAuthorSoftDelete('findUniqueOrThrow', { where: { slug: 'a' } }, FIXED_NOW)
+
+      expect(d.kind).toBe('filtered')
+      if (d.kind !== 'filtered') throw new Error('unreachable')
+      expect(d.args.where).toEqual({ slug: 'a', deletedAt: null })
+    })
+
+    it('findMany — WHERE deletedAt IS NULL 자동 추가', () => {
+      const d = decideAuthorSoftDelete('findMany', { where: { role: 'user' } }, FIXED_NOW)
+
+      expect(d.kind).toBe('filtered')
+      if (d.kind !== 'filtered') throw new Error('unreachable')
+      expect(d.args.where).toEqual({ role: 'user', deletedAt: null })
+    })
+
+    it('findFirst — WHERE deletedAt IS NULL 자동 추가', () => {
+      const d = decideAuthorSoftDelete('findFirst', { where: { email: 'test@test.com' } }, FIXED_NOW)
+
+      expect(d.kind).toBe('filtered')
+      if (d.kind !== 'filtered') throw new Error('unreachable')
+      expect(d.args.where).toEqual({ email: 'test@test.com', deletedAt: null })
+    })
+
+    it('count — WHERE deletedAt IS NULL 자동 추가 (args 없음)', () => {
+      const d = decideAuthorSoftDelete('count', {}, FIXED_NOW)
+
+      expect(d.kind).toBe('filtered')
+      if (d.kind !== 'filtered') throw new Error('unreachable')
+      expect(d.args.where).toEqual({ deletedAt: null })
+    })
+
+    it('AUTHOR_FIND_OPERATIONS 6종 모두 filtered 로 결정된다', () => {
+      for (const op of AUTHOR_FIND_OPERATIONS) {
+        const d = decideAuthorSoftDelete(op, { where: {} }, FIXED_NOW)
+        expect(d.kind).toBe('filtered')
       }
-
-      await registeredMiddleware!(params, next)
-
-      expect(params.action).toBe('findFirst')
-      expect(params.args.where).toEqual({ id: 'author-1', deletedAt: null })
-      expect(next).toHaveBeenCalledWith(params)
     })
   })
 
-  describe('findMany / findFirst / count → deletedAt: null 자동 추가', () => {
-    it('findMany — WHERE deletedAt IS NULL 자동 추가', async () => {
-      const next = makeNext([{ id: 'author-1' }])
-      const params: any = {
-        model: 'Author',
-        action: 'findMany',
-        args: { where: { role: 'user' } },
-      }
+  describe('delete → soft delete 변환 (redirect to update, hard delete 차단)', () => {
+    it('delete — update { deletedAt: NOW() } 로 redirect', () => {
+      const d = decideAuthorSoftDelete('delete', { where: { id: 'author-1' } }, FIXED_NOW)
 
-      await registeredMiddleware!(params, next)
-
-      expect(params.args.where).toEqual({ role: 'user', deletedAt: null })
+      expect(d.kind).toBe('redirect')
+      if (d.kind !== 'redirect') throw new Error('unreachable')
+      expect(d.redirectTo).toBe('update')
+      expect(d.args.where).toEqual({ id: 'author-1' })
+      expect((d.args.data as { deletedAt: Date }).deletedAt).toEqual(FIXED_NOW)
     })
 
-    it('findFirst — WHERE deletedAt IS NULL 자동 추가', async () => {
-      const next = makeNext({ id: 'author-1' })
-      const params: any = {
-        model: 'Author',
-        action: 'findFirst',
-        args: { where: { email: 'test@test.com' } },
-      }
+    it('deleteMany — updateMany { deletedAt: NOW() } 로 redirect', () => {
+      const d = decideAuthorSoftDelete('deleteMany', { where: { role: 'user' } }, FIXED_NOW)
 
-      await registeredMiddleware!(params, next)
-
-      expect(params.args.where).toEqual({ email: 'test@test.com', deletedAt: null })
+      expect(d.kind).toBe('redirect')
+      if (d.kind !== 'redirect') throw new Error('unreachable')
+      expect(d.redirectTo).toBe('updateMany')
+      expect(d.args.where).toEqual({ role: 'user' })
+      expect((d.args.data as { deletedAt: Date }).deletedAt).toEqual(FIXED_NOW)
     })
 
-    it('count — WHERE deletedAt IS NULL 자동 추가', async () => {
-      const next = makeNext(5)
-      const params: any = {
-        model: 'Author',
-        action: 'count',
-        args: {},
-      }
+    it('deleteMany — where 미지정 시 빈 객체로 redirect', () => {
+      const d = decideAuthorSoftDelete('deleteMany', undefined, FIXED_NOW)
 
-      await registeredMiddleware!(params, next)
-
-      expect(params.args.where).toEqual({ deletedAt: null })
+      expect(d.kind).toBe('redirect')
+      if (d.kind !== 'redirect') throw new Error('unreachable')
+      expect(d.args.where).toEqual({})
     })
   })
 
-  describe('delete → soft delete 변환 (hard delete 차단)', () => {
-    it('delete — UPDATE deletedAt = NOW() 변환 (hard delete 차단)', async () => {
-      const next = makeNext({ id: 'author-1' })
-      const params: any = {
-        model: 'Author',
-        action: 'delete',
-        args: { where: { id: 'author-1' } },
-      }
-
-      await registeredMiddleware!(params, next)
-
-      expect(params.action).toBe('update')
-      expect(params.args.data).toBeDefined()
-      expect(params.args.data.deletedAt).toBeInstanceOf(Date)
+  describe('비-조회/비-삭제 액션 → passthrough (변환 0건)', () => {
+    it('create — passthrough', () => {
+      expect(decideAuthorSoftDelete('create', { data: {} }, FIXED_NOW).kind).toBe('passthrough')
     })
 
-    it('deleteMany — updateMany deletedAt = NOW() 변환', async () => {
-      const next = makeNext({ count: 3 })
-      const params: any = {
-        model: 'Author',
-        action: 'deleteMany',
-        args: { where: { role: 'user' } },
-      }
+    it('update — passthrough (softDelete/restore 명시 update 보존)', () => {
+      expect(decideAuthorSoftDelete('update', { where: { id: 'x' } }, FIXED_NOW).kind).toBe(
+        'passthrough',
+      )
+    })
 
-      await registeredMiddleware!(params, next)
-
-      expect(params.action).toBe('updateMany')
-      expect(params.args.data.deletedAt).toBeInstanceOf(Date)
+    it('upsert — passthrough', () => {
+      expect(decideAuthorSoftDelete('upsert', {}, FIXED_NOW).kind).toBe('passthrough')
     })
   })
 
-  describe('비-Author 모델 영역 영역 영역 영역 강제 영역 0건', () => {
-    it('Work 모델 영역 영역 영역 영역 영역 영역 영역 영역 영역 — 변환 0건', async () => {
-      const next = makeNext({ id: 'work-1' })
-      const params: any = {
-        model: 'Work',
-        action: 'findUnique',
-        args: { where: { id: 'work-1' } },
-      }
+  describe('includeDeleted: true 우회 (운영자 영역)', () => {
+    it('findFirst — includeDeleted: true 면 deletedAt 필터 미적용 + flag 제거', () => {
+      const d = decideAuthorSoftDelete(
+        'findFirst',
+        { where: { id: 'author-1', includeDeleted: true } },
+        FIXED_NOW,
+      )
 
-      await registeredMiddleware!(params, next)
-
-      expect(params.action).toBe('findUnique')
-      expect(params.args.where).toEqual({ id: 'work-1' })
+      expect(d.kind).toBe('filtered')
+      if (d.kind !== 'filtered') throw new Error('unreachable')
+      // includeDeleted flag 제거 + deletedAt 필터 미적용
+      expect(d.args.where).toEqual({ id: 'author-1' })
+      expect((d.args.where as Record<string, unknown>).deletedAt).toBeUndefined()
     })
   })
 
-  describe('includeDeleted: true 우회 영역', () => {
-    it('findUnique — includeDeleted: true 영역 영역 영역 deletedAt 영역 영역 영역 영역 영역 영역 영역 0건', async () => {
-      const next = makeNext({ id: 'author-1' })
-      const params: any = {
-        model: 'Author',
-        action: 'findFirst',
-        args: { where: { id: 'author-1', includeDeleted: true } },
-      }
+  describe('withSoftDeleteFilter 순수 함수', () => {
+    it('args undefined — where: { deletedAt: null } 생성', () => {
+      expect(withSoftDeleteFilter(undefined)).toEqual({ where: { deletedAt: null } })
+    })
 
-      await registeredMiddleware!(params, next)
+    it('기존 where 보존 + deletedAt: null 병합', () => {
+      expect(withSoftDeleteFilter({ where: { id: 'x' }, take: 5 })).toEqual({
+        where: { id: 'x', deletedAt: null },
+        take: 5,
+      })
+    })
 
-      // includeDeleted flag 영역 영역 제거 영역 + deletedAt 영역 영역 영역 영역 영역 영역
-      expect(params.args.where).toEqual({ id: 'author-1' })
-      expect(params.args.where.deletedAt).toBeUndefined()
+    it('원본 args 를 변형하지 않는다 (불변성)', () => {
+      const original = { where: { id: 'x' } }
+      withSoftDeleteFilter(original)
+      expect(original).toEqual({ where: { id: 'x' } })
     })
   })
 })
