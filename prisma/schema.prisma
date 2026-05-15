@@ -52,8 +52,12 @@ model Author {
   sanctioningAdmin   UserSanction[]  @relation("SanctioningAdmin")
   adminAuditLogs     AdminAuditLog[]
 
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  // USER-SOFT-DELETE sprint (2026-05-15) — Author soft delete 표식 영역
+  // NULL = 활성 / NOT NULL = soft deleted (deletedAt 시점 박제, 30일 후 cron hard delete 영역)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
 
+  @@index([deletedAt])
   @@map("authors")
 }
 

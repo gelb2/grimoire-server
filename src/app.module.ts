@@ -30,6 +30,9 @@ import { AdminUseCase } from '@application/admin/admin.usecase'
 import { AuditLogService } from '@application/admin/audit-log.service'
 import { AuditMaskJob } from '@application/admin/audit-mask.job'
 import { AccessLogService } from '@infrastructure/security/access-log.service'
+import { UserSoftDeleteUseCase } from '@application/author/user-soft-delete.usecase'
+import { UserHardDeleteJob } from '@application/author/user-hard-delete.job'
+import { DefaultUserAnonymizerAdapter } from '@adapter/outbound/persistence/default-user-anonymizer.adapter'
 import { ThemeSlotUseCase } from '@application/theme/theme-slot.usecase'
 import { PlanUseCase } from '@application/plan/plan.usecase'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
@@ -142,6 +145,9 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     AuditLogService,
     AuditMaskJob,
     AccessLogService,
+    // USER-SOFT-DELETE sprint (2026-05-15) — Author soft delete usecase + cron + GDPR anonymizer
+    UserSoftDeleteUseCase,
+    UserHardDeleteJob,
     ThemeSlotUseCase,
     PlanUseCase,
     NovelAnalysisUseCase,
@@ -180,6 +186,19 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'WebhookRetryQueueRepositoryPort', useClass: PrismaWebhookRetryQueueRepository },
     { provide: 'ReconciliationCheckpointRepositoryPort', useClass: PrismaReconciliationCheckpointRepository },
     { provide: 'AnalysisReportRepositoryPort', useClass: PrismaAnalysisReportRepository },
+    // USER-SOFT-DELETE sprint (2026-05-15): GDPR 익명화 영역 — basic 옵션 A 영역 (사용자 5/15 채택)
+    { provide: 'UserAnonymizerPort', useClass: DefaultUserAnonymizerAdapter },
   ],
 })
-export class AppModule {}
+export class AppModule {
+  /**
+   * USER-SOFT-DELETE sprint (2026-05-15) — Author soft delete 적용 영역.
+   *
+   * Prisma 6.x 정합 (revision 159 ActivationFailed hotfix):
+   * - Prisma 5.x `$use` 는 6.x 에서 제거됨 → AppModule constructor 에서 `$use` 호출 시
+   *   `TypeError: prisma.$use is not a function` 으로 컨테이너 부팅 실패(ActivationFailed).
+   * - soft delete 적용 책임을 `PrismaService.onModuleInit` (Client Extensions `$extends`)
+   *   으로 이관 — AppModule constructor 의 직접 호출은 제거한다.
+   * 정본: .claude/state/sprint-user-soft-delete-draft.md §10-1, ADR (Prisma 6.x 마이그레이션)
+   */
+}

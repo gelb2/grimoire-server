@@ -71,10 +71,19 @@ export class AdminUseCase {
     return updated
   }
 
+  /**
+   * 운영자 영역 강제 Author 삭제 영역 영역.
+   *
+   * USER-SOFT-DELETE sprint (2026-05-15) 정합 — 본 영역 영역 영역 author_delete 호환 영역 영역 영역:
+   * - 회귀 영역 영역 (admin.usecase.spec deleteAuthor it 정합 영역 영역) — author_delete audit_log 영역 영역
+   * - 본 영역 영역 영역 deprecated → 운영자 강제 삭제 영역 영역 영역 controller 영역 영역 UserSoftDeleteUseCase 영역 영역 영역 영역.
+   * - 본 메서드 = legacy + 회귀 호환 영역 영역.
+   */
   async deleteAuthor(adminId: string, authorId: string): Promise<void> {
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
     if (author.role === 'admin') throw new BadRequestException('관리자 계정은 삭제할 수 없습니다')
+    // USER-SOFT-DELETE 정합 — middleware 영역 영역 자동 변환 영역 (deleteById → soft delete)
     await this.authorRepo.deleteById(authorId)
     await this.auditLog.log(adminId, 'author_delete', authorId, { slug: author.slug, email: author.email, name: author.name })
   }
