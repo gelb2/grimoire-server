@@ -164,4 +164,74 @@ describe('UserSoftDeleteUseCase (USER-SOFT-DELETE sprint 2026-05-15)', () => {
       expect(softDeleteCallOrder).toBeLessThan(revokeCallOrder)
     })
   })
+
+  describe('anonymizeOnly (GDPR Article 17 only — qa #20 보강 영역)', () => {
+    it('anonymize-only — anonymize 호출 + softDelete 영역 + revoke 영역 영역 정합 (계정 유지)', async () => {
+      const result = await useCase.anonymizeOnly('author-1', 'admin-1', 'GDPR 삭제 요청')
+
+      // anonymize 호출 정합
+      expect(mockAnonymizer.anonymize).toHaveBeenCalledWith('author-1', 'basic')
+
+      // soft delete X (계정 유지 정합)
+      expect(mockAuthorRepo.softDelete).not.toHaveBeenCalled()
+
+      // RefreshToken revoke X (탈퇴 영역 영역 영역)
+      expect(mockAuthTokenRepo.revokeAllByAuthorId).not.toHaveBeenCalled()
+
+      // 응답 시그니처 정합
+      expect(result).toEqual(expect.objectContaining({ anonymizedAt: expect.any(String) }))
+      expect(new Date(result.anonymizedAt).toString()).not.toBe('Invalid Date')
+    })
+
+    it('anonymize-only — AdminAuditLog gdpr_anonymize 박제 (사유 + adminId + mode=anonymize_only)', async () => {
+      await useCase.anonymizeOnly('author-1', 'admin-1', '사용자 요청 영역')
+
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'admin-1',
+        'gdpr_anonymize',
+        'author-1',
+        expect.objectContaining({
+          reason: '사용자 요청 영역',
+          scope: 'basic',
+          mode: 'anonymize_only',
+        }),
+        expect.objectContaining({ id: 'author-1', slug: 'test-author', email: 'test@test.com' }),
+        expect.objectContaining({ anonymizedAt: expect.any(String) }),
+      )
+
+      // admin_force_delete action 박제 X (anonymize-only 정합)
+      const actions = mockAuditLog.log.mock.calls.map((c) => c[1])
+      expect(actions).not.toContain('admin_force_delete')
+      expect(actions).not.toContain('self_account_delete')
+    })
+
+    it('anonymize-only — Author 미존재 시 NotFoundException', async () => {
+      mockAuthorRepo.findById.mockResolvedValue(null)
+      await expect(
+        useCase.anonymizeOnly('nonexistent', 'admin-1', '사유'),
+      ).rejects.toThrow(NotFoundException)
+    })
+
+    it('anonymize-only — 사유 누락/빈 문자열 시 BadRequestException', async () => {
+      await expect(
+        useCase.anonymizeOnly('author-1', 'admin-1', ''),
+      ).rejects.toThrow(BadRequestException)
+      await expect(
+        useCase.anonymizeOnly('author-1', 'admin-1', '   '),
+      ).rejects.toThrow(BadRequestException)
+    })
+
+    it('anonymize-only — 본인 영역 본인 익명화 시 ForbiddenException (실수 차단)', async () => {
+      await expect(
+        useCase.anonymizeOnly('author-1', 'author-1', '사유'),
+      ).rejects.toThrow(ForbiddenException)
+    })
+
+    it('anonymize-only — admin 계정 익명화 차단 BadRequestException', async () => {
+      mockAuthorRepo.findById.mockResolvedValue(mockAdminAuthor)
+      await expect(
+        useCase.anonymizeOnly('admin-1', 'super-admin-1', '관리자 영역'),
+      ).rejects.toThrow(BadRequestException)
+    })
+  })
 })

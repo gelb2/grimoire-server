@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Req, Res, UseGuards, UnauthorizedException } from '@nestjs/common'
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Req, Res, UseGuards, UnauthorizedException, BadRequestException } from '@nestjs/common'
 import { Throttle } from '@nestjs/throttler'
 import { Request, Response } from 'express'
 import * as bcrypt from 'bcryptjs'
@@ -151,6 +151,31 @@ export class AdminController {
   ) {
     await this.userSoftDelete.execute(authorId, 'admin', req.user.sub, body.reason)
     return { deleted: true, message: '운영자 강제 삭제 완료. 30일 후 자동 영구 삭제 정합.' }
+  }
+
+  /**
+   * USER-SOFT-DELETE sprint (2026-05-15) — 운영자 GDPR 익명화 only 엔드포인트 영역 (qa #20 server-web 정합 보강).
+   *
+   * GDPR Article 17 (Right to Erasure) 영역 정합 — email + name + passwordHash + bio 4 필드 익명화만.
+   * soft delete X (계정 유지) + RefreshToken revoke X (탈퇴 영역 영역 영역).
+   *
+   * 사유(reason) 필수 — AdminAuditLog gdpr_anonymize 영역 박제.
+   *
+   * 정본: .claude/state/sprint-user-soft-delete-draft.md §15-1 anonymize-only 분기
+   * 정본: .claude/shared-contracts.md §29 UserSoftDeletePolicy
+   */
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @Post('authors/:authorId/anonymize')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async anonymizeAuthor(
+    @Req() req: AuthenticatedRequest,
+    @Param('authorId') authorId: string,
+    @Body() body: { reason: string },
+  ) {
+    if (!body || !body.reason || body.reason.trim().length === 0) {
+      throw new BadRequestException('GDPR 익명화 시 사유(reason) 필수')
+    }
+    return this.userSoftDelete.anonymizeOnly(authorId, req.user.sub, body.reason)
   }
 
   @Patch('authors/:authorId/role')
