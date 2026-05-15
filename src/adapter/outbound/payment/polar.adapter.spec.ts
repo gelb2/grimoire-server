@@ -589,4 +589,295 @@ describe('PolarAdapter', () => {
       expect(result.find((c) => c.externalTransactionId === 'c-failed')?.status).toBe('failed')
     })
   })
+
+  // ============================================================================
+  // Sprint PAY-P3-B: Polar SDK timeout 정책 + classifyPolarError 5분류 (구멍-C 차단)
+  // 정본: .claude/shared-contracts.md §24 PolarSDKTimeoutPolicy
+  // AC-1 (timeout) / AC-2 (network) / AC-3 (server_5xx) / AC-4 (client_4xx) / AC-6 (timeout 옵션)
+  // ============================================================================
+  describe('PAY-P3-B: classifyPolarError 5분류 + SDK timeout 옵션', () => {
+    describe('AC-1: timeout 분류', () => {
+      it('AbortError name → timeout 분류', () => {
+        const err = new Error('The operation was aborted')
+        err.name = 'AbortError'
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('timeout')
+        expect(result.message).toBe('The operation was aborted')
+        expect(result.httpStatus).toBeUndefined()
+      })
+
+      it('RequestTimeoutError name (Polar SDK v0.47.0) → timeout 분류', () => {
+        const err = new Error('Request timed out after 30000ms')
+        err.name = 'RequestTimeoutError'
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('timeout')
+      })
+
+      it('message에 "timeout" 포함 → timeout 분류 (name fallback)', () => {
+        const err = new Error('fetch timeout exceeded')
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('timeout')
+      })
+    })
+
+    describe('AC-2: network 분류', () => {
+      it('ECONNRESET message prefix → network 분류', () => {
+        const err = new Error('ECONNRESET — connection reset by peer')
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('network')
+        expect(result.httpStatus).toBeUndefined()
+      })
+
+      it('ENOTFOUND message → network 분류', () => {
+        const err = new Error('ENOTFOUND api.polar.sh')
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('network')
+      })
+
+      it('ConnectionError name (Polar SDK) → network 분류', () => {
+        const err = new Error('failed to connect to api.polar.sh')
+        err.name = 'ConnectionError'
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('network')
+      })
+    })
+
+    describe('AC-3: server_5xx 분류', () => {
+      it('PolarError statusCode=503 → server_5xx 분류', () => {
+        // PolarError duck typing — statusCode 속성으로 분류 (SDK 내부 import 의존 0)
+        const err = Object.assign(new Error('Service Unavailable'), {
+          statusCode: 503,
+        })
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('server_5xx')
+        expect(result.httpStatus).toBe(503)
+      })
+
+      it('error.response.status=502 (legacy fetch 패턴) → server_5xx 분류', () => {
+        const err = Object.assign(new Error('Bad Gateway'), {
+          response: { status: 502 },
+        })
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('server_5xx')
+        expect(result.httpStatus).toBe(502)
+      })
+    })
+
+    describe('AC-4: client_4xx 분류 (retry 무의미)', () => {
+      it('PolarError statusCode=400 → client_4xx 분류 (Bad Request)', () => {
+        const err = Object.assign(new Error('Bad Request: invalid metadata'), {
+          statusCode: 400,
+        })
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('client_4xx')
+        expect(result.httpStatus).toBe(400)
+        expect(result.message).toContain('invalid metadata')
+      })
+
+      it('PolarError statusCode=401 → client_4xx 분류 (Unauthorized — 만료된 토큰)', () => {
+        const err = Object.assign(new Error('Unauthorized'), { statusCode: 401 })
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('client_4xx')
+        expect(result.httpStatus).toBe(401)
+      })
+
+      it('PolarError statusCode=422 → client_4xx 분류 (Unprocessable Entity)', () => {
+        const err = Object.assign(new Error('Unprocessable Entity'), {
+          statusCode: 422,
+        })
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('client_4xx')
+        expect(result.httpStatus).toBe(422)
+      })
+    })
+
+    describe('AC-5: unknown fallback (안전 측면)', () => {
+      it('분류 실패 시 unknown 반환 (retry 가능 영역 fallback)', () => {
+        const err = new Error('something completely unexpected')
+        const result = adapter.classifyPolarError(err)
+        expect(result.errorClass).toBe('unknown')
+        expect(result.httpStatus).toBeUndefined()
+      })
+
+      it('non-Error 객체도 unknown으로 안전 처리', () => {
+        const result = adapter.classifyPolarError('plain string error')
+        expect(result.errorClass).toBe('unknown')
+        expect(result.message).toBe('plain string error')
+      })
+    })
+
+    describe('AC-6: SDK timeout 옵션 (워커 자원 leak 차단)', () => {
+      it('Polar SDK 인스턴스 생성 시 timeoutMs 옵션 전달 (기본값 30000)', () => {
+        // Polar 생성자가 mock 호출되었는지 검증 — beforeEach에서 new PolarAdapter() 호출됨
+        const PolarMock = jest.requireMock('@polar-sh/sdk').Polar as jest.Mock
+        const callArgs = PolarMock.mock.calls[PolarMock.mock.calls.length - 1]?.[0]
+        expect(callArgs).toEqual(
+          expect.objectContaining({
+            accessToken: 'test-token',
+            server: 'sandbox',
+            timeoutMs: 30000,
+          }),
+        )
+      })
+
+      it('POLAR_SDK_TIMEOUT_MS env 오버라이드 적용 (60000ms)', () => {
+        process.env.POLAR_SDK_TIMEOUT_MS = '60000'
+        const PolarMock = jest.requireMock('@polar-sh/sdk').Polar as jest.Mock
+        PolarMock.mockClear()
+        new PolarAdapter()
+        const callArgs = PolarMock.mock.calls[0]?.[0]
+        expect(callArgs).toEqual(
+          expect.objectContaining({ timeoutMs: 60000 }),
+        )
+        delete process.env.POLAR_SDK_TIMEOUT_MS
+      })
+
+      it('잘못된 POLAR_SDK_TIMEOUT_MS (NaN/음수) 시 기본값 30000 fallback', () => {
+        process.env.POLAR_SDK_TIMEOUT_MS = 'not-a-number'
+        const PolarMock = jest.requireMock('@polar-sh/sdk').Polar as jest.Mock
+        PolarMock.mockClear()
+        new PolarAdapter()
+        const callArgs = PolarMock.mock.calls[0]?.[0]
+        expect(callArgs?.timeoutMs).toBe(30000)
+        delete process.env.POLAR_SDK_TIMEOUT_MS
+      })
+    })
+
+    describe('AC-7: initiatePayment + listRecentCheckouts catch 분류 적용', () => {
+      it('initiatePayment 호출 시 timeout 발생 → 분류 로깅 후 throw (caller가 분류 활용)', async () => {
+        const timeoutErr = new Error('Request timed out')
+        timeoutErr.name = 'RequestTimeoutError'
+        mockCreate.mockRejectedValueOnce(timeoutErr)
+
+        await expect(
+          adapter.initiatePayment({
+            productId: 'credit-5',
+            productName: '5 크레딧',
+            amount: 1000,
+            userId: 'author-1',
+            returnUrl: 'https://example.com',
+          }),
+        ).rejects.toThrow('Polar checkout 생성 실패')
+
+        // catch 블록에서 classifyPolarError 호출 검증 (직접 호출로도 timeout 분류 박제됨)
+        const cls = adapter.classifyPolarError(timeoutErr)
+        expect(cls.errorClass).toBe('timeout')
+      })
+
+      it('listRecentCheckouts 호출 시 4xx 발생 → 분류 로깅 후 throw', async () => {
+        const httpErr = Object.assign(new Error('Bad Request'), { statusCode: 400 })
+        mockList.mockRejectedValueOnce(httpErr)
+
+        await expect(
+          adapter.listRecentCheckouts(new Date('2026-05-01T00:00:00Z'), 50),
+        ).rejects.toThrow('Polar checkouts.list 호출 실패')
+
+        const cls = adapter.classifyPolarError(httpErr)
+        expect(cls.errorClass).toBe('client_4xx')
+        expect(cls.httpStatus).toBe(400)
+      })
+    })
+  })
+
+  describe('PAY-P3-H: Circuit Breaker 적용 (3 호출점 래핑)', () => {
+    /**
+     * AC-1: CircuitBreakerPort 미주입 시 (기존 인스턴스화) — 회귀 보존 정합.
+     *       기존 spec은 PolarAdapter() 직접 호출로 검증 (Circuit Breaker DI 미주입 = undefined).
+     * AC-2: Circuit Breaker 주입 시 — initiatePayment가 execute 'polar:checkouts:create' 래핑.
+     * AC-3: Circuit Breaker 주입 시 — listRecentCheckouts가 execute 'polar:checkouts:list' 래핑.
+     * AC-4: OPEN 상태 — initiatePayment 호출 시 SDK 호출 0건 + CircuitOpenError 그대로 throw.
+     */
+    it('AC-1: Circuit Breaker 미주입 — 기존 흐름 그대로 동작 (회귀 0건)', async () => {
+      // adapter는 beforeEach에서 new PolarAdapter() — circuitBreaker undefined
+      mockCreate.mockResolvedValueOnce({ url: 'https://polar/checkout/cb-test', id: 'cb-trade-001' })
+      process.env.POLAR_PRODUCT_BASIC = 'polar-product-basic'
+
+      const result = await adapter.initiatePayment({
+        productId: 'credit-5',
+        productName: 'Basic',
+        amount: 5000,
+        userId: 'author-cb',
+        returnUrl: 'https://app/return',
+      })
+      expect(result.paymentUrl).toBe('https://polar/checkout/cb-test')
+      expect(result.tradeNo).toBe('cb-trade-001')
+    })
+
+    it('AC-2: Circuit Breaker 주입 — initiatePayment가 execute("polar:checkouts:create", fn) 래핑', async () => {
+      const executeMock = jest.fn().mockImplementation(async (_key: string, fn: () => Promise<unknown>) => fn())
+      const breaker = {
+        execute: executeMock,
+        getState: jest.fn(),
+        getStats: jest.fn(),
+        forceOpen: jest.fn(),
+        forceClose: jest.fn(),
+      }
+      const adapterWithCb = new PolarAdapter(breaker as never)
+      mockCreate.mockResolvedValueOnce({ url: 'https://polar/cb-create', id: 'trade-cb' })
+      process.env.POLAR_PRODUCT_BASIC = 'polar-product-basic'
+
+      await adapterWithCb.initiatePayment({
+        productId: 'credit-5',
+        productName: 'Basic',
+        amount: 5000,
+        userId: 'author-1',
+        returnUrl: 'https://app/return',
+      })
+
+      expect(executeMock).toHaveBeenCalledTimes(1)
+      expect(executeMock).toHaveBeenCalledWith('polar:checkouts:create', expect.any(Function))
+    })
+
+    it('AC-3: Circuit Breaker 주입 — listRecentCheckouts가 execute("polar:checkouts:list", fn) 래핑', async () => {
+      const executeMock = jest.fn().mockImplementation(async (_key: string, fn: () => Promise<unknown>) => fn())
+      const breaker = {
+        execute: executeMock,
+        getState: jest.fn(),
+        getStats: jest.fn(),
+        forceOpen: jest.fn(),
+        forceClose: jest.fn(),
+      }
+      const adapterWithCb = new PolarAdapter(breaker as never)
+      mockList.mockResolvedValueOnce({ result: { items: [] } })
+
+      await adapterWithCb.listRecentCheckouts(new Date('2026-05-01T00:00:00Z'), 50)
+
+      expect(executeMock).toHaveBeenCalledWith('polar:checkouts:list', expect.any(Function))
+    })
+
+    it('AC-4: OPEN 상태 — initiatePayment 호출 시 SDK 호출 0건 + CircuitOpenError 그대로 throw', async () => {
+      // CircuitOpenError 클래스를 직접 import — 도메인 영역 정합
+      const { CircuitOpenError } = await import('@domain/model/circuit-breaker-state')
+      const circuitErr = new CircuitOpenError('polar:checkouts:create', {
+        state: 'open' as never,
+        failureCount: 5,
+        halfOpenTrialCount: 0,
+        halfOpenSuccessCount: 0,
+      })
+      const executeMock = jest.fn().mockRejectedValue(circuitErr)
+      const breaker = {
+        execute: executeMock,
+        getState: jest.fn(),
+        getStats: jest.fn(),
+        forceOpen: jest.fn(),
+        forceClose: jest.fn(),
+      }
+      const adapterWithCb = new PolarAdapter(breaker as never)
+      process.env.POLAR_PRODUCT_BASIC = 'polar-product-basic'
+
+      // CircuitOpenError 그대로 throw — SDK 호출 0건 (execute가 fn 호출 자체 차단)
+      await expect(
+        adapterWithCb.initiatePayment({
+          productId: 'credit-5',
+          productName: 'Basic',
+          amount: 5000,
+          userId: 'author-1',
+          returnUrl: 'https://app/return',
+        }),
+      ).rejects.toThrow(CircuitOpenError)
+
+      // 실제 SDK create 호출 0건 검증 (execute가 fn 자체 실행 안 함)
+      expect(mockCreate).not.toHaveBeenCalled()
+    })
+  })
 })

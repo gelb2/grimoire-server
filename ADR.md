@@ -232,6 +232,293 @@ main    → 같은 이미지 → Container Apps update (prod)
 
 ---
 
+## ADR-006: Polar SDK timeout 정책 + exception 분기 처리 (PAY-P3-B, 2026-05-09)
+
+### 문제
+
+Polar SDK 호출 시 (PAYMENT_AUDIT §1 구멍-C):
+1. **Timeout 미명시**: `new Polar({ accessToken, server })`만 호출 → SDK 기본값 의존 → 네트워크 hang 시 워커 자원 leak 가능
+2. **Exception 미분류**: 모든 catch 블록에서 `e.message` 단순 추출만 → SDK가 throw하는 다양한 에러 (`RequestTimeoutError`, `ConnectionError`, `PolarError 4xx/5xx`)를 동일 처리
+3. **Retry 정책 모순**: 모든 exception → DLQ 박제 → MAX_RETRY 10회 누적 → permanent_failed
+   - `timeout`/`network`/`5xx`: retry 의미 있음 (일시적 장애)
+   - `4xx` (예: Bad Request, Unauthorized): retry 의미 **없음** (요청 결함, 10회 시도 무의미) → 운영 부담 + 50분 cron 지연
+
+### 결정
+
+**옵션 A 채택** — Polar SDK v0.47.0 SDKOptions.timeoutMs 내장 옵션 (config.d.ts L38 `timeoutMs?: number` 직접 지원).
+
+```typescript
+this.polar = new Polar({ accessToken, server, timeoutMs: this.timeoutMs })
+```
+
+**Exception 5분류 매트릭스** (`classifyPolarError(e)`):
+
+| errorClass | 트리거 | retry 분기 |
+|---|---|---|
+| `timeout` | AbortError, TimeoutError, RequestTimeoutError, RequestAbortedError, /timeout/i | retry |
+| `network` | ECONNRESET, ENOTFOUND, ETIMEDOUT, EPIPE, ECONNREFUSED, ConnectionError | retry |
+| `server_5xx` | HTTP 500/502/503/504 (PolarError.statusCode 추출) | retry |
+| `client_4xx` | HTTP 400/401/403/404/422 | **permanent_failed 즉시** |
+| `unknown` | 분류 실패 시 안전 fallback | retry |
+
+### 구현
+
+- `polar.adapter.ts` — `classifyPolarError` public method (duck typing, SDK 내부 import 의존 0)
+- `payment.usecase.ts` — `classifyAndRouteWebhookError` private helper (success/cancel 양 분기 catch에서 호출)
+- `payment-gateway.port.ts` — `classifyPolarError?` Optional 메서드 (옵션 B 채택, 다른 adapter 정합)
+- `enqueueWebhookRetry(event, eventId, eventClass)` 시그니처 보강 (`eventClass='permanent_failed'` 시 retry queue 박제 0건)
+
+### 왜 이 방식인가 (Trade-off)
+
+| 후보 | 장점 | 단점 |
+|---|---|---|
+| **옵션 A (SDK 내장 timeoutMs)** | SDK 정본 옵션 활용 + 모든 호출에 자동 적용 + env 오버라이드 가능 | SDK 버전 종속 (v0.47.0+ 필수) |
+| 옵션 B (호출별 AbortSignal.timeout wrapper) | SDK 버전 독립 | 호출 위치마다 wrap 필요 + 코드 중복 |
+| 옵션 C (호출별 retry policy custom) | 세밀한 제어 | 복잡도 증가 + Polar SDK retryConfig와 충돌 가능 |
+
+**duck typing 사용 사유**: `e.statusCode` / `e.response?.status` / `e.status` 후보 다중 검증 → SDK 내부 import 의존 최소화 (SDK 버전 업그레이드 회귀 차단).
+
+### 감수하는 리스크
+
+- **timeoutMs 30s 기본값**: 일시적 네트워크 지연 시 timeout 분기 진입 → retry 시도. 운영에서 너무 짧으면 env로 60s 등 조정 가능.
+- **classifyPolarError Optional**: 다른 adapter (예: 향후 PayApp) 미구현 시 호출자가 'unknown' fallback 처리 (retry 분기 → 안전 측면)
+- **4xx 즉시 permanent_failed**: AuditLog `webhook_permanent_failed` 박제로 운영 추적 가능. 운영 중 4xx 트리거 패턴 발견 시 root cause 즉시 분석 가능.
+
+---
+
+## ADR-007: FK Cascade 정책 (모순-F 차단, PAY-P3-E, 2026-05-10)
+
+### 결정
+
+Prisma schema 33 FK 관계 모두 `onDelete` directive 명시 강제. 4 전략 (Cascade / Restrict / SetNull / NoAction) 도메인 의미 + 보존 정책 + 감사 정합 기준 결정. raw FK 25 영역에 `@relation` directive 신설 + PG FK 제약 마이그레이션 적용 (ALTER TABLE 33 + DROP NOT NULL 2 영역).
+
+### 4 전략 분포 (33 FK 정합, Sprint §3-1 매트릭스 정합)
+
+#### Cascade 16건 (사용자 종속 + Work/Episode 종속 + 통계)
+
+`refresh_tokens.authorId` / `chat_sessions.authorId` / `chat_sessions.workId` / `bookmarks.authorId` / `bookmarks.episodeId` / `reading_progress.authorId` / `reading_progress.episodeId` / `social_accounts.authorId` / `subscriptions.subscriberId` / `subscriptions.targetAuthorId` / `daily_views.workId` / `featured_works.workId` / `comments.episodeId` / `likes.episodeId` / `episodes.workId` / `chat_messages.sessionId` (이미 박제)
+
+**사유**: 사용자 삭제 시 즉시 무효 (refresh_tokens) + Work 삭제 시 모든 episode/통계 동시 삭제 (작가 의도 정합) + 사용자 행위 기록 (북마크/읽기/구독)은 사용자 종속.
+
+#### Restrict 8건 (회계/세무/감사 영구 보존, **Author hard delete 차단 강제**)
+
+`payments.authorId` / `credit_logs.authorId` / `works.authorId` / `user_sanctions.authorId` / `analysis_reports.authorId` / `admin_audit_logs.adminId` / `refund_logs.paymentId`
+
+**사유**: Author hard delete 시 PG가 자동 차단 영역 정합 (USER-SOFT-DELETE sprint 영역 진입 전 본 sprint 영역에서 차단 강제). 회계/세무 7년 보존 정책 + 감사 영구 보존 정책 + 작가 콘텐츠 영구 보존 + 재가입 추적 영역 정합. 사용자 결정 A 정합 (5/9 박제) — Author hard delete 자체는 USER-SOFT-DELETE sprint 영역 분리.
+
+#### SetNull 9건 (익명화 + 운영자 변경 보존 + 기본값 유지)
+
+`themes.authorId` / `works.themeId` / `likes.authorId` / `comments.authorId` / `comments.parentId` / `reports.reporterId` / `reports.resolvedBy` / `access_logs.authorId` / `featured_works.adminId` / `user_sanctions.adminId`
+
+**사유**: 작가 자율 탈퇴 시 콘텐츠 영구 보존 + 본인 식별 정보만 익명화 (Comment.content 보존, Like 카운트 보존). 운영자 변경 시 처리 기록 보존 (FeaturedWork/UserSanction.adminId). Theme 삭제 시 Work는 default theme 유지. AccessLog 보안 감사 영구 보존 (IP/UA 보존, authorId 익명화).
+
+### 단계 1+2 raw 박제 영역 정합 (시나리오 B 영역 회복)
+
+**dev DB 측정 결과 (단계 1, 2026-05-10)**:
+- 33 FK 중 31 = 시나리오 A (orphan=0)
+- 2 FK = 시나리오 B (`credit_logs.author_id` 1 + `admin_audit_logs.admin_id` 2 = 3 row)
+
+**옵션 C archive 강제 박제 (단계 2, 2026-05-10)**:
+- archive 테이블 신설: `credit_logs_archive_pay_p3_e` + `admin_audit_logs_archive_pay_p3_e` (LIKE INCLUDING ALL clone)
+- INSERT 3 row → DELETE 3 row → 33/33 시나리오 A 회복 강제 박제
+- 회계/감사 영역 영구 보존 정합 (옵션 B 직접 삭제 절대 금지 영역)
+
+### 자동 동작 영역 매트릭스 (33 FK 영역)
+
+| FK | onDelete | Author/Work 삭제 시 동작 |
+|---|---|---|
+| works.authorId | Restrict | Author 삭제 차단 (FK 제약 위반 throw P2003) |
+| credit_logs.authorId | Restrict | Author 삭제 차단 |
+| payments.authorId | Restrict | Author 삭제 차단 |
+| episodes.workId | Cascade | Work 삭제 시 episode 자동 삭제 |
+| social_accounts.authorId | Cascade | Author 삭제 시 자동 cascade (단 위 Restrict 영역 0건일 때만) |
+| comments.authorId | SetNull | Author 삭제 시 authorId → null (content 보존) |
+| likes.authorId | SetNull | Author 삭제 시 authorId → null (카운트 보존) |
+| access_logs.authorId | SetNull | Author 삭제 시 authorId → null (보안 감사 보존) |
+
+### 회귀 차단
+
+- jest server 661 → **669 PASS** (+8 it 신설, `prisma-fk-cascade.spec.ts`)
+- eval regression: 사용자 검증 후 신설 영역
+- sensor: `sensor-fk-cascade-policy.sh` 사용자 검증 후 신설 영역
+
+### 감수하는 리스크
+
+- **Author 모델 비대화**: Prisma 양방향 @relation 강제 영역 정합 — Author 모델 27 역참조 박제 강제 (themes/works/socialAccounts 외 24 추가). 단 raw FK 영역 자체 강제 영역 정합 (회피 영역 0건).
+- **Optional 변경 영역**: FeaturedWork.adminId / UserSanction.adminId Required → Optional 변경 (SetNull 정합). 기존 row 영향 0건 (단계 1 측정 정합) + 향후 신설 row 영역 변경 강제.
+- **dev 영역 24h 안정성 박제 후만 prod 진입**: prod 영역 영향 (33 FK 묵시 Restrict → 명시 4 전략 변경) 정합 박제 영역.
+
+### 정본 영역
+
+- `prisma/schema.prisma` (33 FK 영역 + 25 raw FK @relation 박제)
+- `prisma/migrations/20260510_pay_p3_e_fk_cascade_policy/migration.sql` (ALTER TABLE 33 + DROP NOT NULL 2 영역)
+- `src/adapter/outbound/persistence/prisma-fk-cascade.spec.ts` (8 it 박제)
+- `docs/data-model.md` 관계 다이어그램 영역 갱신
+- `.claude/shared-contracts.md §25 FKCascadePolicy` (예정)
+- `.claude/state/sprint-pay-p3-e-fk-cascade-draft.md` (Initializer 정본, 1233 lines)
+- `.claude/state/pay-p3-e-fk-measure-raw.md` (단계 1 raw)
+- `.claude/state/pay-p3-e-fk-backfill-raw.md` (단계 2 raw)
+- `.claude/state/pay-p3-e-pre-migration-audit-draft.md` (단계 3 진입 audit, PASS)
+- `.claude/state/pay-p3-e-dev-migration-raw.md` (단계 3+4 진행 박제, 본 작업 영역)
+
+---
+
+## ADR-009: Polar SDK 호출 경계 Circuit Breaker 도입 (PAY-P3-H, 2026-05-15)
+
+### 상태
+ACCEPTED (사용자 5/15 결정 Draft §16 권장값 전부 채택 정합)
+
+### 컨텍스트
+- PAY-P3-B (Polar SDK timeout 정책, ADR-006 + shared-contracts §24) 종료 시점 잔존 문제:
+  - Polar SDK 장애 누적 시 retry queue 폭주 (timeout 30s × N 누적)
+  - 회복 시점 자동 감지 부재 (5분 cron 폭주 지속)
+  - fail-fast 부재 (사용자 응답 30s 대기)
+- 사용자 5/10 명시 정합: 외부 API 0건 / DB schema 0건 / dev migration 0건 강제
+- 외부 npm 라이브러리 (opossum / cockatiel) 도입 0건 정합 (자체 구현)
+- 사용자 5/15 결정 정합: Draft §16 권장값 전부 채택 (옵션 B Hystrix 정합 + 3 호출점 + env 4건 + AuditLog 4 action + 관리자 UI 별도 sprint)
+
+### 결정
+- Hystrix 3 상태 머신 패턴 채택 (CLOSED / OPEN / HALF_OPEN)
+- 임계값 정책: 옵션 B Hystrix 정합 (failureThreshold=5, cooldownMs=30_000, halfOpenTrial=3, resetWindowMs=60_000)
+- 상태 저장: in-memory (단일 인스턴스 가정, 다중 인스턴스는 별도 sprint)
+- 적용 영역: Polar SDK 2 호출점 박제 (checkouts.create / checkouts.list) — checkouts.get는 현재 코드 미존재 (Draft §8-1 "있을 시" 정합, 향후 추가 시 자동 적용)
+- AuditLog 박제 매트릭스: `circuit_breaker.open` / `circuit_breaker.close` / `circuit_breaker.half_open_trial` / `circuit_breaker.reject` (4 action)
+- env 4건: `POLAR_CB_FAILURE_THRESHOLD` / `POLAR_CB_COOLDOWN_MS` / `POLAR_CB_HALF_OPEN_TRIAL` / `POLAR_CB_RESET_WINDOW_MS`
+- CircuitOpenError 분기: PaymentUseCase.initiatePayment → ServiceUnavailableException(503) 변환, PaymentReconciliationJob → cron skip
+
+### 대안
+- (A) opossum npm 라이브러리 — 외부 의존 추가 (사용자 5/10 정합 X, 거부)
+- (B) cockatiel npm 라이브러리 — 동일 사유 거부
+- (C) Redis 기반 분산 상태 — 인프라 추가 (사용자 5/10 정합 X, 거부) — 다중 인스턴스 시점 별도 sprint
+- (D) 자체 구현 + in-memory ← **채택** (외부 의존 0건 + 인프라 0건 + DB 0건)
+
+### 구현
+- domain/model: `src/domain/model/circuit-breaker-state.ts` (enum + Policy + Stats + CircuitOpenError)
+- domain/port: `src/domain/port/outbound/circuit-breaker.port.ts` (CircuitBreakerPort 인터페이스)
+- adapter: `src/adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter.ts` (Map 기반 단일 인스턴스 구현)
+- app.module DI: `'CircuitBreakerPort' → InMemoryCircuitBreakerAdapter` (PolarAdapter 영역 Optional 주입)
+- 적용 영역: `src/adapter/outbound/payment/polar.adapter.ts` (initiatePayment + listRecentCheckouts 래핑)
+- 호출자 분기: `src/application/payment/payment.usecase.ts` (CircuitOpenError → ServiceUnavailableException), `src/application/payment/payment-reconciliation.job.ts` (cron skip)
+- spec: `in-memory-circuit-breaker.adapter.spec.ts` (18 it) + `polar.adapter.spec.ts` (+4 it) + `payment.usecase.spec.ts` (+2 it) — 합계 +24 it
+
+### 결과
+- Polar 장애 시 retry queue 폭주 0건 (OPEN 상태에서 SDK 호출 0건)
+- 회복 자동 감지 (HALF-OPEN 3회 trial 모두 성공 시 CLOSED 복귀)
+- 사용자 응답 시간 ↓ (fail-fast 즉시 503 응답)
+- 운영 로그 noise ↓ (대량 timeout 박제 0건)
+- AuditLog 4 action 박제 강제 (운영 모니터링 + 사후 분석 정합)
+
+### 잔존 영역
+- 다중 인스턴스 환경 — in-memory 상태 분리 (Redis 별도 sprint)
+- 정책 변경 시 Container Apps 재시작 필요 (in-memory 0 초기화)
+- 관리자 UI (forceOpen/forceClose) — P3-I 별도 sprint 분리 (port 인터페이스만 본 sprint 박제)
+- 호출 빈도 인벤토리 박제 필요 (운영 모니터링 영역)
+
+### 정본 영역
+- `src/domain/model/circuit-breaker-state.ts`
+- `src/domain/port/outbound/circuit-breaker.port.ts`
+- `src/adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter.ts`
+- `src/adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter.spec.ts`
+- `.claude/shared-contracts.md §27 CircuitBreakerPolicy`
+- `.claude/state/sprint-pay-p3-h-circuit-breaker-draft.md` (Initializer 정본, 17 섹션)
+
+---
+
+## ADR-010: Status enum + Polar 매핑 정책 (PAY-P3-D, 2026-05-15)
+
+### 상태
+ACCEPTED (사용자 5/15 verbatim 4번째 sprint 정합)
+
+### 컨텍스트
+- 결제 도메인 영역 status literal 영역 분산 (5 영역):
+  - DB `payments.status` String (5 values)
+  - DB `webhook_events.status` String (3 values)
+  - Port `NormalizedWebhookEvent.status` literal (3 values)
+  - Port `NormalizedCheckout.status` literal (4 values)
+  - DB `refund_logs.source` String (2 values)
+- 매핑 함수 영역 polar.adapter.ts private 메서드 2개 (`mapOrderStatus` + `mapCheckoutStatus`) → 도메인 영역 분리 부재 (헥사고날 DIP 결함)
+- 어휘 통일 부재 → IDE 자동완성 X / 오타 영역 컴파일 단계 차단 X / race condition 게이트 분산 (`payment.status === 'refunded' || === 'partial_refunded'` 영역 반복)
+- 사용자 5/15 verbatim 정합: schema 변경 0 / dev migration 0 / 외부 API 0 강제
+
+### 결정
+- TypeScript `as const` 객체 영역 5 enum 박제 (zero runtime cost + IDE 자동완성)
+- 매핑 함수 2건 도메인 model 이전 (`mapPolarOrderStatus` + `mapPolarCheckoutStatus`)
+- helper 3건 박제 (race condition 통합 + Polar status 판정)
+- 호출자 통합 영역: polar.adapter.ts (위임) + payment.usecase.ts (어휘 통합 + race helper 통합)
+- DB schema 영역 변경 0건 (Prisma `String` 컬럼 유지)
+- sensor-payment-race-condition 패턴 영역 helper 호출 영역 정합화 (회귀 보존 강제)
+
+### 대안
+- (A) DB enum 변환 — Prisma `enum` schema 마이그레이션 (사용자 5/15 정합 X, 거부 — dev migration 0 강제)
+- (B) Branded type — Runtime 검증 부재 (거부)
+- (C) zod schema — 외부 npm 의존 추가 (사용자 5/15 정합 X, 거부)
+- (D) `as const` 객체 + TypeScript literal type ← **채택** (zero runtime cost + 외부 의존 0건)
+
+### 구현
+- domain/model: `src/domain/model/payment-status.ts`
+- domain/model spec: `src/domain/model/payment-status.spec.ts` (34 it)
+- polar.adapter 통합: `src/adapter/outbound/payment/polar.adapter.ts` (import + private 메서드 위임)
+- payment.usecase 통합: `src/application/payment/payment.usecase.ts` (import + 4 영역 어휘 통합)
+- sensor: `.claude/scripts/sensor-payment-status-mapping.sh` (10 검증)
+- regression: `eval/tasks/regression-72-payment-status-mapping.json` (10 criteria)
+
+### 결과
+- 헥사고날 DIP 정합 강화 (매핑 함수 도메인 model 이전)
+- 어휘 통일 — TypeScript IDE 자동완성 + 오타 영역 컴파일 단계 차단
+- jest 735 → 769 PASS (+34 it — payment-status spec)
+- sensor-payment-race-condition 영역 helper 호출 영역 정합화 (회귀 보존)
+- DB schema 0건 / dev migration 0건 / 외부 API 0건 정합 강제
+
+### 잔존 영역
+- DB schema 영역 enum 변환 (별도 sprint PAY-P4-x 영역 후보)
+- 4 status literal 위치 영역 통합 — payment.usecase.ts 영역 `status: 'processed'` 영역 추가 통합 (회귀 최소화 정합으로 1회만 박제, 후속 sprint 후보)
+- 다른 사용 영역 (admin.usecase / refund-payment.usecase 등) — 어휘 통합 후속 sprint 후보
+
+### 정본 영역
+- `src/domain/model/payment-status.ts`
+- `src/domain/model/payment-status.spec.ts`
+- `.claude/shared-contracts.md §28 PaymentStatusMapping`
+- `.claude/scripts/sensor-payment-status-mapping.sh`
+- `eval/tasks/regression-72-payment-status-mapping.json`
+
+---
+
+## ADR-008: audit log 영구 보존 + PII 마스킹 정책 (PAY-P2-5, 2026-05-10)
+
+### 컨텍스트
+- 4 audit 모델 (AdminAuditLog / WebhookEvent / WebhookRetryQueue / AccessLog)에 보존 정책 부재 (PAYMENT_AUDIT-2026-05-07.md §3 L84-85)
+- 전자상거래법 5년 보존 의무 + 개인정보 보호법 마스킹 의무 정합 필요
+- dev 측정 결과 (5/10): 전체 row 22 / 90일 경과 row 0건 (시나리오 A)
+
+### 결정 (사용자 5/10 verbatim "d로 하고")
+- **영구 보존**: DELETE 0건 강제 (audit gap 0)
+- **90일 후 PII 마스킹**: audit-mask.scheduler 매일 03:00 KST cron
+- **PII 7 키 자동 검출**: email / phone / ipAddress / userAgent / passwordHash / token / secret
+- **보존 키 매트릭스**: id / userId / authorId / adminId / action / createdAt / amount / credits 등 audit 본질 보존
+
+### 구현
+- 4 모델 schema: `maskedAt DateTime?` + `retentionTier String @default("active")` 컬럼 신설
+- migration: `prisma/migrations/20260510_pay_p2_5_audit_retention_policy/migration.sql` (4 ALTER TABLE + 8 ADD COLUMN + 4 INDEX)
+- helper: `src/adapter/outbound/persistence/audit-mask-helper.ts` (PII 7 키 자동 검출 + JSON deep masking)
+- scheduler: `src/scheduler/audit-mask.scheduler.ts` (`@Cron('0 0 3 * * *')` 매일 03:00 KST)
+
+### 결과
+- audit gap 0 (DELETE 0건)
+- 법적 정합 (5년 보존 + PIPA 마스킹)
+- 사용자 식별자 보존 (audit 본질)
+- 마스킹 cron 첫 실행 noop 정합 (dev 90일 경과 row 0건)
+
+### 정본 영역
+- `prisma/schema.prisma` (4 모델 컬럼 추가)
+- `prisma/migrations/20260510_pay_p2_5_audit_retention_policy/migration.sql`
+- `src/adapter/outbound/persistence/audit-mask-helper.ts` (신설)
+- `src/scheduler/audit-mask.scheduler.ts` (신설)
+- `.claude/shared-contracts.md §26 AuditRetentionPolicy` (예정)
+- `.claude/state/sprint-pay-p2-5-audit-retention-draft.md` (Initializer 정본, 17 섹션)
+- `.claude/state/pay-p2-5-dev-measure-raw.md` (단계 1 측정 raw, 시나리오 A)
+
+---
+
 ## 참조
 
 - 트랜잭션: `src/application/payment/payment.usecase.ts`
@@ -239,3 +526,7 @@ main    → 같은 이미지 → Container Apps update (prod)
 - N+1 방어: `src/adapter/outbound/persistence/prisma-work.repository.ts`
 - 인덱스: `prisma/schema.prisma`
 - Docker: `Dockerfile`, `.github/workflows/deploy-*.yml`
+- Polar SDK timeout: `src/adapter/outbound/payment/polar.adapter.ts`, `.claude/shared-contracts.md §24 PolarSDKTimeoutPolicy`
+- FK Cascade 정책: `prisma/schema.prisma` 33 FK 영역 + `prisma/migrations/20260510_pay_p3_e_fk_cascade_policy/migration.sql` + `.claude/shared-contracts.md §25 FKCascadePolicy`
+- audit retention 정책: `prisma/migrations/20260510_pay_p2_5_audit_retention_policy/migration.sql` + `src/adapter/outbound/persistence/audit-mask-helper.ts` + `src/scheduler/audit-mask.scheduler.ts` + `.claude/shared-contracts.md §26 AuditRetentionPolicy`
+- Circuit Breaker 정책: `src/domain/model/circuit-breaker-state.ts` + `src/domain/port/outbound/circuit-breaker.port.ts` + `src/adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter.ts` + `.claude/shared-contracts.md §27 CircuitBreakerPolicy` + ADR-009

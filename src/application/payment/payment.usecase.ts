@@ -1,4 +1,4 @@
-import { Injectable, Inject, BadRequestException, Logger, Optional } from '@nestjs/common'
+import { Injectable, Inject, BadRequestException, Logger, Optional, ServiceUnavailableException } from '@nestjs/common'
 import { PaymentRepositoryPort } from '@domain/port/outbound/payment-repository.port'
 import { PaymentGatewayPort } from '@domain/port/outbound/payment-gateway.port'
 import { WebhookEventRepositoryPort } from '@domain/port/outbound/webhook-event-repository.port'
@@ -7,6 +7,14 @@ import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.po
 import { CREDIT_PRODUCTS, Product } from '@domain/model/config'
 import { RefundPaymentUseCase } from './refund-payment.usecase'
 import { AuditLogService } from '@application/admin/audit-log.service'
+import { CircuitOpenError } from '@domain/model/circuit-breaker-state'
+// PAY-P3-D Status enum mapping (도메인 어휘 통일 — shared-contracts §28 / ADR-010)
+import {
+  PAYMENT_STATUS,
+  WEBHOOK_EVENT_STATUS,
+  NORMALIZED_WEBHOOK_STATUS,
+  isPaymentAlreadyRefunded,
+} from '@domain/model/payment-status'
 
 // re-export for backward compatibility
 export { CREDIT_PRODUCTS, type Product }
@@ -48,8 +56,19 @@ export class PaymentUseCase {
    * webhook 처리 실패 시 재시도 큐에 박제 (PAY-P2-2).
    * eventId @unique이므로 중복 박제 시 P2002 → null 반환 (재처리 시점에는 markRetry로 retryCount 증가).
    * retryQueueRepo 미주입 시 무동작 (회귀 보존).
+   *
+   * PAY-P3-B 보강: eventClass='permanent_failed' 시 retry queue 박제 0건 (4xx 분기 — retry 무의미).
+   * 기본값 'retry' (회귀 보존).
    */
-  private async enqueueWebhookRetry(event: object, eventId: string): Promise<void> {
+  private async enqueueWebhookRetry(
+    event: object,
+    eventId: string,
+    eventClass: 'retry' | 'permanent_failed' = 'retry',
+  ): Promise<void> {
+    if (eventClass === 'permanent_failed') {
+      // PAY-P3-B: 4xx → retry queue 박제 0건 (retry 무의미 — 즉시 permanent_failed)
+      return
+    }
     if (!this.retryQueueRepo) return
     try {
       await this.retryQueueRepo.upsert({
@@ -61,6 +80,78 @@ export class PaymentUseCase {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.warn(`webhook retry queue 박제 실패 (eventId=${eventId}): ${msg}`)
     }
+  }
+
+  /**
+   * PAY-P3-B 구멍-C 차단: catch 블록에서 Polar SDK exception 분류 후 분기 처리.
+   * 정본: shared-contracts §24 PolarSDKTimeoutPolicy.
+   *
+   * - client_4xx → permanent_failed 즉시 박제 (retry queue 0건 + AuditLog `webhook_permanent_failed`)
+   * - 외 4분류 (timeout/network/server_5xx/unknown) → retry queue 박제 (기존 enqueueWebhookRetry)
+   *
+   * paymentGateway.classifyPolarError 미구현 시 'unknown' fallback (회귀 보존).
+   */
+  private async classifyAndRouteWebhookError(
+    e: unknown,
+    event: import('@domain/port/outbound/payment-gateway.port').NormalizedWebhookEvent,
+    paymentId: string,
+    branch: 'success' | 'cancel',
+  ): Promise<{
+    errorClass: import('@domain/port/outbound/payment-gateway.port').PolarErrorClass
+    message: string
+    httpStatus?: number
+  }> {
+    const polarError =
+      this.paymentGateway.classifyPolarError?.(e) ?? {
+        errorClass: 'unknown' as const,
+        message: e instanceof Error ? e.message : String(e),
+      }
+
+    const httpStatusLabel = polarError.httpStatus ?? 'N/A'
+
+    if (polarError.errorClass === 'client_4xx') {
+      // 4xx — retry 무의미, 즉시 permanent_failed 박제
+      this.logger.error(
+        `[PolarSDK] client_4xx eventId=${event.eventId} branch=${branch} httpStatus=${httpStatusLabel} paymentId=${paymentId} → permanent_failed (retry 0건)`,
+      )
+      if (this.auditLog) {
+        try {
+          await this.auditLog.log(
+            'system_dlq',
+            'webhook_permanent_failed',
+            event.eventId,
+            {
+              reason: 'polar_4xx_no_retry',
+              errorClass: polarError.errorClass,
+              httpStatus: polarError.httpStatus,
+              paymentId,
+              branch,
+              originalMessage: polarError.message.slice(0, 500),
+            },
+          )
+        } catch (auditErr: unknown) {
+          this.logger.warn(
+            `AuditLog 박제 실패 (4xx permanent_failed eventId=${event.eventId}): ${
+              auditErr instanceof Error ? auditErr.message : String(auditErr)
+            }`,
+          )
+        }
+      }
+      // enqueueWebhookRetry 호출 0건 (retry queue 박제 0건) — eventClass='permanent_failed' 명시
+      await this.enqueueWebhookRetry(
+        event as unknown as object,
+        event.eventId,
+        'permanent_failed',
+      )
+    } else {
+      // timeout / network / server_5xx / unknown — retry 의미 있음
+      this.logger.warn(
+        `[PolarSDK] ${polarError.errorClass} eventId=${event.eventId} branch=${branch} httpStatus=${httpStatusLabel} paymentId=${paymentId} → retry`,
+      )
+      await this.enqueueWebhookRetry(event as unknown as object, event.eventId, 'retry')
+    }
+
+    return polarError
   }
 
   /** 상품 목록 조회 */
@@ -103,9 +194,25 @@ export class PaymentUseCase {
       )
     }
 
-    const result = await this.paymentGateway.initiatePayment({
-      productId: product.id, productName: product.name, amount: product.price, userId: authorId, returnUrl,
-    })
+    // PAY-P3-H: CircuitOpenError 분기 — fail-fast 영역 (retry queue 박제 0건 강제).
+    // Circuit Breaker가 OPEN 상태면 SDK 호출 0건 + 즉시 503 응답.
+    // 정본: shared-contracts §27 CircuitBreakerPolicy, ADR-009.
+    let result
+    try {
+      result = await this.paymentGateway.initiatePayment({
+        productId: product.id, productName: product.name, amount: product.price, userId: authorId, returnUrl,
+      })
+    } catch (e: unknown) {
+      if (e instanceof CircuitOpenError) {
+        this.logger.warn(
+          `[CircuitBreaker] initiatePayment fail-fast — circuit=${e.circuitKey} authorId=${authorId} productId=${productId}`,
+        )
+        // AuditLog circuit_breaker.reject 박제는 in-memory-circuit-breaker.adapter 영역에서 이미 박제.
+        // 본 usecase = 사용자 친화 503 응답 (운영 영역 사용자 재시도 결정 영역).
+        throw new ServiceUnavailableException('결제 서비스 일시 차단 중 — 잠시 후 재시도')
+      }
+      throw e
+    }
 
     // 재사용 분기에서도 항상 호출 — Polar 정책상 매 결제 시도마다 신규 tradeNo 발급되므로 갱신 필수
     await this.paymentRepo.updateExternalTransactionId(payment.id, result.tradeNo)
@@ -172,7 +279,7 @@ export class PaymentUseCase {
       })
       return { processed: false, reason: 'unknown_trade' }
     }
-    if (payment.status === 'completed') {
+    if (payment.status === PAYMENT_STATUS.COMPLETED) {
       // 약식 게이트 (이전 webhook 박제 누락된 PROD 데이터 안전망)
       await this.webhookEventRepo.createIfAbsent({
         eventId: event.eventId,
@@ -184,8 +291,27 @@ export class PaymentUseCase {
       })
       return { processed: false, reason: 'already_completed' }
     }
+    // PAY-P3-A 구멍-A 차단: payment.status='refunded' 또는 'partial_refunded' 사전 게이트
+    // (이미 환불 완료된 payment에 대한 재처리 방어 — 환불 후 재차감 0건 보장)
+    // 정본: shared-contracts §22 PaymentRaceCondition + §28 PaymentStatusMapping (PAY-P3-D)
+    // 도메인 helper 위임 — 환불 종료 어휘 통합 (refunded + partial_refunded REFUNDED_STATES 영역 정합)
+    if (isPaymentAlreadyRefunded(payment.status)) {
+      const reasonKey = `already_${payment.status}` as 'already_refunded' | 'already_partial_refunded'
+      this.logger.warn(
+        `[PaymentRaceCondition] ${reasonKey} eventId=${event.eventId} paymentId=${payment.id}`,
+      )
+      await this.webhookEventRepo.createIfAbsent({
+        eventId: event.eventId,
+        source: 'polar',
+        eventType: event.type,
+        payload: event as unknown as object,
+        status: 'skipped',
+        errorMessage: reasonKey,
+      })
+      return { processed: false, reason: reasonKey }
+    }
 
-    if (event.status === 'success') {
+    if (event.status === NORMALIZED_WEBHOOK_STATUS.SUCCESS) {
       // PAY-P2-4: 트랜잭션 진입 직전 잔액 조회 (beforeState 박제용)
       // authorRepo Optional — 미주입 시 박제 skip (회귀 보존)
       let balanceBefore: number | null = null
@@ -207,18 +333,24 @@ export class PaymentUseCase {
         // 원자 처리: payment 상태 + 크레딧 증가 + 로그 기록 (단일 트랜잭션)
         await this.paymentRepo.completePaymentAtomically(payment.id, payment.authorId, payment.credits, payment.productId)
       } catch (e: unknown) {
-        // 처리 중 오류 — webhook event를 'failed'로 박제 + PAY-P2-2 retry queue 박제 (멱등성 — eventId @unique)
-        const message = e instanceof Error ? e.message : String(e)
+        // PAY-P3-B 구멍-C 차단: SDK exception 분류 후 분기 처리
+        // 정본: shared-contracts §24 PolarSDKTimeoutPolicy
+        // - client_4xx → permanent_failed 즉시 박제 (retry queue 0건)
+        // - 외 4분류 → retry queue 박제 (기존 PAY-P2-2 DLQ 흐름)
+        const polarError = await this.classifyAndRouteWebhookError(
+          e,
+          event,
+          payment.id,
+          'success',
+        )
         await this.webhookEventRepo.createIfAbsent({
           eventId: event.eventId,
           source: 'polar',
           eventType: event.type,
           payload: event as unknown as object,
           status: 'failed',
-          errorMessage: message.slice(0, 500),
+          errorMessage: `polar_${polarError.errorClass}: ${polarError.message.slice(0, 480)}`,
         })
-        // PAY-P2-2 — DLQ 박제 (WebhookRetryJob @Cron 5분이 재처리)
-        await this.enqueueWebhookRetry(event as unknown as object, event.eventId)
         throw e
       }
 
@@ -253,7 +385,7 @@ export class PaymentUseCase {
         source: 'polar',
         eventType: event.type,
         payload: event as unknown as object,
-        status: 'processed',
+        status: WEBHOOK_EVENT_STATUS.PROCESSED,
       })
       if (!created) {
         this.logger.warn(
@@ -261,7 +393,7 @@ export class PaymentUseCase {
         )
       }
       return { processed: true, credits: payment.credits }
-    } else if (event.status === 'cancel') {
+    } else if (event.status === NORMALIZED_WEBHOOK_STATUS.CANCEL) {
       // 환불 처리 (Sprint PAY-P1-1) — 크레딧 환수 트랜잭션 + RefundLog + AuditLog(operator='system_refund')
       // refund-payment.usecase가 paymentRepo.refundPaymentAtomically $transaction 호출 (정본: shared-contracts §13)
       let deficitCredits = 0
@@ -276,18 +408,24 @@ export class PaymentUseCase {
         })
         deficitCredits = result.deficitCredits
       } catch (e: unknown) {
-        // 환수 실패 — webhook event를 'failed'로 박제 + PAY-P2-2 retry queue 박제
-        const message = e instanceof Error ? e.message : String(e)
+        // PAY-P3-B 구멍-C 차단: SDK exception 분류 후 분기 처리 (cancel 분기)
+        // 정본: shared-contracts §24 PolarSDKTimeoutPolicy
+        // - client_4xx → permanent_failed 즉시 박제 (retry queue 0건)
+        // - 외 4분류 → retry queue 박제 (기존 PAY-P2-2 DLQ 흐름)
+        const polarError = await this.classifyAndRouteWebhookError(
+          e,
+          event,
+          payment.id,
+          'cancel',
+        )
         await this.webhookEventRepo.createIfAbsent({
           eventId: event.eventId,
           source: 'polar',
           eventType: event.type,
           payload: event as unknown as object,
           status: 'failed',
-          errorMessage: message.slice(0, 500),
+          errorMessage: `polar_${polarError.errorClass}: ${polarError.message.slice(0, 480)}`,
         })
-        // PAY-P2-2 — DLQ 박제 (WebhookRetryJob @Cron 5분이 재처리)
-        await this.enqueueWebhookRetry(event as unknown as object, event.eventId)
         throw e
       }
 

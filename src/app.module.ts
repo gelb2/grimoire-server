@@ -28,6 +28,7 @@ import { ReaderUseCase } from '@application/reader/reader.usecase'
 import { DiscoveryUseCase } from '@application/discovery/discovery.usecase'
 import { AdminUseCase } from '@application/admin/admin.usecase'
 import { AuditLogService } from '@application/admin/audit-log.service'
+import { AuditMaskJob } from '@application/admin/audit-mask.job'
 import { AccessLogService } from '@infrastructure/security/access-log.service'
 import { ThemeSlotUseCase } from '@application/theme/theme-slot.usecase'
 import { PlanUseCase } from '@application/plan/plan.usecase'
@@ -77,6 +78,7 @@ import { ClaudeThemeAdapter } from '@adapter/outbound/ai/claude-theme.adapter'
 import { OpenAIEmbeddingAdapter } from '@adapter/outbound/embedding/openai-embedding.adapter'
 import { PgVectorAdapter } from '@adapter/outbound/vector/pgvector.adapter'
 import { PolarAdapter } from '@adapter/outbound/payment/polar.adapter'
+import { InMemoryCircuitBreakerAdapter } from '@adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
 
@@ -138,6 +140,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     DiscoveryUseCase,
     AdminUseCase,
     AuditLogService,
+    AuditMaskJob,
     AccessLogService,
     ThemeSlotUseCase,
     PlanUseCase,
@@ -162,6 +165,9 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'StatsRepositoryPort', useClass: PrismaStatsRepository },
     { provide: 'EmbeddingPort', useClass: OpenAIEmbeddingAdapter },
     { provide: 'VectorStorePort', useClass: PgVectorAdapter },
+    // PAY-P3-H: Circuit Breaker DI 바인딩 (PolarAdapter보다 먼저 박제 강제 — 주입 의무).
+    // 정본: shared-contracts §27 CircuitBreakerPolicy, ADR-009.
+    { provide: 'CircuitBreakerPort', useClass: InMemoryCircuitBreakerAdapter },
     { provide: 'PaymentGatewayPort', useClass: PolarAdapter },
     { provide: 'ChatRepositoryPort', useClass: PrismaChatRepository },
     { provide: 'BlobStoragePort', useClass: BlobStorageService },

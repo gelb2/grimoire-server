@@ -8,29 +8,58 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// PAY-P3-E §3-1 매트릭스 정합 — Author 모델 역참조 영역 (Prisma 양방향 @relation 강제 영역 정합)
+/// - 회계/감사 영구 보존 영역 (Restrict 8건) = Author hard delete 시 PG 자동 차단 정합 (USER-SOFT-DELETE sprint 영역 진입 전 본 sprint 영역에서 차단 강제 박제)
+/// - Cascade 영역 (refresh_tokens / chat_sessions / bookmarks / reading_progress / subscriptions) = 사용자 종속 즉시 무효
+/// - SetNull 영역 (likes / comments / access_logs / reports / featured_works.adminId / user_sanctions.adminId) = 익명화 + 운영자 변경 보존
 model Author {
-  id              String          @id @default(uuid())
-  slug            String          @unique
-  name            String
-  email           String          @unique
-  passwordHash    String?         @map("password_hash")
-  bio             String?
-  role            String          @default("user")
-  credits         Int             @default(0)
-  plan            String          @default("free")
-  planExpireAt    DateTime?       @map("plan_expire_at") @db.Timestamptz(3)
-  defaultThemeId  String?         @map("default_theme_id")
-  themes          Theme[]
-  works           Work[]
-  socialAccounts  SocialAccount[]
-  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  id             String          @id @default(uuid())
+  slug           String          @unique
+  name           String
+  email          String          @unique
+  passwordHash   String?         @map("password_hash")
+  bio            String?
+  role           String          @default("user")
+  credits        Int             @default(0)
+  plan           String          @default("free")
+  planExpireAt   DateTime?       @map("plan_expire_at") @db.Timestamptz(3)
+  defaultThemeId String?         @map("default_theme_id")
+  themes         Theme[]
+  works          Work[]
+  socialAccounts SocialAccount[]
+
+  // Cascade 영역 (사용자 종속, Author 삭제 시 즉시 무효)
+  bookmarks       Bookmark[]
+  readingProgress ReadingProgress[]
+  subscribedTo    Subscription[]    @relation("Subscriber")
+  subscribers     Subscription[]    @relation("TargetAuthor")
+  chatSessions    ChatSession[]
+  refreshTokens   RefreshToken[]
+
+  // Restrict 영역 (회계/세무/감사 영구 보존, Author hard delete 시 PG 자동 차단)
+  payments         Payment[]
+  creditLogs       CreditLog[]
+  analysisReports  AnalysisReport[]
+  sanctionedAuthor UserSanction[]   @relation("SanctionedAuthor")
+
+  // SetNull 영역 (익명화 + 운영자 변경 시 기록 보존)
+  likes              Like[]
+  comments           Comment[]
+  accessLogs         AccessLog[]
+  reportsReporter    Report[]        @relation("Reporter")
+  reportsResolver    Report[]        @relation("Resolver")
+  featuredWorksAdmin FeaturedWork[]  @relation("FeaturedWorkAdmin")
+  sanctioningAdmin   UserSanction[]  @relation("SanctioningAdmin")
+  adminAuditLogs     AdminAuditLog[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@map("authors")
 }
 
 model Theme {
   id             String   @id @default(uuid())
-  author         Author?  @relation(fields: [authorId], references: [id])
+  author         Author?  @relation(fields: [authorId], references: [id], onDelete: SetNull)
   authorId       String?  @map("author_id")
   name           String   @default("내 테마")
   preset         String   @default("midnight")
@@ -48,21 +77,24 @@ model Theme {
 }
 
 model Work {
-  id          String    @id @default(uuid())
-  author      Author    @relation(fields: [authorId], references: [id])
-  authorId    String    @map("author_id")
-  slug        String
-  title       String
-  subtitle    String?
-  description String?
-  coverImage  String?   @map("cover_image")
-  context     String?   // 작품 맥락 (세계관, 캐릭터, 배경 — 채팅 시 고정 주입)
-  instructions String?  // 작품 지침 (문체 규칙, 톤, 금지사항 — 채팅 시 고정 주입)
-  themeId     String?   @map("theme_id")
-  theme       Theme?    @relation(fields: [themeId], references: [id])
-  viewCount   Int       @default(0) @map("view_count")
-  episodes    Episode[]
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  id            String         @id @default(uuid())
+  author        Author         @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  authorId      String         @map("author_id")
+  slug          String
+  title         String
+  subtitle      String?
+  description   String?
+  coverImage    String?        @map("cover_image")
+  context       String? // 작품 맥락 (세계관, 캐릭터, 배경 — 채팅 시 고정 주입)
+  instructions  String? // 작품 지침 (문체 규칙, 톤, 금지사항 — 채팅 시 고정 주입)
+  themeId       String?        @map("theme_id")
+  theme         Theme?         @relation(fields: [themeId], references: [id], onDelete: SetNull)
+  viewCount     Int            @default(0) @map("view_count")
+  episodes      Episode[]
+  dailyViews    DailyView[]
+  featuredWorks FeaturedWork[]
+  chatSessions  ChatSession[]
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([authorId, slug])
   @@index([authorId])
@@ -70,24 +102,28 @@ model Work {
 }
 
 model Episode {
-  id             String    @id @default(uuid())
-  work           Work      @relation(fields: [workId], references: [id])
-  workId         String    @map("work_id")
-  slug           String
-  title          String
-  subtitle       String?
-  description    String?
-  type           String    @default("episode")
-  orderNum       Int       @map("order_num")
-  blocks         Json
-  rawMd          String    @map("raw_md")
-  viewCount      Int       @default(0) @map("view_count")
-  sourceFormat   String    @default("markdown") @map("source_format")
-  status         String    @default("upload") @map("status")
-  isIndexed      Boolean   @default(false) @map("is_indexed")
-  sharedToken    String?   @unique @map("shared_token")
-  sharedExpireAt DateTime? @map("shared_expire_at") @db.Timestamptz(3)
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  id              String            @id @default(uuid())
+  work            Work              @relation(fields: [workId], references: [id], onDelete: Cascade)
+  workId          String            @map("work_id")
+  slug            String
+  title           String
+  subtitle        String?
+  description     String?
+  type            String            @default("episode")
+  orderNum        Int               @map("order_num")
+  blocks          Json
+  rawMd           String            @map("raw_md")
+  viewCount       Int               @default(0) @map("view_count")
+  sourceFormat    String            @default("markdown") @map("source_format")
+  status          String            @default("upload") @map("status")
+  isIndexed       Boolean           @default(false) @map("is_indexed")
+  sharedToken     String?           @unique @map("shared_token")
+  sharedExpireAt  DateTime?         @map("shared_expire_at") @db.Timestamptz(3)
+  bookmarks       Bookmark[]
+  readingProgress ReadingProgress[]
+  likes           Like[]
+  comments        Comment[]
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([workId, slug])
   @@index([workId, orderNum])
@@ -97,6 +133,7 @@ model Episode {
 model CreditLog {
   id        String   @id @default(uuid())
   authorId  String   @map("author_id")
+  author    Author   @relation(fields: [authorId], references: [id], onDelete: Restrict)
   amount    Int
   reason    String
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -106,7 +143,7 @@ model CreditLog {
 
 model SocialAccount {
   id            String   @id @default(uuid())
-  author        Author   @relation(fields: [authorId], references: [id])
+  author        Author   @relation(fields: [authorId], references: [id], onDelete: Cascade)
   authorId      String   @map("author_id")
   provider      String
   providerId    String   @map("provider_id")
@@ -128,7 +165,9 @@ model SignupHistory {
 model Bookmark {
   id        String   @id @default(uuid())
   authorId  String   @map("author_id")
+  author    Author   @relation(fields: [authorId], references: [id], onDelete: Cascade)
   episodeId String   @map("episode_id")
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([authorId, episodeId])
@@ -139,7 +178,9 @@ model Bookmark {
 model ReadingProgress {
   id         String   @id @default(uuid())
   authorId   String   @map("author_id")
+  author     Author   @relation(fields: [authorId], references: [id], onDelete: Cascade)
   episodeId  String   @map("episode_id")
+  episode    Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
   blockIndex Int      @map("block_index")
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -150,7 +191,9 @@ model ReadingProgress {
 model Like {
   id        String   @id @default(uuid())
   authorId  String?  @map("author_id")
+  author    Author?  @relation(fields: [authorId], references: [id], onDelete: SetNull)
   episodeId String   @map("episode_id")
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
   ipAddress String?  @map("ip_address")
   cookieId  String?  @map("cookie_id")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -164,7 +207,9 @@ model Like {
 model Subscription {
   id             String   @id @default(uuid())
   subscriberId   String   @map("subscriber_id")
+  subscriber     Author   @relation("Subscriber", fields: [subscriberId], references: [id], onDelete: Cascade)
   targetAuthorId String   @map("target_author_id")
+  targetAuthor   Author   @relation("TargetAuthor", fields: [targetAuthorId], references: [id], onDelete: Cascade)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@unique([subscriberId, targetAuthorId])
@@ -174,13 +219,15 @@ model Subscription {
 model Comment {
   id           String    @id @default(uuid())
   authorId     String?   @map("author_id")
+  author       Author?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
   episodeId    String    @map("episode_id")
+  episode      Episode   @relation(fields: [episodeId], references: [id], onDelete: Cascade)
   content      String
   nickname     String?
   passwordHash String?   @map("password_hash")
   ipAddress    String?   @map("ip_address")
   parentId     String?   @map("parent_id")
-  parent       Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  parent       Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: SetNull)
   replies      Comment[] @relation("CommentReplies")
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
@@ -190,15 +237,17 @@ model Comment {
 }
 
 model Payment {
-  id            String    @id @default(uuid())
-  authorId      String    @map("author_id")
-  productId     String    @map("product_id")
-  amount        Int
-  credits       Int
-  externalTransactionId String?   @unique @map("external_transaction_id")
-  status        String    @default("pending")
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  completedAt   DateTime? @map("completed_at") @db.Timestamptz(3)
+  id                    String      @id @default(uuid())
+  authorId              String      @map("author_id")
+  author                Author      @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  productId             String      @map("product_id")
+  amount                Int
+  credits               Int
+  externalTransactionId String?     @unique @map("external_transaction_id")
+  status                String      @default("pending")
+  createdAt             DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  completedAt           DateTime?   @map("completed_at") @db.Timestamptz(3)
+  refundLogs            RefundLog[]
 
   @@map("payments")
 }
@@ -210,22 +259,27 @@ model Payment {
 /// - payload: 정규화된 NormalizedWebhookEvent 박제 (디버깅용)
 /// 정본: `.claude/shared-contracts.md` §11 WebhookEventIdempotency
 model WebhookEvent {
-  id           String   @id @default(uuid())
-  eventId      String   @unique @map("event_id")
-  source       String   @default("polar")
-  eventType    String   @map("event_type")
-  payload      Json
-  status       String   @default("processed")
-  errorMessage String?  @map("error_message")
-  processedAt  DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
+  id            String    @id @default(uuid())
+  eventId       String    @unique @map("event_id")
+  source        String    @default("polar")
+  eventType     String    @map("event_type")
+  payload       Json
+  status        String    @default("processed")
+  errorMessage  String?   @map("error_message")
+  processedAt   DateTime  @default(now()) @map("processed_at") @db.Timestamptz(3)
+  // PAY-P2-5 audit retention (영구 보존 + 90일 후 PII 마스킹)
+  maskedAt      DateTime? @map("masked_at") @db.Timestamptz(3)
+  retentionTier String    @default("active") @map("retention_tier")
 
   @@index([eventType, processedAt])
+  @@index([retentionTier, processedAt])
   @@map("webhook_events")
 }
 
 model DailyView {
   id     String   @id @default(uuid())
   workId String   @map("work_id")
+  work   Work     @relation(fields: [workId], references: [id], onDelete: Cascade)
   date   DateTime @db.Date
   count  Int      @default(0)
 
@@ -236,7 +290,9 @@ model DailyView {
 model ChatSession {
   id        String        @id @default(uuid())
   authorId  String        @map("author_id")
+  author    Author        @relation(fields: [authorId], references: [id], onDelete: Cascade)
   workId    String        @map("work_id")
+  work      Work          @relation(fields: [workId], references: [id], onDelete: Cascade)
   title     String        @default("새 대화")
   createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -250,7 +306,7 @@ model ChatMessage {
   id        String      @id @default(uuid())
   sessionId String      @map("session_id")
   session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  role      String      // "user" | "assistant"
+  role      String // "user" | "assistant"
   content   String
   createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
 
@@ -274,11 +330,13 @@ model Announcement {
 model FeaturedWork {
   id        String    @id @default(uuid())
   workId    String    @map("work_id")
+  work      Work      @relation(fields: [workId], references: [id], onDelete: Cascade)
   section   String    @default("main") // main, genre, new
   position  Int       @default(0)
   startAt   DateTime? @map("start_at") @db.Timestamptz(3)
   endAt     DateTime? @map("end_at") @db.Timestamptz(3)
-  adminId   String    @map("admin_id")
+  adminId   String?   @map("admin_id")
+  admin     Author?   @relation("FeaturedWorkAdmin", fields: [adminId], references: [id], onDelete: SetNull)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([section, position])
@@ -288,10 +346,12 @@ model FeaturedWork {
 model UserSanction {
   id        String    @id @default(uuid())
   authorId  String    @map("author_id")
-  type      String    // warning, suspend_1d, suspend_7d, suspend_30d, permanent
-  reason    String    // 욕설, 스팸, 저작권, 기타
-  detail    String?   // 관리자 메모
-  adminId   String    @map("admin_id")
+  author    Author    @relation("SanctionedAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  type      String // warning, suspend_1d, suspend_7d, suspend_30d, permanent
+  reason    String // 욕설, 스팸, 저작권, 기타
+  detail    String? // 관리자 메모
+  adminId   String?   @map("admin_id")
+  admin     Author?   @relation("SanctioningAdmin", fields: [adminId], references: [id], onDelete: SetNull)
   startAt   DateTime  @default(now()) @map("start_at") @db.Timestamptz(3)
   endAt     DateTime? @map("end_at") @db.Timestamptz(3)
   isActive  Boolean   @default(true) @map("is_active")
@@ -307,10 +367,12 @@ model Report {
   targetType String    @map("target_type") // work, episode, comment
   targetId   String    @map("target_id")
   reporterId String?   @map("reporter_id")
-  reason     String    // obscene, violence, copyright, spam, other
+  reporter   Author?   @relation("Reporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  reason     String // obscene, violence, copyright, spam, other
   detail     String?
   status     String    @default("pending") // pending, approved, rejected
   resolvedBy String?   @map("resolved_by")
+  resolver   Author?   @relation("Resolver", fields: [resolvedBy], references: [id], onDelete: SetNull)
   resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(3)
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
@@ -329,24 +391,30 @@ model SystemSetting {
 }
 
 model AccessLog {
-  id        String   @id @default(uuid())
-  action    String   // register, login_success, login_fail, password_change
-  authorId  String?  @map("author_id")
-  email     String?  // 로그인 실패 시 시도한 이메일 (작가 미식별)
-  ip        String?
-  userAgent String?  @map("user_agent")
-  detail    String?  // 실패 사유 등
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  id            String    @id @default(uuid())
+  action        String // register, login_success, login_fail, password_change
+  authorId      String?   @map("author_id")
+  author        Author?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  email         String? // 로그인 실패 시 시도한 이메일 (작가 미식별)
+  ip            String?
+  userAgent     String?   @map("user_agent")
+  detail        String? // 실패 사유 등
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  // PAY-P2-5 audit retention (영구 보존 + 90일 후 PII 마스킹)
+  maskedAt      DateTime? @map("masked_at") @db.Timestamptz(3)
+  retentionTier String    @default("active") @map("retention_tier")
 
   @@index([action, createdAt])
   @@index([ip])
   @@index([authorId])
+  @@index([retentionTier, createdAt])
   @@map("access_logs")
 }
 
 model RefreshToken {
   id        String    @id @default(uuid())
   authorId  String    @map("author_id")
+  author    Author    @relation(fields: [authorId], references: [id], onDelete: Cascade)
   tokenHash String    @unique @map("token_hash")
   expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
   revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
@@ -370,12 +438,13 @@ model RefreshToken {
 model AnalysisReport {
   id             String   @id @default(uuid())
   authorId       String   @map("author_id")
+  author         Author   @relation(fields: [authorId], references: [id], onDelete: Restrict)
   workId         String   @map("work_id")
   episodeId      String   @map("episode_id")
   workTitle      String   @map("work_title")
   episodeTitle   String   @map("episode_title")
-  types          String[]  // consistency/tone/character 조합
-  results        Json     // AnalysisResult[] 전체
+  types          String[] // consistency/tone/character 조합
+  results        Json // AnalysisResult[] 전체
   creditsCharged Int      @default(3) @map("credits_charged")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
@@ -385,15 +454,20 @@ model AnalysisReport {
 }
 
 model AdminAuditLog {
-  id        String   @id @default(uuid())
-  adminId   String   @map("admin_id")
-  action    String   // 예: author_create, credit_grant, episode_delete, plan_change
-  targetId  String?  @map("target_id")
-  detail    Json?    // 변경 전/후 값, 사유 등
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  id            String    @id @default(uuid())
+  adminId       String    @map("admin_id")
+  admin         Author    @relation(fields: [adminId], references: [id], onDelete: Restrict)
+  action        String // 예: author_create, credit_grant, episode_delete, plan_change
+  targetId      String?   @map("target_id")
+  detail        Json? // 변경 전/후 값, 사유 등
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  // PAY-P2-5 audit retention (영구 보존 + 90일 후 PII 마스킹)
+  maskedAt      DateTime? @map("masked_at") @db.Timestamptz(3)
+  retentionTier String    @default("active") @map("retention_tier")
 
   @@index([adminId, createdAt])
   @@index([action])
+  @@index([retentionTier, createdAt])
   @@map("admin_audit_logs")
 }
 
@@ -401,14 +475,14 @@ model AdminAuditLog {
 /// 단일 row 보장 — id='singleton' 고정. cron 실행마다 동일 row를 upsert.
 /// 책 Ch 16 "shared state via DB single-row checkpoint" 패턴.
 model ReconciliationCheckpoint {
-  id              String   @id @default("singleton")
-  lastRunAt       DateTime @map("last_run_at") @db.Timestamptz(3)
-  processedCount  Int      @default(0) @map("processed_count")
-  boostCount      Int      @default(0) @map("boost_count")
-  mismatchCount   Int      @default(0) @map("mismatch_count")
-  expireCount     Int      @default(0) @map("expire_count")
-  errorMessage    String?  @map("error_message")
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id             String   @id @default("singleton")
+  lastRunAt      DateTime @map("last_run_at") @db.Timestamptz(3)
+  processedCount Int      @default(0) @map("processed_count")
+  boostCount     Int      @default(0) @map("boost_count")
+  mismatchCount  Int      @default(0) @map("mismatch_count")
+  expireCount    Int      @default(0) @map("expire_count")
+  errorMessage   String?  @map("error_message")
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("reconciliation_checkpoints")
 }
@@ -423,12 +497,13 @@ model ReconciliationCheckpoint {
 model RefundLog {
   id             String   @id @default(uuid())
   paymentId      String   @map("payment_id")
-  amount         Int                                                    // PG 환불 금액 (KRW)
-  credits        Int                                                    // 실제 환수 크레딧 (actualDeducted)
-  deficitCredits Int      @default(0) @map("deficit_credits")           // 잔액 부족분 (외상)
+  payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  amount         Int // PG 환불 금액 (KRW)
+  credits        Int // 실제 환수 크레딧 (actualDeducted)
+  deficitCredits Int      @default(0) @map("deficit_credits") // 잔액 부족분 (외상)
   reason         String
   processedAt    DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
-  source         String                                                 // 'webhook' | 'manual'
+  source         String // 'webhook' | 'manual'
 
   @@index([paymentId])
   @@map("refund_logs")
@@ -442,14 +517,18 @@ model RefundLog {
 /// - nextRetryAt: 다음 재시도 시각 — exp backoff (1m → 5m → 30m → 2h → 12h → 24h)
 /// 정본: `.claude/shared-contracts.md` §18 WebhookDLQ
 model WebhookRetryQueue {
-  id          String   @id @default(uuid())
-  eventId     String   @unique @map("event_id")                         // Polar webhook-id 멱등성
-  payload     Json                                                        // NormalizedWebhookEvent 전체
-  retryCount  Int      @default(0) @map("retry_count")
-  lastError   String?  @map("last_error")
-  nextRetryAt DateTime @map("next_retry_at") @db.Timestamptz(3)
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  id            String    @id @default(uuid())
+  eventId       String    @unique @map("event_id") // Polar webhook-id 멱등성
+  payload       Json // NormalizedWebhookEvent 전체
+  retryCount    Int       @default(0) @map("retry_count")
+  lastError     String?   @map("last_error")
+  nextRetryAt   DateTime  @map("next_retry_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  // PAY-P2-5 audit retention (영구 보존 + 90일 후 PII 마스킹)
+  maskedAt      DateTime? @map("masked_at") @db.Timestamptz(3)
+  retentionTier String    @default("active") @map("retention_tier")
 
   @@index([nextRetryAt])
+  @@index([retentionTier, createdAt])
   @@map("webhook_retry_queues")
 }

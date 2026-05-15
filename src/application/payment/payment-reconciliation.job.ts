@@ -94,6 +94,16 @@ export class PaymentReconciliationJob {
           PaymentReconciliationJob.POLAR_LIMIT,
         )
       } catch (e: unknown) {
+        // PAY-P3-H: CircuitOpenError = polar:checkouts:list 호출점 OPEN.
+        // 본 cron 회차는 skip (다음 회차 cooldown 경과 후 HALF_OPEN trial).
+        // 정본: shared-contracts §27 CircuitBreakerPolicy, ADR-009.
+        if (e instanceof Error && e.name === 'CircuitOpenError') {
+          this.logger.warn(
+            `[CircuitBreaker] PaymentReconciliationJob skip — polar:checkouts:list OPEN (${e.message})`,
+          )
+          errorMessage = `polar_circuit_open: ${e.message}`.slice(0, 500)
+          return
+        }
         const msg = e instanceof Error ? e.message : String(e)
         this.logger.error(`Polar list API 호출 실패 — ${msg}`)
         errorMessage = `polar_list_failed: ${msg}`.slice(0, 500)

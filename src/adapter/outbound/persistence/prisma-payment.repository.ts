@@ -175,26 +175,37 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
         data: { status: isPartial ? 'partial_refunded' : 'refunded' },
       })
 
-      // 6. 현재 Author 잔액 조회 (race 차단 — 동일 $transaction 내 일관성 보장)
-      const author = await tx.author.findUnique({
+      // 6. 현재 Author 잔액 조회 — findUniqueOrThrow (race 시 author 미존재 케이스도 throw로 명시)
+      // PAY-P3-A 정본: shared-contracts §22 PaymentRaceCondition (CAS 패턴 강화)
+      const author = await tx.author.findUniqueOrThrow({
         where: { id: authorId },
         select: { credits: true },
       })
-      if (!author) {
-        throw new Error(`Author not found: ${authorId}`)
-      }
 
       // 7. actualDeducted / deficitCredits 계산 — 음수 잔액 절대 차단
       const currentBalance = author.credits
       const actualDeducted = Math.min(currentBalance, proportionalCredits)
       const deficitCredits = Math.max(0, proportionalCredits - currentBalance)
 
-      // 8. Author.credits decrement (0 fix 보장)
+      // 8. Author.credits decrement (0 fix 보장) — PAY-P3-A CAS 패턴 적용
+      // updateMany WHERE credits >= actualDeducted (Postgres atomic check-and-set)
+      // 동시 트랜잭션이 author.credits를 변경한 경우 0 row 갱신 → throw CAS_MISMATCH
+      // 호출자(refund-payment.usecase + payment.usecase)는 catch → webhookEventRepo 'failed' + DLQ enqueue
       if (actualDeducted > 0) {
-        await tx.author.update({
-          where: { id: authorId },
+        const updateResult = await tx.author.updateMany({
+          where: {
+            id: authorId,
+            credits: { gte: actualDeducted },
+          },
           data: { credits: { decrement: actualDeducted } },
         })
+        if (updateResult.count === 0) {
+          // race window 검출 — 다른 트랜잭션이 author.credits를 변경하여 CAS 조건 미충족
+          // PAY-P2-2 DLQ retry 위임 (WebhookRetryJob @Cron 5분이 재처리)
+          throw new Error(
+            `CAS_MISMATCH — race condition detected on author.credits (authorId=${authorId}, expected_min=${actualDeducted})`,
+          )
+        }
       }
 
       // 9. CreditLog 음수 박제 (대칭 — completePaymentAtomically의 양수와 정합)
