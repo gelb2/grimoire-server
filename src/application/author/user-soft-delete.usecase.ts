@@ -106,4 +106,81 @@ export class UserSoftDeleteUseCase {
       { scope: policy.anonymizeScope },
     )
   }
+
+  /**
+   * 운영자 GDPR 익명화 only 분기 영역 (qa #20 server-web 정합 영역 영역 영역 보강 — 사용자 5/15 옵션 A 채택).
+   *
+   * Soft delete 영역 영역 영역 영역 — GDPR Article 17 (Right to Erasure) 영역 정합 영역
+   * 영역 영역 영역 식별 영역 영역 영역 익명화 영역 (계정 영역 유지 영역).
+   *
+   * 흐름:
+   * 1. 대상 Author 영역 조회 (존재 검증, deletedAt 이미 영역 시 BadRequestException — idempotent X)
+   * 2. UserAnonymizer 영역 anonymize (email + name + passwordHash + bio 4 필드만)
+   * 3. AdminAuditLog gdpr_anonymize action 박제 (사유 + adminId + targetId)
+   *
+   * 정합 매트릭스 (execute 영역 영역 영역 비교 영역):
+   * - soft delete (deletedAt = NOW) → X (계정 유지)
+   * - RefreshToken revoke → X (탈퇴 영역 영역 영역 영역)
+   * - anonymize → O (basic 영역 영역)
+   * - admin_force_delete audit → X (gdpr_anonymize 영역 영역만 박제)
+   *
+   * @param authorId 대상 Author ID
+   * @param adminId 운영자 ID (필수)
+   * @param reason 사유 (필수)
+   * @returns anonymize 박제 시각 (ISO 8601)
+   */
+  async anonymizeOnly(
+    authorId: string,
+    adminId: string,
+    reason: string,
+  ): Promise<{ anonymizedAt: string }> {
+    // 0. 입력 검증
+    if (!adminId) {
+      throw new BadRequestException('운영자 GDPR 익명화 시 adminId 필수')
+    }
+    if (!reason || reason.trim().length === 0) {
+      throw new BadRequestException('운영자 GDPR 익명화 시 사유 필수')
+    }
+
+    // 1. 대상 Author 영역 조회 (middleware 영역 영역 — deletedAt = null 영역 영역 결과)
+    const author = await this.authorRepo.findById(authorId)
+    if (!author) {
+      throw new NotFoundException('작가를 찾을 수 없습니다')
+    }
+
+    // 운영자 영역 본인 영역 영역 익명화 영역 차단 (실수 영역 차단 — execute 영역 정합)
+    if (adminId === authorId) {
+      throw new ForbiddenException('운영자는 본인 계정을 익명화할 수 없습니다')
+    }
+
+    // admin 영역 영역 admin 계정 익명화 차단 (PAY-P3-E AdminAuditLog Restrict 영역 정합 강제)
+    if (author.role === 'admin') {
+      throw new BadRequestException('관리자 계정은 익명화할 수 없습니다')
+    }
+
+    const beforeState = {
+      id: author.id,
+      slug: author.slug,
+      email: author.email,
+      name: author.name,
+    }
+
+    // 2. GDPR 익명화 영역 (옵션 A basic 영역 — 사용자 5/15 채택)
+    const policy = loadUserSoftDeletePolicy()
+    await this.userAnonymizer.anonymize(authorId, policy.anonymizeScope)
+
+    const anonymizedAt = new Date().toISOString()
+
+    // 3. AdminAuditLog gdpr_anonymize action 박제 (PAY-P2-4 6-arg)
+    await this.auditLog.log(
+      adminId,
+      'gdpr_anonymize',
+      authorId,
+      { reason, scope: policy.anonymizeScope, mode: 'anonymize_only' },
+      beforeState,
+      { anonymizedAt },
+    )
+
+    return { anonymizedAt }
+  }
 }
