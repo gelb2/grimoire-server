@@ -4,6 +4,7 @@ import { Request, Response } from 'express'
 import * as bcrypt from 'bcryptjs'
 import { JwtService } from '@nestjs/jwt'
 import { AdminUseCase } from '@application/admin/admin.usecase'
+import { UserSoftDeleteUseCase } from '@application/author/user-soft-delete.usecase'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
@@ -21,6 +22,7 @@ const ACCESS_MAX_AGE = 15 * 60 * 1000  // 15분
 export class AdminController {
   constructor(
     private readonly adminUseCase: AdminUseCase,
+    private readonly userSoftDelete: UserSoftDeleteUseCase,
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly accessLog: AccessLogService,
@@ -129,6 +131,26 @@ export class AdminController {
   ) {
     await this.adminUseCase.deleteAuthor(req.user.sub, authorId)
     return { deleted: true }
+  }
+
+  /**
+   * USER-SOFT-DELETE sprint (2026-05-15) — 운영자 강제 Author 영역 영역 영역 영역 엔드포인트.
+   * Soft delete + GDPR 익명화 + RefreshToken 즉시 무효 + AdminAuditLog admin_force_delete 박제 영역.
+   * 사유 영역 필수.
+   *
+   * 정본: .claude/state/sprint-user-soft-delete-draft.md §5-4 Hexagonal 흐름 매트릭스
+   * 정본: .claude/shared-contracts.md §29 UserSoftDeletePolicy
+   */
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @Post('authors/:authorId/force-delete')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async forceDeleteAuthor(
+    @Req() req: AuthenticatedRequest,
+    @Param('authorId') authorId: string,
+    @Body() body: { reason: string },
+  ) {
+    await this.userSoftDelete.execute(authorId, 'admin', req.user.sub, body.reason)
+    return { deleted: true, message: '운영자 강제 삭제 완료. 30일 후 자동 영구 삭제 정합.' }
   }
 
   @Patch('authors/:authorId/role')

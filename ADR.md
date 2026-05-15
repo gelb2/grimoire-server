@@ -519,6 +519,71 @@ ACCEPTED (사용자 5/15 verbatim 4번째 sprint 정합)
 
 ---
 
+## ADR-011: Author Soft Delete + 본인 탈퇴 + 운영자 강제 삭제 + GDPR 익명화 + 30일 cron hard delete (USER-SOFT-DELETE, 2026-05-15)
+
+### 상태
+ACCEPTED (사용자 5/15 verbatim 정합 "B + A 모두 진행" — 5/10 verbatim "USER-SOFT-DELETE ... 이건 순서대로", PAY-P3-E sprint 단계 1~6 종료 직후 5번째 sprint)
+
+### 컨텍스트
+- PAY-P3-E sprint §7-1 단계 1~6 종료 박제 직후 (5/11 박제) — FK 제약 박제 + 회계 8건 Restrict 강제 정합
+- Author 모델 deletedAt 컬럼 박제 0건 — 본인 탈퇴 / 운영자 강제 삭제 / GDPR 익명화 영역 모두 차단 상태
+- Prisma soft delete middleware 박제 0건 — 향후 확장 패턴 부재
+- 30일 후 hard delete 자동화 부재 — soft delete 영역 누적
+- 사용자 5/15 verbatim 정합: "B + A 모두 진행" — 5번째 sprint = USER-SOFT-DELETE
+- 사용자 5/9 결정 A 정합: USER-SOFT-DELETE sprint 분리 신설 (Author hard delete 자체가 일상 운영에서 발생 X)
+- GDPR Article 17 (Right to Erasure) 정합 필요
+
+### 결정
+- **옵션 D 채택**: User.deletedAt DateTime? + Prisma `$use` middleware + 30일 cron hard delete
+- Prisma `$use` middleware 영역 자동 적용 (Author 영역 + 향후 확장 가능 영역)
+- GDPR 익명화 옵션 A (basic — email + name + passwordHash + bio) 채택 (사용자 5/15 결정)
+- 30일 후 hard delete 자동화 (cron `0 0 4 * * *` 매일 새벽 4시 KST + 회계 8건 P2003 차단 영역 try-catch)
+- RefreshToken 즉시 무효 (PAY-P3-E Cascade 박제 영역 정합 강화 — soft delete 시점에 별도 호출)
+- AdminAuditLog 4 action 박제 (`self_account_delete` / `admin_force_delete` / `gdpr_anonymize` / `30d_hard_delete` + `30d_hard_delete_blocked`)
+
+### 대안
+- (A) User.isDeleted Boolean — 2 컬럼 정합성 영역 부담 (거부: isDeleted=true + deletedAt=null 불가능 강제 시 이중 검증)
+- (B) 별도 DeletedUser archive 테이블 — PAY-P3-E Restrict 정합 X (거부, 회계 영역 FK dangling — Payment authorId → archive 영역 0건)
+- (C) 환경별 분리 (dev/prod) — 일관 영역 0건 (거부: 단일 정합 강제)
+- (D) User.deletedAt DateTime? + middleware + cron ← **채택** (DDD-aware + 영역 검증 + 시점 박제 + cron 정합 + GDPR 정합)
+
+### 정본 영역
+- model: `prisma/schema.prisma` Author 모델 deletedAt 컬럼 + `@@index([deletedAt])`
+- migration: `prisma/migrations/20260515_user_soft_delete_policy/migration.sql`
+- domain model: `src/domain/model/author.ts` (deletedAt 필드 + isAuthorDeleted) + `src/domain/model/user-soft-delete-state.ts` (SoftDeleteState enum)
+- policy: `src/domain/policy/user-soft-delete-policy.ts` (UserSoftDeletePolicy + computeHardDeleteCutoff)
+- port: `src/domain/port/outbound/user-anonymizer.port.ts` + `src/domain/port/outbound/author-repository.port.ts` (softDelete/restore/hardDeleteOlderThan/findDeletedById/findDeletedOlderThan 메서드 추가)
+- adapter: `src/adapter/outbound/persistence/prisma-soft-delete.middleware.ts` + `src/adapter/outbound/persistence/default-user-anonymizer.adapter.ts`
+- usecase: `src/application/author/user-soft-delete.usecase.ts`
+- cron: `src/application/author/user-hard-delete.job.ts` (`@Cron('0 0 4 * * *')`)
+- controller (self): `src/adapter/inbound/http/controller/author.controller.ts` (`@Delete('me')`)
+- controller (admin): `src/adapter/inbound/http/controller/admin.controller.ts` (`@Post('authors/:authorId/force-delete')`)
+- spec (4): user-soft-delete.usecase.spec.ts + prisma-soft-delete.middleware.spec.ts + default-user-anonymizer.adapter.spec.ts + user-hard-delete.job.spec.ts (total 28 it 신설)
+- sensor: `.claude/scripts/sensor-user-soft-delete-policy.sh` (12 검증)
+- eval: `eval/tasks/regression-73-user-soft-delete-policy.json` (12 criteria)
+- 정본 박제: `.claude/shared-contracts.md §29 UserSoftDeletePolicy`
+- Sprint Initializer: `.claude/state/sprint-user-soft-delete-draft.md` (17 섹션 + §0-1 + §18 + §19)
+
+### 결과
+- 본인 탈퇴 기능 영역 가능 (마이페이지 영역 UI + API — DELETE /api/v1/authors/me)
+- 운영자 강제 삭제 영역 가능 (admin 14탭 회원 관리 영역 UI + API — POST /admin/authors/:id/force-delete)
+- GDPR Right to Erasure 정합 (Article 17 영역)
+- 회계 영역 영구 보존 (PAY-P3-E Restrict 정합 강화 — soft delete 시에도 PG 자동 차단)
+- 30일 후 자동 정리 (디스크 영역 + DB 인덱스 성능 영역)
+- jest 769 → 797 PASS (+28 it 신설, 회귀 0건)
+- sensor-user-soft-delete-policy.sh 12/12 PASS
+
+### 잔존 영역
+- Work / Episode soft delete — 별도 sprint 영역 (작가 콘텐츠 영역 정책 영역)
+- Subscription 본인 탈퇴 시 자동 cancel — 별도 sprint 영역 (Polar 정합)
+- 다중 인스턴스 환경 — middleware in-memory 0건 (Prisma 영역 단일 정합)
+- GDPR 옵션 B (strong — IP + userAgent) / C (strongest — 콘텐츠 anonymize) — 향후 환경변수 영역 확장 영역
+- dev migration apply — 별도 grimoire-infrastructure agent 영역 진입 시점 명시 영역
+- prod migration — dev 24h 안정성 박제 후만 사용자 명시 영역
+- web UI 영역 — 별도 grimoire-web agent Generator 진입 영역 (마이페이지 탈퇴 버튼 + admin 강제 삭제 모달)
+
+---
+
 ## 참조
 
 - 트랜잭션: `src/application/payment/payment.usecase.ts`
@@ -530,3 +595,4 @@ ACCEPTED (사용자 5/15 verbatim 4번째 sprint 정합)
 - FK Cascade 정책: `prisma/schema.prisma` 33 FK 영역 + `prisma/migrations/20260510_pay_p3_e_fk_cascade_policy/migration.sql` + `.claude/shared-contracts.md §25 FKCascadePolicy`
 - audit retention 정책: `prisma/migrations/20260510_pay_p2_5_audit_retention_policy/migration.sql` + `src/adapter/outbound/persistence/audit-mask-helper.ts` + `src/scheduler/audit-mask.scheduler.ts` + `.claude/shared-contracts.md §26 AuditRetentionPolicy`
 - Circuit Breaker 정책: `src/domain/model/circuit-breaker-state.ts` + `src/domain/port/outbound/circuit-breaker.port.ts` + `src/adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter.ts` + `.claude/shared-contracts.md §27 CircuitBreakerPolicy` + ADR-009
+- User Soft Delete 정책: `prisma/schema.prisma` Author.deletedAt + `prisma/migrations/20260515_user_soft_delete_policy/migration.sql` + `src/adapter/outbound/persistence/prisma-soft-delete.middleware.ts` + `src/adapter/outbound/persistence/default-user-anonymizer.adapter.ts` + `src/application/author/user-soft-delete.usecase.ts` + `src/application/author/user-hard-delete.job.ts` + `.claude/shared-contracts.md §29 UserSoftDeletePolicy` + ADR-011
