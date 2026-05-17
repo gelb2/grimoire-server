@@ -72,6 +72,37 @@ describe('CreditUseCase', () => {
     })
   })
 
+  describe('getPointBalance', () => {
+    const mockBalance = {
+      free: 3000, subscription: 0, gift: 2000, charged: 5000,
+      total: 10000, deficit: 0, available: 10000,
+    }
+
+    it('CreditLedgerPort 주입 시 4 출처 포인트 잔액을 반환한다', async () => {
+      const mockLedger = { getBalance: jest.fn().mockResolvedValue(mockBalance) }
+      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+
+      const balance = await uc.getPointBalance('author-1')
+
+      expect(mockLedger.getBalance).toHaveBeenCalledWith('author-1')
+      expect(balance.total).toBe(10000)
+      expect(balance.charged).toBe(5000)
+      expect(balance.deficit).toBe(0)
+    })
+
+    it('CreditLedgerPort 미주입 시 에러를 던진다', async () => {
+      await expect(useCase.getPointBalance('author-1')).rejects.toThrow('포인트 원장이 구성되지 않았습니다')
+    })
+
+    it('작가가 없으면 에러를 던진다', async () => {
+      const mockLedger = { getBalance: jest.fn() }
+      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      mockAuthorRepo.findById.mockResolvedValue(null)
+
+      await expect(uc.getPointBalance('no-author')).rejects.toThrow('작가를 찾을 수 없습니다')
+    })
+  })
+
   describe('getLogs', () => {
     it('작가의 크레딧 로그를 반환한다', async () => {
       const logs = await useCase.getLogs('author-1')

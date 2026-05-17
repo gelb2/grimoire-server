@@ -4,6 +4,10 @@ import { SkipThrottle, Throttle } from '@nestjs/throttler'
 import { PaymentUseCase } from '@application/payment/payment.usecase'
 import { CreditUseCase } from '@application/credit/credit.usecase'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
+import {
+  CreditBalanceResponseDto,
+  toCreditBalanceResponse,
+} from '@adapter/inbound/http/dto/credit.dto'
 import type { Request } from 'express'
 
 @Controller('payments')
@@ -46,10 +50,10 @@ export class PaymentController {
     return this.paymentUseCase.getPaymentHistory(req.user.sub)
   }
 
-  /** 크레딧 잔액 조회 (인증 필요) */
+  /** 크레딧 잔액 조회 (인증 필요) — 크레딧 개편 I Phase: 4 출처 포인트 잔액 */
   @UseGuards(JwtAuthGuard)
   @Get('credits')
-  async getCredits(@Req() req: AuthenticatedRequest) {
-    return { credits: await this.creditUseCase.getBalance(req.user.sub) }
+  async getCredits(@Req() req: AuthenticatedRequest): Promise<CreditBalanceResponseDto> {
+    return toCreditBalanceResponse(await this.creditUseCase.getPointBalance(req.user.sub))
   }
 }
