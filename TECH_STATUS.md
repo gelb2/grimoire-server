@@ -37,7 +37,12 @@
 | Admin (통계/사용자/콘텐츠/제재/신고/댓글/결제/접근로그/설정/감사로그 — 개수는 `docs/api-contract.md` 참조) | 구현 완료 |
 | Analysis (RAG 인덱싱/일관성 체크) | 구현 완료 |
 | Chat (AI 어시스턴트 — 세션/메시지/RAG) | 구현 완료 |
+| Chat 4구간 사후 차감 (크레딧 개편 I Phase, ADR-012) | 코드 구현 완료 (2026-05-17) — dev migration apply 대기 (§7 단계6 키워드 게이트) |
+| 크레딧 디노미네이션 1:1,000 + 포인트 출처 4종 분리 회계 (CreditLedger 원장, ADR-012) | 코드 구현 완료 (2026-05-17) — dev migration apply 대기 |
+| 구독 월 포인트 풀 (MembershipPlan, 이월 금지, ADR-012) | 코드 구현 완료 (2026-05-17) — dev migration apply 대기 |
 | Plan (구독 플랜 + 테마 슬롯 관리) | 구현 완료 |
+
+> **크레딧 개편 I Phase (2026-05-17)**: `sprint-credit-overhaul` — 디노미네이션 1:1,000 + 포인트 출처 4종 분리 회계 + 채팅 4구간 사후 차감 코드 구현 완료. schema.prisma 변경 + migration 파일 작성(어떤 DB에도 apply 0건). dev/prod migration apply 는 §7 단계6/9 사용자 키워드 게이트(`크레딧개편 dev migration 진행` / `크레딧개편 prod migration 진행`). 정본: ADR-012 + `research/CREDIT_PRICING_OVERHAUL_PLAN.md` §8.
 
 ### 보안 인프라
 

@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
-import { ChatRepositoryPort, ChatSession, ChatMessage } from '@domain/port/outbound/chat-repository.port'
+import {
+  ChatRepositoryPort,
+  ChatSession,
+  ChatMessage,
+  ChatMessageTokenMeta,
+} from '@domain/port/outbound/chat-repository.port'
 
 @Injectable()
 export class PrismaChatRepository implements ChatRepositoryPort {
@@ -35,13 +40,40 @@ export class PrismaChatRepository implements ChatRepositoryPort {
     return toSession(row)
   }
 
-  async addMessage(sessionId: string, role: 'user' | 'assistant', content: string): Promise<ChatMessage> {
+  async addMessage(
+    sessionId: string,
+    role: 'user' | 'assistant',
+    content: string,
+    tokenMeta?: ChatMessageTokenMeta,
+  ): Promise<ChatMessage> {
     const row = await this.prisma.chatMessage.create({
-      data: { sessionId, role, content },
+      data: {
+        sessionId,
+        role,
+        content,
+        // 크레딧 개편 I Phase — assistant 메시지 토큰 usage 박제 (없으면 null)
+        inputTokens: tokenMeta?.inputTokens ?? null,
+        outputTokens: tokenMeta?.outputTokens ?? null,
+        model: tokenMeta?.model ?? null,
+        chargedPoints: tokenMeta?.chargedPoints ?? null,
+        chargeTier: tokenMeta?.chargeTier ?? null,
+      },
     })
     // 세션 updatedAt 갱신
     await this.prisma.chatSession.update({ where: { id: sessionId }, data: {} })
     return toMessage(row)
+  }
+
+  /** 크레딧 개편 I Phase — 사후 차감 결과(chargedPoints/chargeTier) 갱신 */
+  async updateMessageCharge(
+    messageId: string,
+    chargedPoints: number,
+    chargeTier: string,
+  ): Promise<void> {
+    await this.prisma.chatMessage.update({
+      where: { id: messageId },
+      data: { chargedPoints, chargeTier },
+    })
   }
 
   /** 커서 기반 페이지네이션: cursor ID 이전의 메시지를 limit개 반환 (시간순) */
@@ -91,5 +123,17 @@ function toSession(row: any): ChatSession {
 }
 
 function toMessage(row: any): ChatMessage {
-  return { id: row.id, sessionId: row.sessionId, role: row.role, content: row.content, createdAt: row.createdAt }
+  return {
+    id: row.id,
+    sessionId: row.sessionId,
+    role: row.role,
+    content: row.content,
+    createdAt: row.createdAt,
+    // 크레딧 개편 I Phase — 토큰/차감 메타 (과거 무료 row 는 null)
+    inputTokens: row.inputTokens ?? null,
+    outputTokens: row.outputTokens ?? null,
+    model: row.model ?? null,
+    chargedPoints: row.chargedPoints ?? null,
+    chargeTier: row.chargeTier ?? null,
+  }
 }

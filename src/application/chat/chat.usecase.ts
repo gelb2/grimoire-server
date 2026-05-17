@@ -1,9 +1,17 @@
-import { Injectable, Inject, NotFoundException, ForbiddenException } from '@nestjs/common'
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  ForbiddenException,
+  Logger,
+  Optional,
+} from '@nestjs/common'
 import { ChatRepositoryPort, ChatSession, ChatMessage } from '@domain/port/outbound/chat-repository.port'
 import { VectorStorePort } from '@domain/port/outbound/vector-store.port'
 import { EmbeddingPort } from '@domain/port/outbound/embedding.port'
 import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
+import { ChargePointsUseCase } from '@application/credit/charge-points.usecase'
 import { guardPromptInjection } from '@lib/prompt-injection-guard'
 
 const CHAT_SYSTEM_PROMPT = `당신은 소설 작가를 돕는 AI 어시스턴트입니다.
@@ -21,12 +29,20 @@ const CHAT_SYSTEM_PROMPT = `당신은 소설 작가를 돕는 AI 어시스턴트
 
 @Injectable()
 export class ChatUseCase {
+  private readonly logger = new Logger(ChatUseCase.name)
+
   constructor(
     @Inject('ChatRepositoryPort') private readonly chatRepo: ChatRepositoryPort,
     @Inject('VectorStorePort') private readonly vectorStore: VectorStorePort,
     @Inject('EmbeddingPort') private readonly embedding: EmbeddingPort,
     @Inject('ClaudeApiPort') private readonly claude: ClaudeApiPort,
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
+    /**
+     * 크레딧 개편 I Phase (2026-05-17) — 채팅 4구간 사후 차감.
+     * Optional — 실 운영(app.module)에서는 항상 주입. 미주입 시 차감 skip (BACKWARD COMPATIBLE).
+     */
+    @Optional()
+    private readonly chargePoints: ChargePointsUseCase | null = null,
   ) {}
 
   /** 새 채팅 세션 생성 */
@@ -48,6 +64,17 @@ export class ChatUseCase {
     const session = await this.chatRepo.findSessionById(sessionId)
     if (!session) throw new NotFoundException('채팅 세션을 찾을 수 없습니다')
     if (session.authorId !== authorId) throw new ForbiddenException('본인의 채팅만 사용할 수 있습니다')
+
+    // 크레딧 개편 I Phase — 외상 상한 도달 시 신규 채팅 사전 차단 (게이트 5(c)).
+    // 사후 차감 구조이므로 응답 자체는 생성되지만, 외상이 상한이면 충전 유도.
+    if (this.chargePoints) {
+      const blocked = await this.chargePoints.isChatBlocked(authorId)
+      if (blocked) {
+        throw new ForbiddenException(
+          '미결제 포인트가 한도에 도달했습니다. 포인트를 충전해 주세요.',
+        )
+      }
+    }
 
     // 1. 사용자 메시지 저장
     const userMsg = await this.chatRepo.addMessage(sessionId, 'user', userMessage)
@@ -110,10 +137,49 @@ export class ChatUseCase {
       `작가: ${userMessage}`,
     ].join('')
 
-    const aiResponse = await this.claude.ask(systemPrompt, fullPrompt, { maxTokens: 2048 })
+    // 크레딧 개편 I Phase — askWithUsage 로 토큰 usage 수신 (4구간 사후 차감 입력)
+    const aiResult = await this.claude.askWithUsage(systemPrompt, fullPrompt, {
+      maxTokens: 2048,
+    })
 
-    // 7. AI 응답 저장
-    const assistantMsg = await this.chatRepo.addMessage(sessionId, 'assistant', aiResponse)
+    // 7. AI 응답 저장 — 토큰 usage 박제 (§8-8 CRITICAL #3 — 토큰 실측 필드 선행)
+    const assistantMsg = await this.chatRepo.addMessage(
+      sessionId,
+      'assistant',
+      aiResult.text,
+      {
+        inputTokens: aiResult.inputTokens,
+        outputTokens: aiResult.outputTokens,
+        model: aiResult.model,
+      },
+    )
+
+    // 8. 크레딧 개편 I Phase — 채팅 4구간 사후 차감 (§8-4).
+    //    응답은 이미 생성·저장됨 — 차감 실패가 응답을 무효화하지 않음 (사후 차감).
+    //    잔액 부족 시 deficit(외상) 누적은 charge-points.usecase 내부에서 처리.
+    if (this.chargePoints) {
+      try {
+        const charge = await this.chargePoints.chargeChatTurn(
+          authorId,
+          aiResult.inputTokens,
+          assistantMsg.id,
+        )
+        // 차감 결과(구간/포인트)를 메시지에 사후 박제 (감사 정합)
+        await this.chatRepo.updateMessageCharge(
+          assistantMsg.id,
+          charge.chargedPoints,
+          charge.tier,
+        )
+        assistantMsg.chargedPoints = charge.chargedPoints
+        assistantMsg.chargeTier = charge.tier
+      } catch (e: unknown) {
+        // 차감 실패는 응답 제공을 막지 않음 — 로그만 (사후 차감 — 다음 정합 cron 이 보정)
+        const msg = e instanceof Error ? e.message : String(e)
+        this.logger.error(
+          `채팅 사후 차감 실패 (authorId=${authorId}, sessionId=${sessionId}): ${msg}`,
+        )
+      }
+    }
 
     return { userMsg, assistantMsg }
   }

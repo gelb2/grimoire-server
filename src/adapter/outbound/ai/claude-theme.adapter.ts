@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common'
-import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
+import {
+  ClaudeApiPort,
+  ClaudeAskResult,
+} from '@domain/port/outbound/claude-api.port'
 import { AuthorTheme } from '@domain/model/theme'
-import { askClaude } from '@lib/claude'
+import { askClaude, askClaudeWithUsage } from '@lib/claude'
 import { parseClaudeJSON } from '@lib/json-parser'
 
 const THEME_SYSTEM_PROMPT = `당신은 소설 퍼블리싱 플랫폼의 웹 테마 디자인 전문가입니다.
@@ -148,5 +151,17 @@ export class ClaudeThemeAdapter implements ClaudeApiPort {
     options?: { maxTokens?: number; signal?: AbortSignal },
   ): Promise<string> {
     return askClaude(systemPrompt, userMessage, options)
+  }
+
+  /**
+   * 크레딧 개편 I Phase (2026-05-17) — Claude 호출 + 토큰 usage 반환.
+   * 채팅 사후 차감(4구간)이 input_tokens 로 구간 판정 (§8-8 CRITICAL #3).
+   */
+  async askWithUsage(
+    systemPrompt: string,
+    userMessage: string,
+    options?: { maxTokens?: number; signal?: AbortSignal },
+  ): Promise<ClaudeAskResult> {
+    return askClaudeWithUsage(systemPrompt, userMessage, options)
   }
 }
