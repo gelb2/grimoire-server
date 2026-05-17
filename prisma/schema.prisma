@@ -13,20 +13,30 @@ datasource db {
 /// - Cascade 영역 (refresh_tokens / chat_sessions / bookmarks / reading_progress / subscriptions) = 사용자 종속 즉시 무효
 /// - SetNull 영역 (likes / comments / access_logs / reports / featured_works.adminId / user_sanctions.adminId) = 익명화 + 운영자 변경 보존
 model Author {
-  id             String          @id @default(uuid())
-  slug           String          @unique
-  name           String
-  email          String          @unique
-  passwordHash   String?         @map("password_hash")
-  bio            String?
-  role           String          @default("user")
-  credits        Int             @default(0)
-  plan           String          @default("free")
-  planExpireAt   DateTime?       @map("plan_expire_at") @db.Timestamptz(3)
-  defaultThemeId String?         @map("default_theme_id")
-  themes         Theme[]
-  works          Work[]
-  socialAccounts SocialAccount[]
+  id                 String          @id @default(uuid())
+  slug               String          @unique
+  name               String
+  email              String          @unique
+  passwordHash       String?         @map("password_hash")
+  bio                String?
+  role               String          @default("user")
+  /// [DEPRECATED → 크레딧 개편 I Phase, 2026-05-17] 디노미네이션 후 pointsCharged 등 4 필드로 이행.
+  /// 마이그레이션에서 즉시 DROP 하지 않음 — 1 sprint 유예 후 별도 sprint 에서 제거(롤백 안전망, §8-6 Cursor 반면교사).
+  /// 신규 코드는 이 필드를 차감/적립에 사용하지 말 것 — CreditLedgerPort 경유.
+  credits            Int             @default(0)
+  // 크레딧 개편 I Phase (2026-05-17) — 포인트 출처 4종 분리 회계 잔액 캐시 (1-C 하이브리드).
+  // 입출금 원장은 CreditLedger — 본 4 필드는 빠른 조회용 캐시 ($transaction 동기 갱신).
+  pointsFree         Int             @default(0) @map("points_free") // 무료 적립 (가입·첫작품) — CAC, 매출 0
+  pointsSubscription Int             @default(0) @map("points_subscription") // 구독 월 풀 — 매월 리셋, 이월 금지
+  pointsGift         Int             @default(0) @map("points_gift") // 응원 선물 수령 — 독자 결제분 이전
+  pointsCharged      Int             @default(0) @map("points_charged") // 충전 (Polar) — pt 단가에 §0 박힘, 영구 보존
+  deficitPoints      Int             @default(0) @map("deficit_points") // 외상 (채팅 사후 차감 시 잔액 부족분, 충전 시 우선 상계)
+  plan               String          @default("free")
+  planExpireAt       DateTime?       @map("plan_expire_at") @db.Timestamptz(3)
+  defaultThemeId     String?         @map("default_theme_id")
+  themes             Theme[]
+  works              Work[]
+  socialAccounts     SocialAccount[]
 
   // Cascade 영역 (사용자 종속, Author 삭제 시 즉시 무효)
   bookmarks       Bookmark[]
@@ -41,6 +51,9 @@ model Author {
   creditLogs       CreditLog[]
   analysisReports  AnalysisReport[]
   sanctionedAuthor UserSanction[]   @relation("SanctionedAuthor")
+  // 크레딧 개편 I Phase (2026-05-17) — CreditLedger 회계 원장 / MembershipPlan 구독 이력 (ADR-007 Restrict 정합)
+  creditLedgers    CreditLedger[]
+  membershipPlans  MembershipPlan[]
 
   // SetNull 영역 (익명화 + 운영자 변경 시 기록 보존)
   likes              Like[]
@@ -306,13 +319,23 @@ model ChatSession {
   @@map("chat_sessions")
 }
 
+/// 채팅 메시지. 크레딧 개편 I Phase (2026-05-17) — 토큰 실측 + 4구간 차감 박제 5 필드 추가.
+/// §8-8 CRITICAL #3 — 토큰 실측 필드 없이 채팅 차감 구현 금지. 전부 nullable:
+/// - role='user' 메시지는 토큰 usage 가 없음 (assistant 응답에만 부착) → null
+/// - 과거 무료 시대 row 도 미측정 → null ("0 토큰"과 "측정 안 됨" 구분 보존)
 model ChatMessage {
-  id        String      @id @default(uuid())
-  sessionId String      @map("session_id")
-  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  role      String // "user" | "assistant"
-  content   String
-  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  id            String      @id @default(uuid())
+  sessionId     String      @map("session_id")
+  session       ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role          String // "user" | "assistant"
+  content       String
+  // 크레딧 개편 I Phase — 토큰 실측 + 4구간 차감 박제 (assistant 메시지에만 — null=미차감/과거 무료 row)
+  inputTokens   Int?        @map("input_tokens") // API 응답 usage.input_tokens
+  outputTokens  Int?        @map("output_tokens") // API 응답 usage.output_tokens
+  model         String? // 'claude-sonnet-4-6' 등 — 차감 N 재산정 시 모델 식별
+  chargedPoints Int?        @map("charged_points") // 이 턴에 차감된 pt (4구간 정액)
+  chargeTier    String?     @map("charge_tier") // 'short'|'normal'|'long'|'xlong' — 차감 시점 구간 박제 (경계 재확정 후에도 근거 보존)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([sessionId, createdAt])
   @@map("chat_messages")
@@ -438,7 +461,9 @@ model RefreshToken {
 /// - workTitle/episodeTitle: 스냅샷 (에피소드 삭제 후에도 히스토리 식별 가능)
 /// - types: 실행된 분석 타입 배열 (consistency/tone/character 조합)
 /// - results: AnalysisResult[] JSON 전체 — 점수/요약/이슈/제안 원본
-/// - creditsCharged: 이번 분석에 실제 차감된 크레딧 (기본 3, 향후 할인 정책 반영 가능)
+/// - creditsCharged: 이번 분석에 실제 차감된 포인트.
+///   크레딧 개편 I Phase (2026-05-17) — 디노미네이션으로 단위 의미 변경 (크레딧 → pt).
+///   default 3 → 2,440 (구 4 크레딧 디노미 환산, ANALYSIS_POINT_COST). 컬럼명은 마이그레이션 최소화 위해 유지.
 model AnalysisReport {
   id             String   @id @default(uuid())
   authorId       String   @map("author_id")
@@ -449,7 +474,7 @@ model AnalysisReport {
   episodeTitle   String   @map("episode_title")
   types          String[] // consistency/tone/character 조합
   results        Json // AnalysisResult[] 전체
-  creditsCharged Int      @default(3) @map("credits_charged")
+  creditsCharged Int      @default(2440) @map("credits_charged") // 디노미네이션 후 pt 단위 (ANALYSIS_POINT_COST)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   @@index([authorId, createdAt(sort: Desc)])
@@ -511,6 +536,66 @@ model RefundLog {
 
   @@index([paymentId])
   @@map("refund_logs")
+}
+
+/// 크레딧 개편 I Phase (2026-05-17) — 포인트 입출금 원장 (1-C 하이브리드의 원장 측).
+/// 모든 적립/소진을 1 row 박제 — 출처별 회계 분리(CAC/COGS) + 분쟁 역추적 + 구독풀 만료(expiresAt) 추적.
+/// Author 4 필드는 빠른 조회용 잔액 캐시 — 본 원장이 audit 정본.
+/// - source: 'free'(무료적립=CAC) | 'subscription'(구독풀) | 'gift'(응원선물) | 'charged'(충전)
+/// - type: 'earn'(적립) | 'spend'(소진) | 'deficit_incur'(외상 발생) | 'deficit_settle'(외상 상계) | 'expire'(구독풀 만료)
+/// - amount: 부호 有 — earn 양수 / spend·deficit_incur·expire 음수 / deficit_settle 음수(외상 감소)
+/// - expiresAt: 구독풀 row 만 — 다음 리셋일. 만료 row 는 잔액 집계에서 제외 → 이월 구조적 불가(§8-8 #2).
+/// - relatedId: ChatMessage/Payment/AnalysisReport id 약결합 (FK 미설정 — 회계 row 영구 보존)
+/// - authorId FK: Restrict (회계 영구 보존, ADR-007 정합 — Author hard delete 시 PG 자동 차단)
+/// 정본: `.claude/shared-contracts.md` §30 CreditOverhaul, ADR-012
+model CreditLedger {
+  id           String    @id @default(uuid())
+  authorId     String    @map("author_id")
+  author       Author    @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  source       String // free | subscription | gift | charged
+  type         String // earn | spend | deficit_incur | deficit_settle | expire
+  amount       Int // 부호 有 (earn 양수 / spend·expire 음수)
+  balanceAfter Int       @map("balance_after") // 이 row 직후 총 잔액 (4 출처 합)
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz(3) // 구독풀 row 만 — 다음 리셋일
+  reason       String
+  relatedId    String?   @map("related_id") // ChatMessage/Payment/AnalysisReport id 약결합
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([authorId, createdAt])
+  @@index([authorId, source])
+  @@index([expiresAt])
+  @@map("credit_ledgers")
+}
+
+/// 크레딧 개편 I Phase (2026-05-17) — 멤버십 등급 + 월 포인트 풀 (4-C 구조).
+/// 현행 Subscription 모델(독자→작가 팔로우)과 완전히 다른 도메인 — 명명 충돌 회피 위해 MembershipPlan.
+/// 월 풀 적립/소진은 CreditLedger(source='subscription') row 로 기록 — 본 모델은 등급/풀 크기/리셋 시점 메타.
+/// - tier: 'free'(풀 없음) | 'pro'(93,000pt) | 'premium'(191,500pt)
+/// - poolBalance: 현재 잔여 풀 (캐시 — 리셋 시 monthlyPoolPoints 로 재설정)
+/// - poolResetAt: 다음 리셋 시각 — cron + lazy 이중 안전망 (경과 시 리셋)
+/// - polarSubscriptionId: Polar 구독 결제 연동용 (별도 sprint PAY-P1-4 — 본 sprint 는 필드만)
+/// - status: 'active' | 'expired' | 'cancelled'
+/// - authorId FK: Restrict (구독 이력 영구 보존, ADR-007 정합)
+/// 정본: `.claude/shared-contracts.md` §30 CreditOverhaul, ADR-012
+model MembershipPlan {
+  id                  String    @id @default(uuid())
+  authorId            String    @map("author_id")
+  author              Author    @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  tier                String    @default("free") // free | pro | premium
+  monthlyPoolPoints   Int       @default(0) @map("monthly_pool_points")
+  poolBalance         Int       @default(0) @map("pool_balance")
+  poolResetAt         DateTime  @map("pool_reset_at") @db.Timestamptz(3)
+  startedAt           DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
+  expiresAt           DateTime? @map("expires_at") @db.Timestamptz(3)
+  polarSubscriptionId String?   @unique @map("polar_subscription_id") // Polar 연동 (별도 sprint)
+  status              String    @default("active") // active | expired | cancelled
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([authorId])
+  @@index([poolResetAt])
+  @@index([status])
+  @@map("membership_plans")
 }
 
 /// PAY-P2-2: webhook 처리 실패 시 재시도 큐 (Postgres 기반 DLQ — 외부 인프라 의존 0건)

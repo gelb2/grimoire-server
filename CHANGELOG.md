@@ -1,5 +1,61 @@
 # Changelog — grimoire-server
 
+## [0.35.0] - 2026-05-17
+
+### Feat — 크레딧·구독·채팅 과금 개편 I Phase: 디노미네이션 1:1,000 + 포인트 출처 4종 분리 회계 + 채팅 4구간 사후 차감 (sprint-credit-overhaul, ADR-012)
+
+> 정본: `research/CREDIT_PRICING_OVERHAUL_PLAN.md` §8 (v6) + `.claude/state/sprint-credit-overhaul-s-phase-draft.md`. cost-accountant `ai-cost-table.md` 개정 승인 `786b0f3` (§0 전 항목 ≥3× PASS). §17 진입 게이트 6/6 충족.
+
+#### Added — 도메인 모델 (`domain/model/`)
+- `credit-point.ts` — 디노미네이션 상수 `CREDIT_TO_POINT=1000` + `Point` 값 객체 (음수/비정수 차단) + `creditsToPoints`/`pointsToCredits`
+- `credit-source.ts` — `CreditSource` 4종 (free/subscription/gift/charged) + `CreditLedgerType` 5종 + `CREDIT_CONSUMPTION_ORDER` 소진 우선순위 + CAC/COGS 회계 분리
+- `chat-charge-tier.ts` — 채팅 4구간 `CHAT_CHARGE_TIERS` (short 190 / normal 810 / long 3,390 / xlong 5,520 pt) + `resolveChatChargeTier` off-by-one 판정 + `ANALYSIS_POINT_COST=2440` / `THEME_POINT_COST=590` (§8-8 #1 — 차감 N 재산출 0건)
+- `membership-tier.ts` — `MembershipTier` 3종 + `MEMBERSHIP_MONTHLY_POOL` (free 0 / pro 93,000 / premium 191,500)
+- `credit-system-setting.ts` — SystemSetting 동적 경계값/차감 N 로드 (`loadChatChargeTiers` / `loadDeficitLimit`, §8 기본값 폴백)
+- `credit-migration.ts` — 디노미네이션 마이그레이션 정합 검증 헬퍼 (`expectMigratedAuthor` / `migrationIntegrityCriteria`)
+
+#### Added — 도메인 정책 + 포트 (`domain/`)
+- `domain/policy/credit-consumption-policy.ts` — 소진 우선순위(`planConsumption`) + deficit 상계(`settleDeficitOnCharge`) + 외상 차단(`isChatBlockedByDeficit`) 순수 정책
+- `domain/port/outbound/credit-ledger.port.ts` — `CreditLedgerPort` (earn/spend/getBalance/settleDeficit/findByAuthor)
+- `domain/port/outbound/membership-plan.port.ts` — `MembershipPlanPort` (getPlan/resetMonthlyPool/findPlansToReset/changeTier)
+- `domain/port/outbound/system-setting-repository.port.ts` — `SystemSettingRepositoryPort` (findByPrefix)
+
+#### Added — 어댑터 (`adapter/outbound/persistence/`)
+- `prisma-credit-ledger.repository.ts` — `$transaction` (FOR UPDATE + 소진 우선순위 + deficit_incur ledger + 캐시 4 필드 동기) — RefundLog 3중 박제 패턴 차용
+- `prisma-membership-plan.repository.ts` — 월간 리셋 `$transaction` (잔여 풀 expire ledger + 신규 풀 earn ledger + 풀 재설정, 이월 금지)
+- `prisma-system-setting.repository.ts` — SystemSetting key prefix 조회
+
+#### Added — UseCase + Job (`application/`)
+- `application/credit/charge-points.usecase.ts` — 채팅 4구간 사후 차감(`chargeChatTurn`) + 외상 사전 차단(`isChatBlocked`) + 분석/테마 사전 차감(`chargeAnalysis`/`chargeTheme`) + 환불(`refundAnalysis`)
+- `application/credit/grant-points.usecase.ts` — 적립 4출처 (가입/첫작품/충전/응원선물) + 충전 시 deficit 우선 상계(`grantCharge`)
+- `application/subscription/reset-monthly-pool.job.ts` — `@Cron('0 0 4 * * *')` 월간 풀 리셋 cron (이월 금지 — §8-8 #2, `MONTHLY_POOL_RESET_DISABLED` 게이트)
+
+#### Changed
+- `prisma/schema.prisma` — `CreditLedger`/`MembershipPlan` 모델 신설 (FK `authorId` Restrict — ADR-007 정합) + `Author` 5 필드 추가 (`pointsFree`/`pointsSubscription`/`pointsGift`/`pointsCharged`/`deficitPoints`, `credits` `[DEPRECATED]` 표기 — 즉시 DROP 안 함) + `ChatMessage` 5 필드 추가 (`inputTokens`/`outputTokens`/`model`/`chargedPoints`/`chargeTier`, 전부 nullable) + `AnalysisReport.creditsCharged` default 3→2440 디노미 정정
+- `prisma/migrations/20260517_credit_overhaul_i_phase/migration.sql` — 스키마 변경 + 데이터 마이그레이션 SQL (credits×1000 → points_charged, CreditLedger/MembershipPlan 초기 row) **작성만 — 어떤 DB에도 apply 0건** (dev/prod apply 는 §7 단계6/9 사용자 키워드 게이트)
+- `src/lib/claude.ts` — `askClaudeWithUsage` + `ClaudeResponse`(토큰 usage 포함) 추가 — 기존 `askClaude` 는 래퍼로 유지
+- `domain/port/outbound/claude-api.port.ts` — `askWithUsage` 시그니처 추가 (`ClaudeAskResult`)
+- `adapter/outbound/ai/claude-theme.adapter.ts` — `askWithUsage` 구현
+- `domain/port/outbound/chat-repository.port.ts` + `adapter/outbound/persistence/prisma-chat.repository.ts` — `addMessage` 에 `ChatMessageTokenMeta` 옵션 + `updateMessageCharge` 추가
+- `application/chat/chat.usecase.ts` — 채팅 4구간 사후 차감 연동 (`askWithUsage` + `chargeChatTurn` + 외상 상한 사전 차단). `ChargePointsUseCase` Optional 주입 (BACKWARD COMPATIBLE)
+- `application/analysis/novel-analysis.usecase.ts` — 디노미 차감(`chargeAnalysis`/`refundAnalysis`) 연동. `ChargePointsUseCase` 주입 시 디노미(2,440pt), 미주입 시 구 정수 크레딧(4) 경로 — BACKWARD COMPATIBLE
+- `app.module.ts` — `ChargePointsUseCase`/`GrantPointsUseCase`/`ResetMonthlyPoolJob` providers + `CreditLedgerPort`/`MembershipPlanPort`/`SystemSettingRepositoryPort` 포트 바인딩
+- `ADR.md` — ADR-012 신설 (게이트 6건 결정 + §0 정합 + §8-8 CRITICAL 5건 준수)
+- `docs/data-model.md` + `SCHEMA.md` — `authors`/`chat_messages` 갱신 + `credit_ledgers`/`membership_plans` 신규 테이블 박제
+
+#### Test
+- jest 805 → **967 PASS** (+162 it, 69 suites, 회귀 0건). 신규 spec 13 파일 — 도메인 7 (credit-point/chat-charge-tier/credit-source/membership-tier/credit-system-setting/credit-consumption-policy/credit-migration) + application 3 (charge-points/grant-points/reset-monthly-pool) + adapter 2 (prisma-credit-ledger/prisma-membership-plan) + 확장 2 (chat.usecase +6 / novel-analysis +4)
+- `npm run build` 성공 / `docker build` 성공
+
+#### §8-8 CRITICAL 5건 준수
+- ① 차감 N 비스트레스 산출 0건 (cost-accountant v3 스트레스 원가 입력만) ② 구독 풀 이월 차단 (`CreditLedger.expiresAt`) ③ `ChatMessage` 토큰 실측 필드 선행 ④ 채팅 4구간 (`xlong` 분리 — 3구간 금지) ⑤ 재산정 sensor (`sensor-credit-overhaul-recalc.sh`)
+
+#### 잔존 (본 sprint 범위 밖)
+- 마이그레이션 dev apply — `크레딧개편 dev migration 진행` 키워드 게이트 (§7 단계6)
+- 마이그레이션 prod apply — `크레딧개편 prod migration 진행` 키워드 게이트 (§7 단계9)
+- web UI (잔액 표시 4출처 + 채팅 차감 안내 + 구독 플랜 + 충전 패키지) — grimoire-web Generator
+- `credits` 컬럼 DROP — 1 sprint 유예 후 별도 sprint
+
 ## [0.34.0] - 2026-05-04
 
 ### Feat — 결제 실패 retry 정책 + pending 24h 재사용 + cleanup cron (PAY-P1-3, sprint-pay-p1-3-retry-policy)

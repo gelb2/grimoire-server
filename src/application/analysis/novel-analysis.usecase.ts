@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common'
+import { Injectable, Inject, Logger, BadRequestException, ForbiddenException, NotFoundException, Optional } from '@nestjs/common'
 import { VectorStorePort } from '@domain/port/outbound/vector-store.port'
 import { EmbeddingPort } from '@domain/port/outbound/embedding.port'
 import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
@@ -11,6 +11,8 @@ import {
 } from '@domain/port/outbound/analysis-report-repository.port'
 import { CreditReason } from '@domain/model/credit'
 import { ANALYSIS_CREDIT_COST } from '@domain/model/config'
+import { ANALYSIS_POINT_COST } from '@domain/model/chat-charge-tier'
+import { ChargePointsUseCase } from '@application/credit/charge-points.usecase'
 import { chunkText, checkConsistency, checkTone, checkCharacter, AnalysisResult, WorkMeta } from '@lib/rag'
 import { abortableRace, throwIfAborted } from '@lib/abort'
 
@@ -26,6 +28,12 @@ export class NovelAnalysisUseCase {
     @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
     @Inject('AnalysisReportRepositoryPort')
     private readonly reportRepo: AnalysisReportRepositoryPort,
+    /**
+     * 크레딧 개편 I Phase (2026-05-17) — 디노미네이션 분석 차감 (2,440pt).
+     * Optional — 주입 시 디노미 차감(ANALYSIS_POINT_COST) 우선, 미주입 시 구 정수 크레딧 차감(BACKWARD COMPATIBLE).
+     */
+    @Optional()
+    private readonly chargePoints: ChargePointsUseCase | null = null,
   ) {}
 
   /** 에피소드 텍스트를 벡터화하여 인덱싱 */
@@ -110,13 +118,19 @@ export class NovelAnalysisUseCase {
       throw new BadRequestException('에피소드 본문이 너무 짧아 분석할 수 없습니다')
     }
 
-    // F2 — 크레딧 차감 (PLANNING §14, ai-cost-table §3-2)
-    try {
-      await this.creditRepo.adjustCredits(authorId, -ANALYSIS_CREDIT_COST, CreditReason.NOVEL_ANALYSIS)
-    } catch {
-      throw new BadRequestException(
-        `AI 분석은 ${ANALYSIS_CREDIT_COST} 크레딧이 필요합니다. 크레딧이 부족합니다.`,
-      )
+    // 분석 차감 (PLANNING §14, ai-cost-table §3-2).
+    // 크레딧 개편 I Phase — chargePoints 주입 시 디노미 차감(2,440pt), 미주입 시 구 정수 크레딧 차감.
+    if (this.chargePoints) {
+      // 디노미 차감 — charge-points.usecase 가 잔액 부족 시 BadRequest throw
+      await this.chargePoints.chargeAnalysis(authorId)
+    } else {
+      try {
+        await this.creditRepo.adjustCredits(authorId, -ANALYSIS_CREDIT_COST, CreditReason.NOVEL_ANALYSIS)
+      } catch {
+        throw new BadRequestException(
+          `AI 분석은 ${ANALYSIS_CREDIT_COST} 크레딧이 필요합니다. 크레딧이 부족합니다.`,
+        )
+      }
     }
 
     let results: AnalysisResult[]
@@ -124,10 +138,16 @@ export class NovelAnalysisUseCase {
       // self-reference 환각 방지를 위해 분석 대상 에피소드 자신은 RAG에서 자동 제외
       results = await this.runAnalysis(episode.workId, episode.rawMd, analysisTypes, episodeId, abortSignal)
     } catch (error) {
-      // 실패(AbortedError 포함) 시 전액 환불
-      await this.creditRepo
-        .adjustCredits(authorId, ANALYSIS_CREDIT_COST, CreditReason.NOVEL_ANALYSIS_REFUND)
-        .catch((e) => this.logger.error(`환불 실패: ${String(e)}`))
+      // 실패(AbortedError 포함) 시 전액 환불 (project_analysis_refund_gap 정합)
+      if (this.chargePoints) {
+        await this.chargePoints
+          .refundAnalysis(authorId)
+          .catch((e) => this.logger.error(`환불 실패: ${String(e)}`))
+      } else {
+        await this.creditRepo
+          .adjustCredits(authorId, ANALYSIS_CREDIT_COST, CreditReason.NOVEL_ANALYSIS_REFUND)
+          .catch((e) => this.logger.error(`환불 실패: ${String(e)}`))
+      }
       throw error
     }
 
@@ -142,7 +162,8 @@ export class NovelAnalysisUseCase {
         episodeTitle: episode.title,
         types: analysisTypes,
         results,
-        creditsCharged: ANALYSIS_CREDIT_COST,
+        // 크레딧 개편 I Phase — 디노미 차감 시 pt 단위(2,440), 구 경로면 정수 크레딧(4)
+        creditsCharged: this.chargePoints ? ANALYSIS_POINT_COST : ANALYSIS_CREDIT_COST,
       })
     } catch (err) {
       this.logger.error(`분석 리포트 저장 실패 (결과는 반환): ${String(err)}`)

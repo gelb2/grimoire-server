@@ -584,6 +584,49 @@ ACCEPTED (사용자 5/15 verbatim 정합 "B + A 모두 진행" — 5/10 verbatim
 
 ---
 
+## ADR-012: 크레딧 디노미네이션 + 포인트 출처 분리 회계 + 채팅 4구간 차감 (크레딧 개편 I Phase, 2026-05-17)
+
+### 상태
+ACCEPTED — 사용자 결정 게이트 6건 통과 (5/17, S Phase Draft §16-1 권장값 1-C/2-C/5필드/4-C/5/6-B 일괄 채택).
+
+### 컨텍스트
+- 정수 크레딧(`Author.credits Int`)은 채팅 가변 비용을 표현 불가 — 짧은 턴 바가지·긴 턴 적자(§0 위반).
+- 단일 Int 로는 포인트 출처 4종(무료적립/구독풀/응원선물/충전)을 분리 회계할 수 없음 — CAC/COGS 미분리.
+- 정본: `research/CREDIT_PRICING_OVERHAUL_PLAN.md` §8 (v6 골격·수치) + `.claude/state/sprint-credit-overhaul-s-phase-draft.md`.
+
+### 결정 (게이트 6건)
+1. **디노미네이션 1:1,000 단일 통화** — 1 크레딧 = 1,000pt. 기존 잔액 ×1,000 자동 환산.
+2. **출처 4종 회계 = 1-C 하이브리드** — `Author` 4 필드(`pointsFree`/`pointsSubscription`/`pointsGift`/`pointsCharged`) 잔액 캐시 + `CreditLedger` 입출금 원장. 적립/소진은 $transaction(원장 insert + 캐시 동기).
+3. **`credits` 폐기 = 2-C** — `[DEPRECATED]` 표기, 마이그레이션에서 즉시 DROP 안 함(1 sprint 유예 후 별도 sprint 제거 — Cursor 가격개편 반면교사).
+4. **구독 = `MembershipPlan` 신설 + `CreditLedger` 통합 (4-C)** — 현행 `Subscription`(독자→작가 팔로우)과 별개 도메인. 월 풀 적립/만료를 `source='subscription'` ledger 의 `expiresAt` 으로 관리 → **이월이 코드 버그로도 불가능**.
+5. **채팅 사후 차감 4구간 + `deficit` 외상** — 토큰은 API 응답 후 확정 → 사후 차감. 잔액 부족 시 `Author.deficitPoints` 누적, 충전 시 우선 상계. 경계값·차감 N 은 `SystemSetting` 동적(운영 1~2주 실측 후 재확정). 외상 상한 -10,000pt.
+6. **재산정 sensor + 핸드오프 명문화 (6-B)** — `sensor-credit-overhaul-recalc.sh` + researcher/cost-accountant 핸드오프.
+
+### 대안 (거부)
+- 이중 통화(옵션 B) — 지갑 2개 UX 복잡 → 거부.
+- 출처 4 필드만(1-A) — 회계 입출금 이력 불가 → 거부.
+- 구독 풀 이월 차단을 cron 로직에 의존(4-A/4-B) — cron 누락 시 §0 0.14× 붕괴 → 거부(4-C 가 스키마로 강제).
+
+### §0 정합
+- 차감 N(채팅 4구간 190/810/3,390/5,520pt, 분석 2,440pt, 테마 590pt)은 전부 cost-accountant v3 스트레스 원가 `ceil(스트레스원가×3 ÷ ₩0.09856)` 산출값 — server Generator 재산출 0건.
+- cost-accountant `ai-cost-table.md` 개정 완료(`786b0f3`) — §0 전 항목 ≥3× PASS(경계선 운영, 쿠션 거의 0).
+- §8-8 CRITICAL 5건 전건 준수: 비스트레스 차감 0 / 풀 이월 차단(`expiresAt`) / 토큰 실측 필드 선행(`ChatMessage` 5필드) / 채팅 4구간(`xlong` 분리) / 재산정 sensor.
+
+### 결과
+- 채팅 가변 비용을 4구간 정액으로 표현 + 출처별 CAC/COGS 분리 + 풀 이월 구조적 차단.
+- 신규 모델 2건(`CreditLedger`/`MembershipPlan`) FK `authorId` Restrict(회계·구독 이력 영구 보존, ADR-007 정합).
+- jest 신규 162 it (805 → 967).
+
+### 잔존 영역
+- 채팅 토큰 P50~P99 실측 — I Phase 배포 후 운영 1~2주 → 구간 경계·N 재확정 (현 경계값은 §8-4 가정).
+- `credits` 컬럼 후속 sprint DROP (1 sprint 유예).
+- Polar 구독 결제 연동 — 별도 sprint PAY-P1-4 (`MembershipPlan.polarSubscriptionId` 필드만 본 sprint).
+- dev migration apply — `크레딧개편 dev migration 진행` 키워드 게이트 (§7 단계6, 본 sprint 범위 밖).
+- prod migration — `크레딧개편 prod migration 진행` 키워드 게이트 (§7 단계9).
+- 잔액 캐시(`Author` 4필드) ↔ 원장(`CreditLedger`) 정합 cron — PAY-P0-2 `ReconciliationCheckpoint` 패턴 (I Phase 후속).
+
+---
+
 ## 참조
 
 - 트랜잭션: `src/application/payment/payment.usecase.ts`
