@@ -31,41 +31,61 @@ export const DAILY_FREE_LIMITS: Record<string, number> = {
 export const ANALYSIS_CREDIT_COST = 4
 
 /**
- * 크레딧 상품 목록 — PLANNING_GRIMOIRE.md §8 기준
+ * 크레딧 충전 패키지 목록 — 크레딧 개편 §8-5 / `docs/ai-cost-table.md` §2 정본.
  *
- * `price`: 원화(KRW) 기준 — 기획서 정본
- * `priceUsd`: Polar 결제용 USD 센트 — Polar Product에 설정된 실제 결제 금액
- * 실제 결제 시 `POLAR_PRODUCT_*` 환경변수에 해당하는 Polar Product로 라우팅.
+ * CC-2a (2026-05-20) — 디노미네이션 개편: 구 3종(credit-5/20/50, `credits` Int=패키지 수량)
+ * → 신 4종(입문/기본/인기/베스트, `points` Int=총 충전 포인트 pt).
  *
- * F1 인상 (2026-04-19): 기본 패키지 ₩1,000→₩2,000
- *   배경: Polar 고정수수료 $0.30(₩442)가 구 ₩1,000의 44%를 잠식 → 안전배수 1.84× CRITICAL.
- *   대응: ₩2,000으로 인상, 개당 ₩400 확보 → 안전배수 3.49× PASS.
- *   USD 매핑: 기존 Polar 패턴 "₩X,000 = $X.99" 유지 → $0.99 → $1.99 (199센트).
- *   Polar Dashboard에서 POLAR_PRODUCT_BASIC 상품 금액 $0.99 → $1.99 변경 완료 (2026-04-19).
+ * 필드:
+ * - `points`: 총 충전 포인트 (기본 + 보너스, pt 단위). `Payment.credits` 컬럼에 그대로 저장
+ *   (MEDIUM-4 — `Payment.credits` Int 의미를 "패키지 수량"→"pt"로 재해석. 컬럼 물리 rename 은
+ *   마이그레이션 동반 → CC-2a 범위 외, 계획 §5 C5d). `completePaymentWithPoints`에 넘기는 값.
+ * - `bonusRate`: 보너스 비율 (입문·기본 0 / 인기 0.10 / 베스트 0.15 — §8-5 안전 권고 상한).
+ * - `price`: 충전액 (원화 KRW) — ai-cost-table §2 정본.
+ * - `priceUsd`: Polar 결제용 USD 센트 — Polar Product 실 결제 금액. 기존 Polar 패턴
+ *   "₩X,000 = $X.99" 유지 (₩3,000→$2.99 / ₩5,000→$4.99 / ₩10,000→$9.99 / ₩30,000→$29.99).
+ * - `providerProductIdEnv`: 해당 Polar Product id 환경변수. 입문은 신규 `POLAR_PRODUCT_STARTER`
+ *   (Polar Dashboard 상품 등록은 infrastructure/사용자 영역 — 진단 §7-2).
+ *
+ * §0 원가 검증: 4종 전부 cost-accountant 승인 `786b0f3`으로 §0 PASS 판정 완료
+ *   (입문 실효 순단가 ₩0.09856 = §0 최악 기준 ~ 베스트 ₩0.09976, ai-cost-table §2/§7-4).
+ *   CC-2a 는 신규 AI 기능 추가 0건 — 기존 충전 경로의 디노미 환산이므로 재마진검증 불요.
  */
 export const CREDIT_PRODUCTS = [
   {
-    id: 'credit-5',
-    name: '5 크레딧',
-    credits: 5,
-    price: 2000,
-    priceUsd: 199,
+    id: 'credit-starter',
+    name: '입문 패키지',
+    points: 25000,
+    bonusRate: 0,
+    price: 3000,
+    priceUsd: 299,
+    providerProductIdEnv: 'POLAR_PRODUCT_STARTER',
+  },
+  {
+    id: 'credit-basic',
+    name: '기본 패키지',
+    points: 41667,
+    bonusRate: 0,
+    price: 5000,
+    priceUsd: 499,
     providerProductIdEnv: 'POLAR_PRODUCT_BASIC',
   },
   {
-    id: 'credit-20',
-    name: '20 크레딧',
-    credits: 20,
-    price: 3000,
-    priceUsd: 299,
+    id: 'credit-popular',
+    name: '인기 패키지',
+    points: 91667,
+    bonusRate: 0.1,
+    price: 10000,
+    priceUsd: 999,
     providerProductIdEnv: 'POLAR_PRODUCT_POPULAR',
   },
   {
-    id: 'credit-50',
-    name: '50 크레딧',
-    credits: 50,
-    price: 5000,
-    priceUsd: 499,
+    id: 'credit-best',
+    name: '베스트 패키지',
+    points: 287500,
+    bonusRate: 0.15,
+    price: 30000,
+    priceUsd: 2999,
     providerProductIdEnv: 'POLAR_PRODUCT_BEST',
   },
 ] as const

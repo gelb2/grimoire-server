@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import { PaymentRepositoryPort, PaymentRecord } from '@domain/port/outbound/payment-repository.port'
+import { computeChargeLedgerEntries } from '@domain/policy/credit-consumption-policy'
 
 @Injectable()
 export class PrismaPaymentRepository implements PaymentRepositoryPort {
@@ -22,6 +23,11 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
     return this.prisma.payment.findMany({ where: { authorId }, orderBy: { createdAt: 'desc' } }) as unknown as PaymentRecord[]
   }
 
+  /**
+   * @deprecated CC-2a (2026-05-20) — 구 `Author.credits` Int + `CreditLog` 경로.
+   * 충전 success 는 `completePaymentWithPoints`(신 포인트 원장)를 사용한다.
+   * CC-2b 완결 후 일괄 제거 예정 — 현재 호출처 0건 (계획 §3 C3c).
+   */
   async completePaymentAtomically(paymentId: string, authorId: string, credits: number, productId: string): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       await tx.payment.update({
@@ -35,6 +41,114 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
       await tx.creditLog.create({
         data: { authorId, amount: credits, reason: `purchase_${productId}_${paymentId}` },
       })
+    })
+  }
+
+  /**
+   * 결제 완료 + 충전 포인트 적립 원자 처리 (CC-2a 신설 — 案 1 트랜잭션 통합).
+   *
+   * 진단 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §1-A(T3) + §6-2(settleDeficit 완결).
+   * port 시그니처 정본: `payment-repository.port.ts` `completePaymentWithPoints`.
+   *
+   * CLAUDE.md §9 결제 원자성 — 아래 전부를 단일 `$transaction`으로 묶는다
+   * ("돈은 냈는데 포인트 없음"은 §0·§9상 절대 불가):
+   *   ① authors row FOR UPDATE 잠금 — 동시 차감/적립 직렬화 (`prisma-credit-ledger.repository` 패턴)
+   *   ② Payment status='completed' + completedAt
+   *   ③ deficit 우선 상계 (settledDeficit > 0) — `CreditLedger` type='deficit_settle' row
+   *      + `Author.deficitPoints` = remainingDeficit (§8-4 — 충전 즉시 최우선 외상 상계)
+   *   ④ 남은 충전 적립 (remainingCharge > 0) — `CreditLedger` source='charged' type='earn' row
+   *      + `Author.pointsCharged` = newChargedCache
+   *
+   * 금액 계산은 도메인 순수 함수 `computeChargeLedgerEntries`에 위임 (案 1 로직 중복 0건).
+   * 구 `CreditLog` 박제 0건 — CC-1이 적립을 `CreditLedger`로 완전 이행 (계획 S0 C1b→C3d).
+   *
+   * balanceAfter 회계: earn row 는 적립 후 4 출처 총 잔액, deficit_settle row 는 잔액 변동
+   * 없으므로(외상 감소만) 현 charged 캐시 — `prisma-credit-ledger.repository`의 회계와 동일.
+   */
+  async completePaymentWithPoints(
+    paymentId: string,
+    authorId: string,
+    totalPoints: number,
+    productId: string,
+    relatedId?: string,
+  ): Promise<{ settledDeficit: number; chargedPoints: number }> {
+    if (!Number.isInteger(totalPoints) || totalPoints <= 0) {
+      throw new Error(`충전 포인트는 양의 정수여야 합니다: ${totalPoints}`)
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // ① authors row FOR UPDATE — 같은 작가 동시 차감/적립 직렬화
+      const [locked] = await tx.$queryRawUnsafe<
+        {
+          points_free: number
+          points_subscription: number
+          points_gift: number
+          points_charged: number
+          deficit_points: number
+        }[]
+      >(
+        'SELECT points_free, points_subscription, points_gift, points_charged, deficit_points FROM authors WHERE id = $1 FOR UPDATE',
+        authorId,
+      )
+      if (!locked) throw new Error('작가를 찾을 수 없습니다')
+
+      // ② Payment 완료 처리
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: { status: 'completed', completedAt: new Date() },
+      })
+
+      // 충전 적립 ledger 계획 — deficit 우선 상계 + 남은 충전액 (도메인 순수 함수)
+      const currentDeficit = Number(locked.deficit_points)
+      const currentCharged = Number(locked.points_charged)
+      const { settledDeficit, remainingCharge, remainingDeficit, newChargedCache } =
+        computeChargeLedgerEntries(totalPoints, currentDeficit, currentCharged)
+
+      // ③ deficit 우선 상계 — 외상이 있을 때만
+      if (settledDeficit > 0) {
+        await tx.author.update({
+          where: { id: authorId },
+          data: { deficitPoints: remainingDeficit },
+        })
+        await tx.creditLedger.create({
+          data: {
+            authorId,
+            source: 'charged',
+            type: 'deficit_settle',
+            amount: -settledDeficit,
+            // deficit_settle 은 잔액 변동 없음 (외상 감소만) — 현 charged 캐시
+            balanceAfter: currentCharged,
+            reason: 'deficit_settle_on_charge',
+            relatedId: relatedId ?? paymentId,
+          },
+        })
+      }
+
+      // ④ 남은 충전액 적립 — 외상이 충전액 전부를 잠식한 극단 케이스면 0 → earn 생략
+      if (remainingCharge > 0) {
+        const newTotal =
+          Number(locked.points_free) +
+          Number(locked.points_subscription) +
+          Number(locked.points_gift) +
+          newChargedCache
+        await tx.author.update({
+          where: { id: authorId },
+          data: { pointsCharged: newChargedCache },
+        })
+        await tx.creditLedger.create({
+          data: {
+            authorId,
+            source: 'charged',
+            type: 'earn',
+            amount: remainingCharge,
+            balanceAfter: newTotal,
+            reason: `purchase_${productId}`,
+            relatedId: relatedId ?? paymentId,
+          },
+        })
+      }
+
+      return { settledDeficit, chargedPoints: remainingCharge }
     })
   }
 

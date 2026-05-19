@@ -8,6 +8,12 @@
 
 ### 외부 연동
 - [ ] Polar KYC + 한국 payout 승인 (사용자 액션)
+- [ ] Polar Dashboard 에 입문 패키지(`POLAR_PRODUCT_STARTER` $2.99) 상품 등록 — CC-2a 디노미 4종 신설분 (사용자/infra 액션). 등록 전까지 입문 패키지 결제는 `resolvePolarProductId` null → 매핑 실패
+
+### 크레딧 개편 후속 (CC-2a 완료 — CHANGELOG [0.37.0] 참조)
+- [ ] **CC-2b** — 선물(T4) / 환불(T7) 적립을 신 `CreditLedger` 원장으로 이행. CC-2a 案 1 패턴(도메인 헬퍼 + Repository 단일 `$transaction`) 재사용. 환불은 이중 외상(`RefundLog.deficitCredits` ↔ `Author.deficitPoints`) 통합. 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §1-B·§1-C·§8
+- [ ] **CC-2b 후** — `completePaymentAtomically` 구 메서드 제거 (`@deprecated` 상태, 호출처 0건). `Payment.credits` 컬럼 물리 rename(`credits`→`points`) — 마이그레이션 동반 (MEDIUM-4)
+- [ ] CC-3(이월 금지 + 원장 단일화) / CC-4(V Phase 마이그레이션 적용) / CC-5(PAY-P1-4 Polar 구독) — `reports/CREDIT_CORE_DIAGNOSIS.md` §8 sprint 분할표
 
 ### Claude Code harness 강화 (2026-04-19 도입 — 루트 `.claude/` 작업, 실제 실수 재발 방지용)
 

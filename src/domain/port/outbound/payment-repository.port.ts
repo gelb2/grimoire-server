@@ -17,10 +17,48 @@ export interface PaymentRepositoryPort {
   findByAuthorId(authorId: string): Promise<PaymentRecord[]>
 
   /**
+   * @deprecated CC-2a (2026-05-20) — 충전 적립이 신 포인트 원장(`CreditLedger`)으로 이행됨.
+   * 충전 success 경로는 `completePaymentWithPoints`를 사용한다.
+   * 본 메서드는 구 `Author.credits` Int + `CreditLog` 박제 경로 — CC-2b(선물·환불) 완결 후 회귀
+   * 안전이 확보되면 일괄 제거. 그때까지 호출처 0건 상태로 잔존(계획 §3 C3c / §9 rollback).
+   *
    * 결제 완료 원자 처리 — payment 상태 + 크레딧 증가 + 로그 기록을 단일 트랜잭션으로 실행
    * 하나라도 실패하면 전부 롤백 (돈 냈는데 크레딧 안 들어오는 사고 방지)
    */
   completePaymentAtomically(paymentId: string, authorId: string, credits: number, productId: string): Promise<void>
+
+  /**
+   * 결제 완료 + 충전 포인트 적립 원자 처리 (CC-2a 신설 — 案 1 트랜잭션 통합).
+   *
+   * 진단 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §1-A(T3 충전) + §6-2(settleDeficit 완결).
+   * 계획 정본: `.claude/state/sprint-cc2a-charge-wiring-plan-draft.md` §2-2 案 1 / §3.
+   *
+   * CLAUDE.md §9 결제 원자성 절대 규칙 — 아래 전부를 단일 `$transaction`으로 묶는다.
+   * 하나라도 실패하면 전부 롤백 ("돈은 냈는데 포인트 없음"은 절대 불가):
+   *   1. Payment status='completed' + completedAt
+   *   2. deficit(외상) 우선 상계 — settledDeficit > 0 시 `CreditLedger` type='deficit_settle' row
+   *      + `Author.deficitPoints` 차감 (충전 즉시 최우선 — §8-4)
+   *   3. 남은 충전액 적립 — remainingCharge > 0 시 `CreditLedger` source='charged' type='earn' row
+   *      + `Author.pointsCharged` 캐시 가산
+   *
+   * 금액 계산은 도메인 순수 함수 `computeChargeLedgerEntries`에 위임 — `settleDeficit`/`earn`
+   * 어댑터와 동일 회계(상계분은 캐시 적립 제외). 구 `CreditLog` 박제는 하지 않는다
+   * (CC-1이 적립을 `CreditLedger`로 완전 이행 — 계획 S0 C1b→C3d 분기).
+   *
+   * @param paymentId 완료 처리할 Payment id
+   * @param authorId 적립 대상 Author id
+   * @param totalPoints 충전 패키지 총 포인트 (기본 + 보너스 — §8-5, pt 단위. 양수)
+   * @param productId 상품 id (감사 reason 박제용)
+   * @param relatedId Payment id 약결합 (`CreditLedger.relatedId` — 보통 paymentId 와 동일)
+   * @returns settledDeficit(상계된 외상 pt), chargedPoints(실제 적립된 충전 pt)
+   */
+  completePaymentWithPoints(
+    paymentId: string,
+    authorId: string,
+    totalPoints: number,
+    productId: string,
+    relatedId?: string,
+  ): Promise<{ settledDeficit: number; chargedPoints: number }>
 
   /** 결제 실패/취소 상태 업데이트 */
   updateStatus(paymentId: string, status: string): Promise<void>

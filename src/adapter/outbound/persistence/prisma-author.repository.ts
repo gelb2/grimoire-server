@@ -227,6 +227,11 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
       default_theme_id: string | null
       created_at: Date
       deleted_at: Date | null
+      points_free: number | null
+      points_subscription: number | null
+      points_gift: number | null
+      points_charged: number | null
+      deficit_points: number | null
     }>>`
       SELECT * FROM "authors" WHERE "id" = ${id}::uuid AND "deleted_at" IS NOT NULL
     `
@@ -246,6 +251,12 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
       defaultThemeId: row.default_theme_id ?? null,
       createdAt: row.created_at,
       deletedAt: row.deleted_at,
+      // 크레딧 개편 I Phase — 신 4 출처 캐시 + deficit (raw query SELECT * snake_case)
+      pointsFree: row.points_free ?? 0,
+      pointsSubscription: row.points_subscription ?? 0,
+      pointsGift: row.points_gift ?? 0,
+      pointsCharged: row.points_charged ?? 0,
+      deficitPoints: row.deficit_points ?? 0,
     }
   }
 
@@ -268,6 +279,11 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
       default_theme_id: string | null
       created_at: Date
       deleted_at: Date | null
+      points_free: number | null
+      points_subscription: number | null
+      points_gift: number | null
+      points_charged: number | null
+      deficit_points: number | null
     }>>`
       SELECT * FROM "authors"
       WHERE "deleted_at" IS NOT NULL AND "deleted_at" < ${cutoff}
@@ -286,11 +302,37 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
       defaultThemeId: row.default_theme_id ?? null,
       createdAt: row.created_at,
       deletedAt: row.deleted_at,
+      // 크레딧 개편 I Phase — 신 4 출처 캐시 + deficit (raw query SELECT * snake_case)
+      pointsFree: row.points_free ?? 0,
+      pointsSubscription: row.points_subscription ?? 0,
+      pointsGift: row.points_gift ?? 0,
+      pointsCharged: row.points_charged ?? 0,
+      deficitPoints: row.deficit_points ?? 0,
     }))
   }
 }
 
-function toDomain(row: { id: string; slug: string; name: string; email: string; passwordHash?: string | null; bio?: string | null; role: string; credits: number; plan: string; planExpireAt?: Date | null; defaultThemeId?: string | null; createdAt: Date; deletedAt?: Date | null }): Author {
+function toDomain(row: {
+  id: string
+  slug: string
+  name: string
+  email: string
+  passwordHash?: string | null
+  bio?: string | null
+  role: string
+  credits: number
+  plan: string
+  planExpireAt?: Date | null
+  defaultThemeId?: string | null
+  createdAt: Date
+  deletedAt?: Date | null
+  // 크레딧 개편 I Phase — 4 출처 캐시 + deficit (schema @default(0))
+  pointsFree?: number
+  pointsSubscription?: number
+  pointsGift?: number
+  pointsCharged?: number
+  deficitPoints?: number
+}): Author {
   return {
     id: row.id,
     slug: row.slug,
@@ -305,5 +347,11 @@ function toDomain(row: { id: string; slug: string; name: string; email: string; 
     defaultThemeId: row.defaultThemeId ?? null,
     createdAt: row.createdAt,
     deletedAt: row.deletedAt ?? null,
+    // 크레딧 개편 I Phase — 신 4 출처 캐시 + deficit. select 미포함 시 0 fallback.
+    pointsFree: row.pointsFree ?? 0,
+    pointsSubscription: row.pointsSubscription ?? 0,
+    pointsGift: row.pointsGift ?? 0,
+    pointsCharged: row.pointsCharged ?? 0,
+    deficitPoints: row.deficitPoints ?? 0,
   }
 }

@@ -192,7 +192,7 @@
 | authorId | author_id | String | - | 결제 작가 ID |
 | productId | product_id | String | - | 상품 ID |
 | amount | amount | Int | - | 결제 금액 (원) |
-| credits | credits | Int | - | 부여 크레딧 수 |
+| credits | credits | Int | - | **[CC-2a 의미 재해석]** 충전 총 포인트(pt) — 구 "패키지 수량" → 디노미 후 "충전 pt"(`CREDIT_PRODUCTS.points`). 컬럼명 물리 rename(`credits`→`points`)은 마이그레이션 동반 → CC-2b/CC-4 위임 |
 | externalTransactionId | external_transaction_id | String? | unique | 외부 결제 거래 번호 |
 | status | status | String | default("pending") | 결제 상태 (pending/completed/failed) |
 | createdAt | created_at | DateTime | default(now()) | 결제 요청일 |

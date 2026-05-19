@@ -1,6 +1,7 @@
 import {
   planConsumption,
   settleDeficitOnCharge,
+  computeChargeLedgerEntries,
   isChatBlockedByDeficit,
   totalBalance,
   SourceBalances,
@@ -130,6 +131,54 @@ describe('credit-consumption-policy — 소진 우선순위 + deficit', () => {
   describe('totalBalance', () => {
     it('4 출처 잔액을 합산한다', () => {
       expect(totalBalance(balances(1000, 2000, 3000, 4000))).toBe(10000)
+    })
+  })
+
+  // CC-2a — 案 1 트랜잭션 통합용 충전 적립 ledger 계획 헬퍼
+  describe('computeChargeLedgerEntries — 충전 적립 ledger 박제 계획 (CC-2a)', () => {
+    it('deficit < 충전액 — 외상 전액 상계 후 남은 만큼 charged 캐시 가산', () => {
+      // 충전 25,000 / 외상 4,000 / 기존 charged 1,000
+      const r = computeChargeLedgerEntries(25000, 4000, 1000)
+      expect(r.settledDeficit).toBe(4000)
+      expect(r.remainingCharge).toBe(21000)
+      expect(r.remainingDeficit).toBe(0)
+      // charged 캐시 = 기존 1,000 + 남은 충전 21,000 (상계분 4,000 제외)
+      expect(r.newChargedCache).toBe(22000)
+    })
+
+    it('deficit ≥ 충전액 — 충전액 전부 외상 상계, charged 적립 0', () => {
+      // 충전 5,000 / 외상 10,000 (상한 도달 작가) / 기존 charged 0
+      const r = computeChargeLedgerEntries(5000, 10000, 0)
+      expect(r.settledDeficit).toBe(5000)
+      expect(r.remainingCharge).toBe(0)
+      expect(r.remainingDeficit).toBe(5000)
+      // 충전액 전부 외상 갚는 데 쓰임 → charged 캐시 불변
+      expect(r.newChargedCache).toBe(0)
+    })
+
+    it('deficit 0 — 충전액 전액이 charged 캐시로 적립', () => {
+      // 충전 41,667 / 외상 0 / 기존 charged 8,333
+      const r = computeChargeLedgerEntries(41667, 0, 8333)
+      expect(r.settledDeficit).toBe(0)
+      expect(r.remainingCharge).toBe(41667)
+      expect(r.remainingDeficit).toBe(0)
+      expect(r.newChargedCache).toBe(50000)
+    })
+
+    it('deficit = 충전액 — 경계: 외상 전액 상계 + charged 적립 0 + 외상 0', () => {
+      const r = computeChargeLedgerEntries(10000, 10000, 2000)
+      expect(r.settledDeficit).toBe(10000)
+      expect(r.remainingCharge).toBe(0)
+      expect(r.remainingDeficit).toBe(0)
+      expect(r.newChargedCache).toBe(2000)
+    })
+
+    it('충전 캐시가 음수면 throw', () => {
+      expect(() => computeChargeLedgerEntries(25000, 0, -1)).toThrow()
+    })
+
+    it('충전액이 음수면 throw (settleDeficitOnCharge 위임 검증)', () => {
+      expect(() => computeChargeLedgerEntries(-1, 0, 0)).toThrow()
     })
   })
 })
