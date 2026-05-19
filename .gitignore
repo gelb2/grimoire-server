@@ -5,3 +5,6 @@ coverage/
 *.js.map
 *.d.ts
 !jest.config.ts
+# DB 백업 덤프 — 작가 본문 포함 가능, 커밋 절대 금지
+backup_*.sql
+*.dump
