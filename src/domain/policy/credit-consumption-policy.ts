@@ -123,6 +123,59 @@ export function settleDeficitOnCharge(
 }
 
 /**
+ * 충전 적립 1건의 ledger 박제 계획 (CC-2a — 案 1 트랜잭션 통합용).
+ *
+ * 진단 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §1-A / §6-2 (settleDeficit 완결).
+ *
+ * `settleDeficitOnCharge`를 재사용해 "충전 → deficit 우선 상계 → 남은 충전액 적립"의
+ * 두 ledger row(deficit_settle / charged earn) 와 Author 캐시 델타를 한 번에 계산한다.
+ *
+ * 본 함수는 순수 함수 — DB·tx 미접촉. `PrismaPaymentRepository.completePaymentWithPoints`
+ * 와 `PrismaCreditLedgerRepository`(향후 재사용)가 동일 헬퍼를 호출해 로직 중복 0건
+ * (案 1 단점 해소 — 계획 §2-2 권고 사유 4).
+ *
+ * 회계 정합: `charged` 출처 캐시는 "남은 충전 적립분(remainingCharge)"만큼만 가산한다.
+ * deficit 상계분(settledDeficit)은 외상을 갚는 것이므로 캐시 잔액으로 적립되지 않는다
+ * — `settleDeficit` 어댑터(`prisma-credit-ledger.repository.ts:222-262`)의 회계와 동일.
+ *
+ * @param chargeAmount 충전 패키지 총 포인트 (기본 + 보너스 — §8-5, 양수)
+ * @param currentDeficit 현재 외상 잔액 (Author.deficitPoints, 0 이상)
+ * @param currentChargedCache 현재 충전 출처 캐시 (Author.pointsCharged, 0 이상)
+ * @returns 충전 적립 ledger 박제 계획
+ * @throws Error 입력이 음수 또는 비정수
+ */
+export function computeChargeLedgerEntries(
+  chargeAmount: number,
+  currentDeficit: number,
+  currentChargedCache: number,
+): {
+  /** 상계된 외상 (deficit_settle ledger amount 의 절대값) */
+  settledDeficit: number
+  /** charged 출처에 실제 적립되는 충전 잔액 (earn ledger amount) */
+  remainingCharge: number
+  /** 상계 후 외상 잔액 — Author.deficitPoints 갱신값 */
+  remainingDeficit: number
+  /** 적립 후 충전 출처 캐시 — Author.pointsCharged 갱신값 */
+  newChargedCache: number
+} {
+  if (!Number.isInteger(currentChargedCache) || currentChargedCache < 0) {
+    throw new Error(`충전 캐시는 0 이상 정수여야 합니다: ${currentChargedCache}`)
+  }
+  // settleDeficitOnCharge 가 chargeAmount/currentDeficit 음수·비정수 검증을 수행.
+  const { settledDeficit, remainingCharge, remainingDeficit } = settleDeficitOnCharge(
+    chargeAmount,
+    currentDeficit,
+  )
+  return {
+    settledDeficit,
+    remainingCharge,
+    remainingDeficit,
+    // charged 캐시는 외상 상계분 제외 — 남은 충전액만 가산
+    newChargedCache: currentChargedCache + remainingCharge,
+  }
+}
+
+/**
  * 신규 채팅 차단 여부 판정 (게이트 5(c)).
  *
  * 사후 차감 구조이므로 응답 자체는 생성된다 — 하지만 외상이 상한에 도달했으면

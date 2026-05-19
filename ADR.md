@@ -627,6 +627,51 @@ ACCEPTED — 사용자 결정 게이트 6건 통과 (5/17, S Phase Draft §16-1 
 
 ---
 
+## ADR-013: 충전 결제 적립 단일 트랜잭션 통합 — `completePaymentWithPoints` (크레딧 개편 CC-2a, 2026-05-20)
+
+### 상태
+승인 — 구현 완료 (CC-2a sprint)
+
+### 맥락
+ADR-012(I Phase)는 충전 적립 경로(`GrantPointsUseCase.grantCharge`)를 만들었으나 호출처가 0건이었다 (CRITICAL-2 충전분). 실제 충전 경로 `payment.usecase` 는 구 `completePaymentAtomically`(`Author.credits` Int + `CreditLog`)만 호출 — `settleDeficit`(외상 상계)가 실 충전 경로에 한 번도 연결되지 않았다.
+
+문제: 충전 적립을 신 경로로 옮기려면 트랜잭션 경계가 충돌한다.
+- `completePaymentAtomically` 는 `PaymentRepository` 가 자체 `$transaction` 으로 (Payment 상태 + 크레딧 + 로그) 3건 원자 처리 (CLAUDE.md §9 결제 원자성).
+- `grantCharge` 는 내부 `settleDeficit`($tx#1) + `earn`($tx#2) — **2개 별도 트랜잭션**.
+- 두 경로를 합치면 경계가 어긋난다. "돈은 냈는데 포인트 없음"은 §0·§9상 절대 불가.
+
+### 결정
+**案 1 — `PaymentRepositoryPort` 에 단일 `$transaction` 메서드 `completePaymentWithPoints` 신설.**
+
+`completePaymentWithPoints(paymentId, authorId, totalPoints, productId, relatedId?)` 가 단일 `$transaction` 으로:
+1. authors row FOR UPDATE 잠금 (동시 차감/적립 직렬화 — `prisma-credit-ledger.repository` 패턴)
+2. Payment status='completed'
+3. deficit 우선 상계 — `CreditLedger` type='deficit_settle' + `Author.deficitPoints` 차감
+4. 남은 충전액 적립 — `CreditLedger` source='charged' type='earn' + `Author.pointsCharged` 가산
+
+금액 계산은 도메인 순수 함수 `computeChargeLedgerEntries`(`settleDeficitOnCharge` 재사용)에 위임 — `PaymentRepository` 와 `CreditLedgerRepository` 가 동일 헬퍼를 호출해 로직 중복 0건.
+
+### 기각안 — 案 2 (`CreditLedgerPort` 에 외부 `tx` 핸들 오버로드)
+`earn`/`settleDeficit` 가 외부 Prisma `tx` 인자를 받는 오버로드 추가 → `payment.usecase` 가 결제 `$transaction` 안에서 `grantCharge` 호출.
+- **기각 사유**: 헥사고날 DIP 위반. `CreditLedgerPort`(domain port)가 Prisma `Prisma.TransactionClient` 를 시그니처에 노출 → application/domain 레이어가 ORM 구현에 결합. CLAUDE.md §5 헥사고날 규칙 정면 충돌.
+
+### 트레이드오프
+- 案 1 은 `PaymentRepository` 가 `CreditLedger`/`Author` 캐시까지 건드려 단일책임이 다소 넓어진다. 단 "결제 완료 = 포인트 적립"이 §9상 원자 1단위이므로 같은 트랜잭션 메서드에 두는 것이 도메인 정합. 案 2 의 DIP 위반 대가가 훨씬 크다.
+- 기존 패턴과 정합 — `completePaymentAtomically`(구)·`refundPaymentAtomically`(PAY-P1-1)가 이미 "결제 도메인 다건 원자 처리"를 `PaymentRepository` 단일 `$transaction` 으로 캡슐화. 案 1 은 그 패턴의 자연 확장.
+
+### 결과
+- **C-6 해소** — `settleDeficit` 가 실 충전 경로에 처음 연결. deficit 상한(10,000pt) 도달로 채팅 차단된 작가가 충전하면 외상이 상계돼 차단 해제. "충전해도 채팅 영구 차단" 결함 소멸.
+- 구 `completePaymentAtomically` 는 `@deprecated` — 호출처 0건. CC-2b(선물·환불) 회귀 안전 확보 후 일괄 제거.
+- 통합 spec `payment-charge-credit-integration.spec.ts` — 충전 webhook → `CreditLedger` charged earn 사슬 검증 + RED 재현 실증.
+- CC-2b(선물 T4 / 환불 T7)가 본 案 1 패턴(도메인 헬퍼 추출 + Repository 단일 `$transaction`)을 재사용 — CC-2a 가 "트랜잭션 패턴 확립" sprint 인 이유.
+
+### 잔존 영역
+- `Payment.credits` 컬럼 물리 rename(`credits`→`points`) — MEDIUM-4. 마이그레이션 동반 → CC-2b/CC-4 위임 (CC-2a 는 컬럼 의미 재해석만).
+- `completePaymentAtomically` 제거 — CC-2b 종료 후.
+- 선물(T4)·환불(T7) 적립 — CC-2b 범위.
+
+---
+
 ## 참조
 
 - 트랜잭션: `src/application/payment/payment.usecase.ts`
@@ -639,3 +684,4 @@ ACCEPTED — 사용자 결정 게이트 6건 통과 (5/17, S Phase Draft §16-1 
 - audit retention 정책: `prisma/migrations/20260510_pay_p2_5_audit_retention_policy/migration.sql` + `src/adapter/outbound/persistence/audit-mask-helper.ts` + `src/scheduler/audit-mask.scheduler.ts` + `.claude/shared-contracts.md §26 AuditRetentionPolicy`
 - Circuit Breaker 정책: `src/domain/model/circuit-breaker-state.ts` + `src/domain/port/outbound/circuit-breaker.port.ts` + `src/adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter.ts` + `.claude/shared-contracts.md §27 CircuitBreakerPolicy` + ADR-009
 - User Soft Delete 정책: `prisma/schema.prisma` Author.deletedAt + `prisma/migrations/20260515_user_soft_delete_policy/migration.sql` + `src/adapter/outbound/persistence/prisma-soft-delete.middleware.ts` + `src/adapter/outbound/persistence/default-user-anonymizer.adapter.ts` + `src/application/author/user-soft-delete.usecase.ts` + `src/application/author/user-hard-delete.job.ts` + `.claude/shared-contracts.md §29 UserSoftDeletePolicy` + ADR-011
+- 충전 결제 적립 트랜잭션 통합 (CC-2a): `src/domain/port/outbound/payment-repository.port.ts` `completePaymentWithPoints` + `src/adapter/outbound/persistence/prisma-payment.repository.ts` + `src/domain/policy/credit-consumption-policy.ts` `computeChargeLedgerEntries` + `src/application/payment/payment.usecase.ts` 충전 success 분기 + `src/application/payment/payment-charge-credit-integration.spec.ts` + `.claude/shared-contracts.md §30 CreditOverhaul` + ADR-013

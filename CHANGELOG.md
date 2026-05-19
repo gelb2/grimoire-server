@@ -1,5 +1,34 @@
 # Changelog — grimoire-server
 
+## [0.37.0] - 2026-05-20
+
+### Fix — 크레딧 개편 CC-2a: 충전 결제 적립 신 포인트 원장 연동 (CRITICAL-2 충전분 + C-6 해소)
+
+> 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §1-A·§6·§8 + `.claude/state/sprint-cc2a-charge-wiring-plan-draft.md`.
+> CC-1(비결제 적립)에 이어 충전 결제 적립(T3)을 신 `CreditLedger` 원장으로 이행. 충전 success
+> 경로가 구 `completePaymentAtomically`(`Author.credits` Int)만 호출해 `settleDeficit`(외상 상계)가
+> 실 충전 경로에 한 번도 연결되지 않던 결함(CRITICAL-2 충전분 + C-6)을 해소. 선물(T4)·환불(T7)은 CC-2b.
+
+#### Added — 충전 적립 단일 트랜잭션 통합 (案 1 — ADR-013)
+- `PaymentRepositoryPort.completePaymentWithPoints(paymentId, authorId, totalPoints, productId, relatedId?)` 신설 — 단일 `$transaction` 으로 Payment 완료 + deficit 우선 상계(`CreditLedger` type='deficit_settle' + `Author.deficitPoints`) + 남은 충전액 적립(`CreditLedger` source='charged' type='earn' + `Author.pointsCharged`). 헥사고날 DIP 보존 (案 2 `CreditLedgerPort` tx 오버로드는 ORM 결합이라 미채택).
+- `computeChargeLedgerEntries` 도메인 순수 함수 (`credit-consumption-policy.ts`) — `settleDeficitOnCharge` 재사용. `PaymentRepository` 가 충전 적립 ledger 계획(상계분/적립분/캐시 델타) 계산에 사용 — 案 1 로직 중복 0건.
+- 통합 spec `payment-charge-credit-integration.spec.ts` — 실 `PaymentUseCase` + `FakePaymentRepository`(도메인 헬퍼 실호출)로 충전 webhook → `CreditLedger` charged earn + deficit 상계 사슬 검증. C7b RED 재현 실증 (구 경로로 되돌리면 8건 FAIL).
+
+#### Changed — 충전 success 경로 재배선 + 디노미 4종
+- `payment.usecase` 충전 success 분기 — 구 `completePaymentAtomically` → `completePaymentWithPoints`. **C-6 해소**: `settleDeficit` 가 실 충전 경로에 처음 연결돼, deficit 상한(10,000pt) 도달로 채팅 차단된 작가가 충전하면 외상 상계 → `isChatBlocked=false`.
+- `CREDIT_PRODUCTS` 디노미 4종 개편 — 구 3종(credit-5/20/50, `credits` Int=패키지 수량) → 신 4종(입문 ₩3,000/25,000pt · 기본 ₩5,000/41,667pt · 인기 ₩10,000/91,667pt+10% · 베스트 ₩30,000/287,500pt+15%, `points` Int=총 pt + `bonusRate`). ai-cost-table §2 정본 1:1 정합.
+- `getProducts()` — `credits`/`pricePerCredit` → `points`/`bonusRate`/`pricePerPoint`. `GET /payments/products` 응답 3종→4종.
+- `Payment.credits` Int 의미 재해석 (MEDIUM-4) — "패키지 수량" → "충전 총 pt". 컬럼 물리 rename 은 마이그레이션 동반 → CC-2b/CC-4 위임.
+- `Author` 도메인 모델에 `pointsFree`/`pointsSubscription`/`pointsGift`/`pointsCharged`/`deficitPoints` 5필드 추가 (I Phase schema 추가분 도메인 인터페이스 반영).
+- 충전 success auditLog 박제 — `credits` 베이스 → `pointsCharged` 베이스 + `settledDeficit`/`chargedPoints` 메타.
+
+#### Deprecated
+- `PaymentRepository.completePaymentAtomically` (`Author.credits` Int + `CreditLog`) — 충전 success 미사용. CC-2b(선물·환불) 회귀 안전 확보 후 일괄 제거.
+
+#### Test
+- jest 1006 → 1012 PASS (+6 it 순증 — 통합 spec 9 신설 + `completePaymentWithPoints` 단위 5 + `getProducts`/§0 검증 재작성, payment.usecase.spec/polar.adapter.spec 디노미 정합 포함). 커버리지 60.37%.
+- cost-accountant 재검증 불요 — `786b0f3` 기존 승인 소비 (CC-2a 는 신규 AI 기능 0건, 디노미 환산).
+
 ## [0.36.0] - 2026-05-19
 
 ### Fix — 크레딧 개편 CC-1: 적립 비결제 경로 신 포인트 원장 연동 (CRITICAL-2 해소)
