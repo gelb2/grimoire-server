@@ -188,17 +188,25 @@ export class PaymentReconciliationJob {
 
   /**
    * S1 boost — PG=succeeded + DB=pending: webhook 누락 자동 보정.
-   * - completePaymentAtomically (트랜잭션: payment 상태 + 크레딧 + CreditLog)
+   *
+   * CC-2a (2026-05-20) — 충전 적립을 신 포인트 원장으로 이행. webhook 누락 보정도
+   * `payment.usecase` 충전 success 와 동일하게 `completePaymentWithPoints` 사용
+   * (단일 $transaction: Payment 완료 + deficit 우선 상계 + 충전 `CreditLedger` earn).
+   * 구 `completePaymentAtomically`(`Author.credits` Int)를 쓰면 보정된 충전이 신
+   * 원장에 안 박혀 CRITICAL-2 충전분이 reconciliation 경로로 새어나간다 (진단 §1-A).
    * - AuditLog operator='system_reconciliation' action='reconciliation_boost'
    */
   private async handleBoost(payment: PaymentRecord): Promise<void> {
     try {
-      await this.paymentRepo.completePaymentAtomically(
-        payment.id,
-        payment.authorId,
-        payment.credits,
-        payment.productId,
-      )
+      // payment.credits 는 MEDIUM-4 의미 재해석으로 충전 총 pt
+      const { settledDeficit, chargedPoints } =
+        await this.paymentRepo.completePaymentWithPoints(
+          payment.id,
+          payment.authorId,
+          payment.credits,
+          payment.productId,
+          payment.id,
+        )
       await this.auditLog.log(
         PaymentReconciliationJob.RECONCILIATION_OPERATOR,
         'reconciliation_boost',
@@ -207,12 +215,15 @@ export class PaymentReconciliationJob {
           reason: 'webhook_missed',
           polarStatus: 'succeeded',
           dbStatus: 'pending',
-          credits: payment.credits,
+          totalPoints: payment.credits,
+          chargedPoints,
+          settledDeficit,
           authorId: payment.authorId,
         },
       )
       this.logger.log(
-        `[boost] paymentId=${payment.id} credits=${payment.credits} authorId=${payment.authorId}`,
+        `[boost] paymentId=${payment.id} totalPoints=${payment.credits} ` +
+          `charged=${chargedPoints} settledDeficit=${settledDeficit} authorId=${payment.authorId}`,
       )
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
