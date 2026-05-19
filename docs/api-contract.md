@@ -798,8 +798,21 @@ Response 200:
 ### POST /api/admin/credits/grant
 
 ```
-Request: { "authorId": "uuid", "amount": 10, "reason": "프로모션" }
-Response 200: { "credits": 15, "log": CreditLog }
+Request: { "authorId": "uuid", "amount": 5000, "reason": "프로모션", "source?": "free"|"subscription"|"gift"|"charged" }
+Response 200: { "balance": CreditBalance }
+# 크레딧 개편 CC-1 (2026-05-19): 신 포인트 원장(CreditLedger) 적립.
+#   amount = 포인트(pt) 단위. source 미지정 시 'charged' 폴백.
+#   CreditBalance = { free, subscription, gift, charged, total, deficit, available } (§30)
+```
+
+### POST /api/admin/credits/deduct
+
+```
+Request: { "authorId": "uuid", "amount": 3000, "reason": "정정" }
+Response 200: { "balance": CreditBalance }
+Error 400: 가용 포인트 부족 (deficit 불가 모드 — 관리자 차감은 외상 금지)
+# 크레딧 개편 CC-1 (2026-05-19): 신 포인트 원장 차감 (소진 우선순위 적용).
+#   사전 잔액 검증 — available < amount 면 차감 거부.
 ```
 
 ### POST /api/admin/sanctions
