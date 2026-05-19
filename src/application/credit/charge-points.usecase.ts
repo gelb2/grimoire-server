@@ -18,6 +18,7 @@ import {
 } from '@domain/model/credit-system-setting'
 import { isChatBlockedByDeficit } from '@domain/policy/credit-consumption-policy'
 import { SpendResult } from '@domain/port/outbound/credit-ledger.port'
+import { CreditSource, CREDIT_CONSUMPTION_ORDER } from '@domain/model/credit-source'
 
 /**
  * 크레딧 개편 I Phase (2026-05-17) — 포인트 차감 UseCase.
@@ -127,9 +128,10 @@ export class ChargePointsUseCase {
    *
    * @param authorId 차감 대상
    * @param relatedId AnalysisReport id (있으면)
+   * @returns SpendResult — 환불 시 출처별 복원을 위해 spentBySource 를 호출자가 보유 (CC-1 §5-D)
    * @throws BadRequestException 잔액 부족
    */
-  async chargeAnalysis(authorId: string, relatedId?: string): Promise<void> {
+  async chargeAnalysis(authorId: string, relatedId?: string): Promise<SpendResult> {
     const balance = await this.ledger.getBalance(authorId)
     if (balance.available < ANALYSIS_POINT_COST) {
       throw new BadRequestException(
@@ -149,17 +151,48 @@ export class ChargePointsUseCase {
         `분석 차감 중 deficit 발생 (동시성 — authorId=${authorId}, deficit=${result.deficitIncurred})`,
       )
     }
+    return result
   }
 
-  /** 분석 실패 시 환불 — 차감 포인트를 충전 출처로 적립 (project_analysis_refund_gap 정합) */
-  async refundAnalysis(authorId: string, relatedId?: string): Promise<void> {
-    await this.ledger.earn({
-      authorId,
-      source: 'charged',
-      amount: ANALYSIS_POINT_COST,
-      reason: 'novel_analysis_refund',
-      relatedId,
-    })
+  /**
+   * 분석 실패 시 환불 — 차감 포인트를 출처별로 복원 (project_analysis_refund_gap 정합).
+   *
+   * 크레딧 개편 CC-1 §5-D — 구 구현은 전액 source='charged' 로 복원해
+   * 무료적립/구독풀 차감분이 충전으로 둔갑(CAC/COGS 회계 왜곡)했다.
+   * chargeAnalysis 가 반환한 spentBySource 를 받아 출처별로 정확히 복원한다.
+   *
+   * @param spentBySource chargeAnalysis 의 SpendResult.spentBySource.
+   *        미전달 시(구 호출 호환) 전액 charged 복원으로 폴백.
+   */
+  async refundAnalysis(
+    authorId: string,
+    relatedId?: string,
+    spentBySource?: Record<CreditSource, number>,
+  ): Promise<void> {
+    // spentBySource 미전달 → 구 동작 폴백 (전액 charged)
+    if (!spentBySource) {
+      await this.ledger.earn({
+        authorId,
+        source: 'charged',
+        amount: ANALYSIS_POINT_COST,
+        reason: 'novel_analysis_refund',
+        relatedId,
+      })
+      return
+    }
+    // 출처별 복원 — 차감된 출처에 같은 금액을 되돌린다 (0 인 출처는 skip)
+    for (const source of CREDIT_CONSUMPTION_ORDER) {
+      const amount = spentBySource[source] ?? 0
+      if (amount > 0) {
+        await this.ledger.earn({
+          authorId,
+          source,
+          amount,
+          reason: 'novel_analysis_refund',
+          relatedId,
+        })
+      }
+    }
   }
 
   /**
@@ -179,6 +212,23 @@ export class ChargePointsUseCase {
       authorId,
       amount: THEME_POINT_COST,
       reason: 'theme_generate',
+      relatedId,
+    })
+  }
+
+  /**
+   * 테마 생성 실패 시 환불 — 차감 포인트(590pt)를 충전 출처로 적립.
+   *
+   * 크레딧 개편 CC-1 (2026-05-19) — 구 GenerateThemeUseCase 의 'theme_generate_refund'
+   * (Author.credits +1) 환불 동작 보존. refundAnalysis 와 동일 패턴
+   * (project_analysis_refund_gap 정합 — 사전 차감 실패 시 출처 charged 복원).
+   */
+  async refundTheme(authorId: string, relatedId?: string): Promise<void> {
+    await this.ledger.earn({
+      authorId,
+      source: 'charged',
+      amount: THEME_POINT_COST,
+      reason: 'theme_generate_refund',
       relatedId,
     })
   }

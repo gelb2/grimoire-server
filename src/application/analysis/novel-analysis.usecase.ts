@@ -10,6 +10,7 @@ import {
   AnalysisReportSummary,
 } from '@domain/port/outbound/analysis-report-repository.port'
 import { CreditReason } from '@domain/model/credit'
+import { CreditSource } from '@domain/model/credit-source'
 import { ANALYSIS_CREDIT_COST } from '@domain/model/config'
 import { ANALYSIS_POINT_COST } from '@domain/model/chat-charge-tier'
 import { ChargePointsUseCase } from '@application/credit/charge-points.usecase'
@@ -120,9 +121,12 @@ export class NovelAnalysisUseCase {
 
     // 분석 차감 (PLANNING §14, ai-cost-table §3-2).
     // 크레딧 개편 I Phase — chargePoints 주입 시 디노미 차감(2,440pt), 미주입 시 구 정수 크레딧 차감.
+    // CC-1 §5-D — 차감 SpendResult.spentBySource 를 보유했다가 실패 환불 시 출처별 복원에 사용.
+    let spentBySource: Record<string, number> | undefined
     if (this.chargePoints) {
       // 디노미 차감 — charge-points.usecase 가 잔액 부족 시 BadRequest throw
-      await this.chargePoints.chargeAnalysis(authorId)
+      const spendResult = await this.chargePoints.chargeAnalysis(authorId)
+      spentBySource = spendResult.spentBySource
     } else {
       try {
         await this.creditRepo.adjustCredits(authorId, -ANALYSIS_CREDIT_COST, CreditReason.NOVEL_ANALYSIS)
@@ -138,10 +142,10 @@ export class NovelAnalysisUseCase {
       // self-reference 환각 방지를 위해 분석 대상 에피소드 자신은 RAG에서 자동 제외
       results = await this.runAnalysis(episode.workId, episode.rawMd, analysisTypes, episodeId, abortSignal)
     } catch (error) {
-      // 실패(AbortedError 포함) 시 전액 환불 (project_analysis_refund_gap 정합)
+      // 실패(AbortedError 포함) 시 환불 — CC-1 §5-D: 차감 출처별로 정확히 복원
       if (this.chargePoints) {
         await this.chargePoints
-          .refundAnalysis(authorId)
+          .refundAnalysis(authorId, undefined, spentBySource as Record<CreditSource, number> | undefined)
           .catch((e) => this.logger.error(`환불 실패: ${String(e)}`))
       } else {
         await this.creditRepo

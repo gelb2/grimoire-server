@@ -186,7 +186,7 @@ describe('ChargePointsUseCase', () => {
   })
 
   describe('refundAnalysis — 분석 실패 환불', () => {
-    it('차감 포인트를 충전 출처로 적립한다', async () => {
+    it('spentBySource 미전달 시 전액 충전 출처로 복원 (구 호환 폴백)', async () => {
       await useCase.refundAnalysis('author-1', 'report-1')
       expect(mockLedger.earn).toHaveBeenCalledWith({
         authorId: 'author-1',
@@ -195,6 +195,52 @@ describe('ChargePointsUseCase', () => {
         reason: 'novel_analysis_refund',
         relatedId: 'report-1',
       })
+    })
+
+    // 크레딧 개편 CC-1 §5-D — 출처별 정확 복원 (무료적립이 charged로 둔갑하는 회계 왜곡 방지)
+    it('spentBySource 전달 시 차감된 출처별로 복원한다', async () => {
+      // 무료적립 2,000pt + 충전 440pt 로 차감된 분석을 환불
+      await useCase.refundAnalysis('author-1', 'report-2', {
+        free: 2000,
+        subscription: 0,
+        gift: 0,
+        charged: 440,
+      })
+      // free 출처 2,000pt 복원
+      expect(mockLedger.earn).toHaveBeenCalledWith({
+        authorId: 'author-1',
+        source: 'free',
+        amount: 2000,
+        reason: 'novel_analysis_refund',
+        relatedId: 'report-2',
+      })
+      // charged 출처 440pt 복원
+      expect(mockLedger.earn).toHaveBeenCalledWith({
+        authorId: 'author-1',
+        source: 'charged',
+        amount: 440,
+        reason: 'novel_analysis_refund',
+        relatedId: 'report-2',
+      })
+      // 0인 출처(subscription/gift)는 earn 미호출 → 총 2회
+      expect(mockLedger.earn).toHaveBeenCalledTimes(2)
+    })
+
+    it('spentBySource 가 단일 출처면 1회만 복원', async () => {
+      await useCase.refundAnalysis('author-1', 'report-3', {
+        free: 0,
+        subscription: 2440,
+        gift: 0,
+        charged: 0,
+      })
+      expect(mockLedger.earn).toHaveBeenCalledWith({
+        authorId: 'author-1',
+        source: 'subscription',
+        amount: 2440,
+        reason: 'novel_analysis_refund',
+        relatedId: 'report-3',
+      })
+      expect(mockLedger.earn).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -222,6 +268,20 @@ describe('ChargePointsUseCase', () => {
       await expect(useCase.chargeTheme('author-1')).rejects.toThrow(
         BadRequestException,
       )
+    })
+  })
+
+  // 크레딧 개편 CC-1 (2026-05-19) — 테마 생성 실패 환불
+  describe('refundTheme — 테마 생성 실패 환불', () => {
+    it('차감 포인트(590pt)를 충전 출처로 적립한다', async () => {
+      await useCase.refundTheme('author-1', 'theme-1')
+      expect(mockLedger.earn).toHaveBeenCalledWith({
+        authorId: 'author-1',
+        source: 'charged',
+        amount: THEME_POINT_COST,
+        reason: 'theme_generate_refund',
+        relatedId: 'theme-1',
+      })
     })
   })
 })

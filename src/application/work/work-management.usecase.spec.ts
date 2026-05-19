@@ -4,6 +4,8 @@ import { NotFoundException, ForbiddenException, BadRequestException } from '@nes
 describe('WorkManagementUseCase', () => {
   let useCase: WorkManagementUseCase
   let mockWorkRepo: any
+  // 크레딧 개편 CC-1 (2026-05-19) — 첫 작품 보너스 신 원장 적립 mock
+  let mockGrantPoints: any
 
   const mockWork = {
     id: 'work-1',
@@ -55,8 +57,9 @@ describe('WorkManagementUseCase', () => {
     }
     const mockBlobStorage = { isEnabled: false, uploadImage: jest.fn(), deleteImage: jest.fn() } as any
     const mockNovelAnalysis = { indexEpisode: jest.fn().mockResolvedValue({ chunkCount: 0, tokensUsed: 0 }) } as any
-    const mockCreditUseCase = { grant: jest.fn().mockResolvedValue({ credits: 2, log: {} }) } as any
-    useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage, mockNovelAnalysis, mockCreditUseCase)
+    // 크레딧 개편 CC-1 (2026-05-19) — 구 mockCreditUseCase.grant → mockGrantPoints.grantFirstWorkBonus
+    mockGrantPoints = { grantFirstWorkBonus: jest.fn().mockResolvedValue(undefined) } as any
+    useCase = new WorkManagementUseCase(mockWorkRepo, mockBlobStorage, mockNovelAnalysis, mockGrantPoints)
   })
 
   describe('createWork', () => {
@@ -290,7 +293,8 @@ title: "테스트"
   })
 
   describe('updateEpisodeStatus', () => {
-    it('작가가 에피소드 상태를 변경한다', async () => {
+    it('작가가 에피소드 상태를 변경한다 (첫 public 전환 — 첫 작품 보너스 적립)', async () => {
+      // mockEpisode.status='upload', findEpisodesFiltered=[upload만] → hasPublished=false → 보너스 적립
       mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
       mockWorkRepo.findById.mockResolvedValue(mockWork)
       mockWorkRepo.findEpisodesFiltered.mockResolvedValue([mockEpisode])
@@ -299,6 +303,35 @@ title: "테스트"
       const result = await useCase.updateEpisodeStatus('author-1', 'ep-1', 'public')
       expect(result.status).toBe('public')
       expect(mockWorkRepo.updateEpisodeStatus).toHaveBeenCalledWith('ep-1', 'public', undefined, undefined)
+      // 크레딧 개편 CC-1 — 첫 작품 최초 public 전환 시 신 포인트 원장 적립
+      expect(mockGrantPoints.grantFirstWorkBonus).toHaveBeenCalledWith('author-1')
+      expect(mockGrantPoints.grantFirstWorkBonus).toHaveBeenCalledTimes(1)
+    })
+
+    // 크레딧 개편 CC-1 (2026-05-19) — 첫 작품 보너스 멱등 가드 검증
+    it('이미 public 에피소드가 있으면 재전환 시 첫 작품 보너스 미적립 (멱등)', async () => {
+      // upload 에피소드를 public 전환하나, 같은 작품에 이미 public 에피소드 존재
+      mockWorkRepo.findEpisodeById.mockResolvedValue(mockEpisode)
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.findEpisodesFiltered.mockResolvedValue([
+        mockEpisode,
+        { ...mockEpisode, id: 'ep-2', status: 'public' },
+      ])
+      mockWorkRepo.updateEpisodeStatus.mockResolvedValue({ ...mockEpisode, status: 'public' })
+
+      await useCase.updateEpisodeStatus('author-1', 'ep-1', 'public')
+      // hasPublished=true → 보너스 미적립
+      expect(mockGrantPoints.grantFirstWorkBonus).not.toHaveBeenCalled()
+    })
+
+    it('public → upload 등 비-최초전환 시 첫 작품 보너스 미적립', async () => {
+      // episode.status='public' → upload 로 변경: upload→public 조건 불충족
+      mockWorkRepo.findEpisodeById.mockResolvedValue({ ...mockEpisode, status: 'public' })
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.updateEpisodeStatus.mockResolvedValue({ ...mockEpisode, status: 'upload' })
+
+      await useCase.updateEpisodeStatus('author-1', 'ep-1', 'upload')
+      expect(mockGrantPoints.grantFirstWorkBonus).not.toHaveBeenCalled()
     })
 
     it('shared 상태로 직접 변경 불가', async () => {

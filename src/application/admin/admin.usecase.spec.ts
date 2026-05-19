@@ -6,7 +6,9 @@ describe('AdminUseCase', () => {
   let mockAuthorRepo: any
   let mockWorkRepo: any
   let mockCreditRepo: any
-  let mockCreditUseCase: any
+  // 크레딧 개편 CC-1 (2026-05-19) — 구 mockCreditUseCase → mockGrantPoints + mockLedger
+  let mockGrantPoints: any
+  let mockLedger: any
   let mockAuditLog: any
 
   beforeEach(() => {
@@ -33,9 +35,22 @@ describe('AdminUseCase', () => {
       sumNegativeAmounts: jest.fn().mockResolvedValue(-50),
       findLogsByAuthorId: jest.fn().mockResolvedValue([]),
     }
-    mockCreditUseCase = {
-      grant: jest.fn().mockResolvedValue({ credits: 13, log: { id: 'log-1', authorId: 'author-1', amount: 10, reason: 'admin_grant', createdAt: new Date() } }),
-      deduct: jest.fn().mockResolvedValue({ credits: 5, log: { id: 'log-2', authorId: 'author-1', amount: 5, reason: 'admin_deduct', createdAt: new Date() } }),
+    // 신 포인트 원장 적립 UseCase mock — grantManual 호출 검증용
+    mockGrantPoints = {
+      grantManual: jest.fn().mockResolvedValue(undefined),
+    }
+    // 신 CreditLedger 포트 mock — getBalance(잔액 박제용) + spend(관리자 차감)
+    // getBalance 기본: 가용 10,000pt (deductCredits 잔액 검증 통과 기본값)
+    mockLedger = {
+      getBalance: jest.fn().mockResolvedValue({
+        free: 5000, subscription: 0, gift: 0, charged: 5000,
+        total: 10000, deficit: 0, available: 10000,
+      }),
+      spend: jest.fn().mockResolvedValue({
+        spentBySource: { free: 5000, subscription: 0, gift: 0, charged: 0 },
+        deficitIncurred: 0,
+        balanceAfter: 5000,
+      }),
     }
     mockAuditLog = {
       log: jest.fn().mockResolvedValue(undefined),
@@ -83,7 +98,7 @@ describe('AdminUseCase', () => {
 
     useCase = new AdminUseCase(
       mockAuthorRepo, mockWorkRepo, mockCreditRepo, mockAdminRepo as any,
-      mockCreditUseCase, mockAuditLog,
+      mockGrantPoints, mockLedger, mockAuditLog,
     )
   })
 
@@ -145,63 +160,90 @@ describe('AdminUseCase', () => {
     })
   })
 
-  describe('크레딧 관리', () => {
-    it('크레딧을 부여하고 감사 로그를 기록한다 (PAY-P2-4 — beforeState/afterState 박제)', async () => {
-      // mockAuthorRepo.findById는 author.credits=10 반환 (beforeEach 설정)
-      // mockCreditUseCase.grant는 result.credits=13 반환 (beforeEach 설정)
-      const result = await useCase.grantCredits('admin-1', 'author-1', 10, '프로모션')
+  // 크레딧 개편 CC-1 (2026-05-19) — 관리자 지급·차감 신 포인트 원장 이행
+  describe('크레딧 관리 (CC-1 — 신 포인트 원장)', () => {
+    it('T5 — 포인트를 지급하고 감사 로그를 기록한다 (grantManual + 출처 명시)', async () => {
+      const result = await useCase.grantCredits('admin-1', 'author-1', 3000, '프로모션', 'free')
 
-      // findById 사전 조회 호출 확인 (PAY-P2-4 잔액 박제 게이트)
+      // author 존재 확인 + 잔액 사전/사후 조회 (신 원장 getBalance)
       expect(mockAuthorRepo.findById).toHaveBeenCalledWith('author-1')
+      expect(mockLedger.getBalance).toHaveBeenCalledWith('author-1')
 
-      // creditUseCase.grant는 동일 인자
-      expect(mockCreditUseCase.grant).toHaveBeenCalledWith('author-1', 10, 'admin_grant:프로모션')
+      // grantManual — 출처('free') + adminId 전달
+      expect(mockGrantPoints.grantManual).toHaveBeenCalledWith('author-1', 'free', 3000, 'admin-1')
 
-      // PAY-P2-4: auditLog.log 6-arg 호출 — beforeState=10, afterState=13
+      // auditLog.log 6-arg — beforeState/afterState = 신 원장 total
       expect(mockAuditLog.log).toHaveBeenCalledWith(
         'admin-1',
         'credit_grant',
         'author-1',
-        { amount: 10, reason: '프로모션' },
-        { credits: 10 },  // balanceBefore
-        { credits: 13 },  // balanceAfter (creditUseCase.grant 반환값)
+        { amount: 3000, reason: '프로모션', source: 'free' },
+        { points: 10000 },  // balanceBefore.total
+        { points: 10000 },  // balanceAfter.total (mock — getBalance 동일값)
       )
-      expect(result.credits).toBe(13)
+      expect(result.balance.total).toBe(10000)
     })
 
-    it('크레딧을 차감하고 감사 로그를 기록한다 (PAY-P2-4 — beforeState/afterState 박제)', async () => {
-      const result = await useCase.deductCredits('admin-1', 'author-1', 5, '정정')
+    it('T5 — source 미지정 시 charged 폴백', async () => {
+      await useCase.grantCredits('admin-1', 'author-1', 1000, '보상')
+      expect(mockGrantPoints.grantManual).toHaveBeenCalledWith('author-1', 'charged', 1000, 'admin-1')
+    })
+
+    it('T5 — 유효하지 않은 source 시 charged 폴백', async () => {
+      await useCase.grantCredits('admin-1', 'author-1', 1000, '보상', 'invalid-source')
+      expect(mockGrantPoints.grantManual).toHaveBeenCalledWith('author-1', 'charged', 1000, 'admin-1')
+    })
+
+    it('T6 — 포인트를 차감하고 감사 로그를 기록한다 (ledger.spend)', async () => {
+      const result = await useCase.deductCredits('admin-1', 'author-1', 5000, '정정')
 
       expect(mockAuthorRepo.findById).toHaveBeenCalledWith('author-1')
-      expect(mockCreditUseCase.deduct).toHaveBeenCalledWith('author-1', 5, 'admin_deduct:정정')
-
-      // PAY-P2-4: auditLog.log 6-arg 호출 — beforeState=10 (mock), afterState=5 (mock 반환값)
+      // deficit 불가 모드 — 사전 잔액 검증 후 spend
+      expect(mockLedger.spend).toHaveBeenCalledWith({
+        authorId: 'author-1',
+        amount: 5000,
+        reason: 'admin_deduct:정정',
+      })
       expect(mockAuditLog.log).toHaveBeenCalledWith(
         'admin-1',
         'credit_deduct',
         'author-1',
-        { amount: 5, reason: '정정' },
-        { credits: 10 },  // balanceBefore
-        { credits: 5 },   // balanceAfter (creditUseCase.deduct 반환값)
+        { amount: 5000, reason: '정정' },
+        { points: 10000 },
+        { points: 10000 },
       )
-      expect(result.credits).toBe(5)
+      expect(result.balance.total).toBe(10000)
     })
 
-    it('PAY-P2-4: grantCredits — author 미존재 시 NotFoundException + auditLog.log/grant 호출 0회', async () => {
-      mockAuthorRepo.findById.mockResolvedValueOnce(null)
+    it('T6 — deficit 불가 모드: 가용 잔액 부족 시 BadRequestException + spend 미호출', async () => {
+      // 가용 잔액 100pt 인데 5,000pt 차감 시도
+      mockLedger.getBalance.mockResolvedValueOnce({
+        free: 100, subscription: 0, gift: 0, charged: 0,
+        total: 100, deficit: 0, available: 100,
+      })
       await expect(
-        useCase.grantCredits('admin-1', 'missing-author', 10, '프로모션'),
-      ).rejects.toThrow(NotFoundException)
-      expect(mockCreditUseCase.grant).not.toHaveBeenCalled()
+        useCase.deductCredits('admin-1', 'author-1', 5000, '정정'),
+      ).rejects.toThrow(BadRequestException)
+      // 외상 금지 — spend 자체가 호출되지 않음
+      expect(mockLedger.spend).not.toHaveBeenCalled()
       expect(mockAuditLog.log).not.toHaveBeenCalled()
     })
 
-    it('PAY-P2-4: deductCredits — author 미존재 시 NotFoundException + auditLog.log/deduct 호출 0회', async () => {
+    it('grantCredits — author 미존재 시 NotFoundException + grantManual/auditLog 호출 0회', async () => {
       mockAuthorRepo.findById.mockResolvedValueOnce(null)
       await expect(
-        useCase.deductCredits('admin-1', 'missing-author', 5, '정정'),
+        useCase.grantCredits('admin-1', 'missing-author', 3000, '프로모션'),
       ).rejects.toThrow(NotFoundException)
-      expect(mockCreditUseCase.deduct).not.toHaveBeenCalled()
+      expect(mockGrantPoints.grantManual).not.toHaveBeenCalled()
+      expect(mockAuditLog.log).not.toHaveBeenCalled()
+    })
+
+    it('deductCredits — author 미존재 시 NotFoundException + spend/auditLog 호출 0회', async () => {
+      mockAuthorRepo.findById.mockResolvedValueOnce(null)
+      await expect(
+        useCase.deductCredits('admin-1', 'missing-author', 5000, '정정'),
+      ).rejects.toThrow(NotFoundException)
+      expect(mockLedger.spend).not.toHaveBeenCalled()
       expect(mockAuditLog.log).not.toHaveBeenCalled()
     })
   })

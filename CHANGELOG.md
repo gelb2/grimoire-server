@@ -1,5 +1,33 @@
 # Changelog — grimoire-server
 
+## [0.36.0] - 2026-05-19
+
+### Fix — 크레딧 개편 CC-1: 적립 비결제 경로 신 포인트 원장 연동 (CRITICAL-2 해소)
+
+> 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §1·§2-2·§5-D·§8 + `.claude/state/sprint-cc1-pay-s1-plan-draft.md` §2.
+> I Phase 는 차감(spend) 경로만 chat/analysis 에 연동됐고, 적립(earn) 경로 전체와 테마 차감이
+> 런타임에 한 번도 작동하지 않았다(CRITICAL-2). CC-1 은 **비결제 적립 5경로**를 신 `CreditLedger`
+> 원장으로 이행한다. 충전(T3)/선물(T4)/환불(T7) 적립은 CC-2 범위.
+
+#### Changed — 적립·차감 경로 신 시스템 재배선
+- `auth.usecase.ts` — 가입 보너스(email + Google 2 호출처): 구 `CreditUseCase.grant(3, 'signup_bonus')` → `GrantPointsUseCase.grantSignupBonus` (source='free', 3,000pt)
+- `work-management.usecase.ts` — 첫 작품 보너스: 구 `grant(2, FIRST_WORK_BONUS)` → `GrantPointsUseCase.grantFirstWorkBonus` (source='free', 2,000pt). `hasPublished` 멱등 가드 보존
+- `admin.usecase.ts` — 관리자 수동 지급(T5): 구 `grant` → `GrantPointsUseCase.grantManual` + 출처 파라미터 명시(미지정 시 'charged' 폴백). 차감(T6): 구 `deduct` → `CreditLedgerPort.spend`, **deficit 불가 모드** — 가용 잔액 부족 시 `BadRequestException`(외상 금지). AuditLog beforeState/afterState 박제는 신 원장 total 기준으로 유지
+- `generate-theme.usecase.ts` — 테마 차감: 구 `creditRepo.adjustCredits(Author.credits -1)` → `ChargePointsUseCase.chargeTheme` (590pt). 구 차감/환불 경로 제거 — 이중 차감 방지
+
+#### Added
+- `ChargePointsUseCase.refundTheme` — 테마 생성 실패 환불 (구 `theme_generate_refund` 동작 보존, `refundAnalysis` 동일 패턴)
+- `credit-grant-integration.spec.ts` — **통합 테스트 신설**. 실 `GrantPointsUseCase`/`ChargePointsUseCase` + 인메모리 `CreditLedgerPort` fake 로 auth/work/admin/theme usecase 의 적립·차감 호출 사슬 전체 검증. CRITICAL-2 가 unit mock 에 가려진 근본 원인 해결 (RED 재현 실증)
+
+#### Changed — 인터페이스 (§5-D 출처 회계 정합 — `shared-contracts.md` §30)
+- `ChargePointsUseCase.chargeAnalysis` 반환 `void` → `SpendResult` (환불 시 출처별 복원 입력)
+- `ChargePointsUseCase.refundAnalysis(authorId, relatedId?, spentBySource?)` — 3번째 인자 추가. 차감 출처별 정확 복원 (구: 전액 charged 복원 → 무료적립/구독풀이 충전으로 둔갑하는 회계 왜곡). 미전달 시 charged 폴백
+- `AdminUseCase.grantCredits`/`deductCredits` 반환 `{credits, log}` → `{balance: CreditBalance}`
+- `POST /api/admin/credits/grant` body `source?` 추가 / `/credits/deduct` 응답 모델 변경 (`docs/api-contract.md`)
+
+#### Test
+- jest 971 → 991 PASS (+20 it). 커버리지 60.18%
+
 ## [0.35.0] - 2026-05-17
 
 ### Feat — 크레딧·구독·채팅 과금 개편 I Phase: 디노미네이션 1:1,000 + 포인트 출처 4종 분리 회계 + 채팅 4구간 사후 차감 (sprint-credit-overhaul, ADR-012)
