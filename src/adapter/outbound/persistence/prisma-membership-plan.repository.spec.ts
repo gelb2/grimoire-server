@@ -136,4 +136,119 @@ describe('PrismaMembershipPlanRepository', () => {
       expect(await repo.getPlan('author-x')).toBeNull()
     })
   })
+
+  describe('changeTier — Author.plan 양측 동기 (CC-3 HIGH-1 案 A)', () => {
+    it('pro 전환 시 Author.plan="pro" + planExpireAt=poolResetAt 동기 갱신', async () => {
+      const now = new Date('2026-05-17T00:00:00Z')
+      await repo.changeTier('author-1', 'pro', now)
+      // tx.author.update 호출 — plan + planExpireAt 동기 검증
+      const planSync = authorUpdates.find(
+        (u) => u.plan !== undefined,
+      )
+      expect(planSync).toBeDefined()
+      expect(planSync.plan).toBe('pro')
+      // planExpireAt = poolResetAt (nextMonthStart) — pro 미러 정책
+      expect(planSync.planExpireAt).toBeInstanceOf(Date)
+      // 6월 1일 00:00 UTC
+      expect(planSync.planExpireAt.getUTCMonth()).toBe(5)
+      expect(planSync.planExpireAt.getUTCDate()).toBe(1)
+    })
+
+    it('free 전환 시 Author.plan="free" + planExpireAt=null 동기 갱신', async () => {
+      const now = new Date('2026-05-17T00:00:00Z')
+      await repo.changeTier('author-1', 'free', now)
+      const planSync = authorUpdates.find(
+        (u) => u.plan !== undefined,
+      )
+      expect(planSync).toBeDefined()
+      expect(planSync.plan).toBe('free')
+      // free 는 만기 없음 — null
+      expect(planSync.planExpireAt).toBeNull()
+    })
+
+    it('MembershipPlan.tier 도 함께 갱신 (양측 정합)', async () => {
+      await repo.changeTier('author-1', 'premium', new Date('2026-05-17T00:00:00Z'))
+      const planUpdate = planUpdates[0]
+      expect(planUpdate.tier).toBe('premium')
+      expect(planUpdate.monthlyPoolPoints).toBe(191500)
+    })
+
+    it('Author.plan 동기와 MembershipPlan.tier 갱신이 같은 $transaction', async () => {
+      // tx 동일 객체에서 양측 호출됨을 검증 — $transaction 1회 호출
+      await repo.changeTier('author-1', 'pro', new Date('2026-05-17T00:00:00Z'))
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1)
+      // MembershipPlan + Author 양측 update 모두 발생
+      expect(planUpdates.length).toBeGreaterThan(0)
+      expect(authorUpdates.find((u) => u.plan !== undefined)).toBeDefined()
+    })
+  })
+
+  describe('checkAndResetExpiredPool — lazy 안전망 (CC-3 CRITICAL-1 案 B)', () => {
+    it("plan 이 null 이면 no-op {reset:false, plan:null} 반환", async () => {
+      mockPrisma.membershipPlan.findFirst.mockResolvedValue(null)
+      const result = await repo.checkAndResetExpiredPool(
+        'author-x',
+        new Date('2026-05-20T00:00:00Z'),
+      )
+      expect(result.reset).toBe(false)
+      expect(result.plan).toBeNull()
+      // $transaction 호출 0건 (no-op)
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+    })
+
+    it("tier='free' 면 no-op 반환 (resetMonthlyPool 미호출)", async () => {
+      const freePlan = { ...proPlan, tier: 'free', monthlyPoolPoints: 0 }
+      mockPrisma.membershipPlan.findFirst.mockResolvedValue(freePlan)
+      const result = await repo.checkAndResetExpiredPool(
+        'author-1',
+        new Date('2026-05-20T00:00:00Z'),
+      )
+      expect(result.reset).toBe(false)
+      expect(result.plan?.tier).toBe('free')
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+    })
+
+    it("status!='active' 면 no-op 반환", async () => {
+      const cancelledPlan = { ...proPlan, status: 'cancelled' }
+      mockPrisma.membershipPlan.findFirst.mockResolvedValue(cancelledPlan)
+      const result = await repo.checkAndResetExpiredPool(
+        'author-1',
+        new Date('2026-05-20T00:00:00Z'),
+      )
+      expect(result.reset).toBe(false)
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+    })
+
+    it('poolResetAt > now 면 no-op 반환 (현 풀 유효)', async () => {
+      const futurePlan = {
+        ...proPlan,
+        poolResetAt: new Date('2026-06-01T00:00:00Z'),
+      }
+      mockPrisma.membershipPlan.findFirst.mockResolvedValue(futurePlan)
+      const result = await repo.checkAndResetExpiredPool(
+        'author-1',
+        new Date('2026-05-20T00:00:00Z'),
+      )
+      expect(result.reset).toBe(false)
+      expect(result.plan?.poolResetAt.toISOString()).toBe(
+        '2026-06-01T00:00:00.000Z',
+      )
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+    })
+
+    it('poolResetAt <= now (만료) → resetMonthlyPool 호출 + {reset:true}', async () => {
+      const expiredPlan = {
+        ...proPlan,
+        poolResetAt: new Date('2026-05-01T00:00:00Z'),
+      }
+      mockPrisma.membershipPlan.findFirst.mockResolvedValue(expiredPlan)
+      const result = await repo.checkAndResetExpiredPool(
+        'author-1',
+        new Date('2026-05-20T00:00:00Z'),
+      )
+      expect(result.reset).toBe(true)
+      // resetMonthlyPool 의 $transaction 호출됐는지 확인
+      expect(mockPrisma.$transaction).toHaveBeenCalled()
+    })
+  })
 })

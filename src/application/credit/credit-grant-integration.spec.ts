@@ -195,6 +195,22 @@ class FakeCreditLedger implements CreditLedgerPort {
       .reverse()
   }
 
+  /** CC-3 (HIGH-3) — 신 ledger 기반 선물 랭킹 fake */
+  async getGiftRanking(
+    limit: number,
+  ): Promise<{ authorId: string; totalGifted: number }[]> {
+    const sums = new Map<string, number>()
+    for (const r of this.rows) {
+      if (r.source === 'gift' && r.type === 'earn') {
+        sums.set(r.authorId, (sums.get(r.authorId) ?? 0) + r.amount)
+      }
+    }
+    return Array.from(sums.entries())
+      .map(([authorId, totalGifted]) => ({ authorId, totalGifted }))
+      .sort((a, b) => b.totalGifted - a.totalGifted)
+      .slice(0, limit)
+  }
+
   /**
    * CC-2b — 응원 선물 양측 작가 1 트랜잭션 이동 (案 G1).
    * planConsumption 으로 sender 차감(deficit 금지) + receiver gift earn.

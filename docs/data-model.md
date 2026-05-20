@@ -24,8 +24,8 @@
 | points_gift | integer | default(0) | **크레딧 개편 I Phase** — 응원 선물 수령 포인트 잔액 캐시. 독자 결제분 이전 |
 | points_charged | integer | default(0) | **크레딧 개편 I Phase** — 충전(Polar) 포인트 잔액 캐시. pt 단가에 §0 박힘, 영구 보존 |
 | deficit_points | integer | default(0) | **크레딧 개편 I Phase** — 외상(채팅 사후 차감 시 잔액 부족분). 충전 시 우선 상계. 상한 -10,000pt |
-| plan | text | default("free") | 구독 플랜 (free/pro/premium). MembershipPlan 정본화 후 deprecated 검토 (I Phase 후속) |
-| plan_expire_at | timestamptz (nullable) | - | 플랜 만료일 (free=null, pro/premium=날짜) |
+| plan | text | default("free") | 구독 플랜 (free/pro/premium). **CC-3 (HIGH-1 案 A, 2026-05-20, ADR-014)** — `Author.plan` 정본 유지 + `MembershipPlan.tier` 미러. `MembershipPlanPort.changeTier` 가 유일한 변경 진입점 — `$transaction` 안에서 양측 동기 강제. 직접 SQL UPDATE 금지. 案 B(`tier` 정본화 + 읽기 13곳 이행)는 CC-5/후속 sprint 옵션 |
+| plan_expire_at | timestamptz (nullable) | - | 플랜 만료일. **CC-3 案 A 동기** — `MembershipPlan.poolResetAt` 미러 (free → null / pro·premium → 다음 풀 리셋일 = `nextMonthStart(now)`). CC-5 PAY-P1-4 활성화 시 구독 결제 만기와 정합 재확인 |
 | default_theme_id | uuid (nullable) | - | 기본 테마 ID |
 | created_at | timestamptz | default(now()) | 가입일 |
 | deleted_at | timestamptz (nullable) | - | **USER-SOFT-DELETE sprint (2026-05-15)** — Author soft delete 표식. NULL = 활성 / NOT NULL = soft deleted. 30일 후 cron hard delete 정합 (회계 8건 Restrict 차단 시 보류). @@index([deleted_at]) 정합. middleware 자동 변환 박제 (findUnique/findMany/findFirst → WHERE deletedAt IS NULL 자동 + delete → soft delete) |

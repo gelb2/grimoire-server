@@ -30,6 +30,19 @@ export interface MembershipPlanState {
   status: 'active' | 'expired' | 'cancelled'
 }
 
+/**
+ * lazy 안전망 결과 — CC-3 (CRITICAL-1 案 B).
+ *
+ * `getPointBalance` 등 잔액 조회 진입점에서 plan 만료(poolResetAt < now) 시 즉시
+ * `resetMonthlyPool` 호출 후 갱신 plan 반환. cron 실패 시 코드 강제로 이월 금지 보장.
+ */
+export interface LazyResetResult {
+  /** resetMonthlyPool 실행 여부 (free/미만료/non-active 시 false) */
+  reset: boolean
+  /** 호출 직후 plan 상태 (없으면 null) */
+  plan: MembershipPlanState | null
+}
+
 export interface MembershipPlanPort {
   /** 작가의 활성 멤버십 조회 (없으면 null) */
   getPlan(authorId: string): Promise<MembershipPlanState | null>
@@ -51,6 +64,33 @@ export interface MembershipPlanPort {
   /**
    * 멤버십 등급 변경 (구독 가입/변경 — Polar 연동 별도 sprint).
    * 등급 변경 시 풀 크기 갱신.
+   *
+   * CC-3 (HIGH-1 案 A) — 같은 `$transaction` 안에서 `Author.plan` + `planExpireAt` 도 동기 갱신.
+   * `Author.plan` 이 정본 유지, `MembershipPlan.tier` 가 미러 — `changeTier` 가 유일한 변경 진입점.
+   * 직접 SQL UPDATE 금지 (ADR-014 案 A 한계 — 마이그레이션·관리자 수동 외 금지).
    */
   changeTier(authorId: string, tier: MembershipTier, now: Date): Promise<MembershipPlanState>
+
+  /**
+   * lazy 안전망 — 잔액 조회 진입점에서 plan 만료 시 즉시 리셋.
+   *
+   * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §4 案 B (cron + lazy 이중 안전망)
+   *       ADR-014 — CRITICAL-1 案 B 채택 (S Phase draft §8-6 원안 복원, I Phase 후속)
+   *
+   * 동작:
+   *   - plan null 또는 tier='free' 또는 status!='active' → no-op return `{reset: false, plan}`
+   *   - `plan.poolResetAt > now` → no-op return `{reset: false, plan}` (만료 안 됨)
+   *   - `plan.poolResetAt <= now` → `resetMonthlyPool(authorId, now)` 호출 후
+   *     갱신 plan 재조회 return `{reset: true, plan: 재조회}`
+   *
+   * 동시성: `resetMonthlyPool` 내부 `Author FOR UPDATE` 직렬화 + `monthlyPoolFor(tier)` 결정적
+   *         → 동시 2회 호출 시 두 번째는 첫 트랜잭션 완료 후 동일 newPool 재설정(외부 관찰 동일).
+   *
+   * 호출 비용:
+   *   - 평소(미만료/free) — `getPlan` 1 SELECT (인덱스 hit).
+   *   - 만료 시점에만 `resetMonthlyPool` 1 $transaction.
+   *
+   * lazy 실패는 caller 가 silent log 후 진행 — 잔액 조회 자체 실패 방지 (fallback 안전망).
+   */
+  checkAndResetExpiredPool(authorId: string, now: Date): Promise<LazyResetResult>
 }

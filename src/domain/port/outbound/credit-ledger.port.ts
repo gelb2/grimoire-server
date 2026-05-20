@@ -120,6 +120,21 @@ export interface CreditLedgerPort {
   findByAuthor(authorId: string, limit: number): Promise<CreditLedgerEntry[]>
 
   /**
+   * 응원받는 작가 랭킹 — CC-3 (HIGH-3) 신 ledger 기반.
+   *
+   * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §5-B / ADR-014.
+   *
+   * CC-2b 후 선물 적립이 `source='gift', type='earn'` 으로 박제됨에 따라,
+   * 구 `CreditRepositoryPort.getGiftRanking`(`CreditLog reason='gift_received'` groupBy)이
+   * 신 선물을 보지 못함 → 본 메서드가 `CreditLedger groupBy(authorId)` 로 재집계.
+   *
+   * @returns 누적 받은 선물 pt 합 내림차순 상위 N건
+   */
+  getGiftRanking(
+    limit: number,
+  ): Promise<{ authorId: string; totalGifted: number }[]>
+
+  /**
    * 응원 선물 — 독자(sender) → 작가(receiver) 양측 1 트랜잭션 이동 (CC-2b — 案 G1).
    *
    * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §1-B

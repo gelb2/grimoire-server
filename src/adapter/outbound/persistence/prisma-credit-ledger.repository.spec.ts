@@ -305,4 +305,43 @@ describe('PrismaCreditLedgerRepository', () => {
       await expect(repo.transfer('ghost-a', 'ghost-b', 1000)).rejects.toThrow('유저를 찾을 수 없')
     })
   })
+
+  describe('getGiftRanking — CC-3 (HIGH-3) 신 ledger 기반 선물 랭킹', () => {
+    it("source='gift', type='earn' 만 groupBy(authorId) + 누적 sum desc 정렬", async () => {
+      mockPrisma.creditLedger.groupBy = jest.fn().mockResolvedValue([
+        { authorId: 'author-A', _sum: { amount: 9000 } },
+        { authorId: 'author-B', _sum: { amount: 3000 } },
+      ])
+
+      const ranking = await repo.getGiftRanking(10)
+
+      expect(mockPrisma.creditLedger.groupBy).toHaveBeenCalledWith({
+        by: ['authorId'],
+        where: { source: 'gift', type: 'earn' },
+        _sum: { amount: true },
+        orderBy: { _sum: { amount: 'desc' } },
+        take: 10,
+      })
+      expect(ranking).toEqual([
+        { authorId: 'author-A', totalGifted: 9000 },
+        { authorId: 'author-B', totalGifted: 3000 },
+      ])
+    })
+
+    it('limit 5 등 인자 그대로 전달', async () => {
+      mockPrisma.creditLedger.groupBy = jest.fn().mockResolvedValue([])
+      await repo.getGiftRanking(5)
+      expect(mockPrisma.creditLedger.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 5 }),
+      )
+    })
+
+    it('_sum.amount 가 null 이면 0 으로 폴백', async () => {
+      mockPrisma.creditLedger.groupBy = jest.fn().mockResolvedValue([
+        { authorId: 'author-X', _sum: { amount: null } },
+      ])
+      const ranking = await repo.getGiftRanking(10)
+      expect(ranking).toEqual([{ authorId: 'author-X', totalGifted: 0 }])
+    })
+  })
 })

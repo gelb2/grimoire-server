@@ -275,6 +275,31 @@ export class PrismaCreditLedgerRepository implements CreditLedgerPort {
   }
 
   /**
+   * 응원받는 작가 랭킹 — CC-3 (HIGH-3).
+   *
+   * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §5-B / ADR-014.
+   *
+   * `source='gift', type='earn'` 적립만 groupBy(authorId) → 누적 받은 선물 pt 합 내림차순.
+   * S0c 동등성 게이트 — 구 `prisma-credit.repository.getGiftRanking` 와 동일 반환 타입
+   * `{authorId, totalGifted}[]` + 동일 limit/정렬 의미.
+   */
+  async getGiftRanking(
+    limit: number,
+  ): Promise<{ authorId: string; totalGifted: number }[]> {
+    const rows = await this.prisma.creditLedger.groupBy({
+      by: ['authorId'],
+      where: { source: 'gift', type: 'earn' },
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: 'desc' } },
+      take: limit,
+    })
+    return rows.map((r) => ({
+      authorId: r.authorId,
+      totalGifted: r._sum.amount ?? 0,
+    }))
+  }
+
+  /**
    * 응원 선물 — 案 G1 단일 `$transaction` (CC-2b — 진단 §1-B).
    *
    * sender(독자) ↔ receiver(작가) 양측 작가 1 트랜잭션 이동. CLAUDE.md §9 결제 원자성:
