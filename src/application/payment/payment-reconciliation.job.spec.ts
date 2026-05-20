@@ -41,9 +41,13 @@ describe('PaymentReconciliationJob', () => {
       completePaymentWithPoints: jest
         .fn()
         .mockResolvedValue({ settledDeficit: 0, chargedPoints: 25000 }),
+      // CC-2b — 환불 신 경로 mock (reconciliation 미사용이나 PaymentRepositoryPort 완전성)
+      refundPaymentWithPoints: jest.fn(),
+      refundPaymentAtomically: jest.fn(),
       updateStatus: jest.fn(),
       findPendingPaymentsOlderThan: jest.fn(),
       expirePayment: jest.fn(),
+      findReusablePendingPayment: jest.fn(),
     } as unknown as jest.Mocked<PaymentRepositoryPort>
 
     mockCheckpointRepo = {

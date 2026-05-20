@@ -75,7 +75,14 @@ describe('PaymentUseCase', () => {
         .fn()
         .mockResolvedValue({ settledDeficit: 0, chargedPoints: 25000 }),
       updateStatus: jest.fn().mockResolvedValue(undefined),
-      refundPaymentAtomically: jest.fn().mockResolvedValue({ actualDeducted: 0, deficitCredits: 0 }),
+      // CC-2b — 구 refundPaymentAtomically deprecated (회귀 안전 mock 잔존)
+      refundPaymentAtomically: jest.fn().mockResolvedValue({
+        actualDeducted: 0, deficitCredits: 0, proportionalCredits: 0, isPartial: false,
+      }),
+      // CC-2b — 신 환불 신 경로 (4 출처 환수 + 이중 외상 통합)
+      refundPaymentWithPoints: jest.fn().mockResolvedValue({
+        actualRefunded: 0, deficitIncurred: 0, proportionalPt: 0, isPartial: false,
+      }),
       // PAY-P1-3 — findReusablePendingPayment mock (기본: 재사용 후보 0건 → null 반환 = 신규 create 분기)
       findReusablePendingPayment: jest.fn().mockResolvedValue(null),
       findPendingPaymentsOlderThan: jest.fn().mockResolvedValue([]),
@@ -107,9 +114,11 @@ describe('PaymentUseCase', () => {
       markStatus: jest.fn().mockResolvedValue(undefined),
     }
 
-    // Sprint PAY-P1-1: refund usecase mock — 'cancel' 분기에서만 호출되어야 함
+    // CC-2b — refund usecase mock (신 시그니처 actualRefunded/deficitIncurred/proportionalPt/isPartial)
     mockRefundPaymentUseCase = {
-      execute: jest.fn().mockResolvedValue({ actualDeducted: 0, deficitCredits: 0 }),
+      execute: jest.fn().mockResolvedValue({
+        actualRefunded: 0, deficitIncurred: 0, proportionalPt: 0, isPartial: false,
+      }),
     }
 
     // Sprint PAY-P2-4 — authorRepo + auditLog mock (success 분기 잔액 조회 + audit 박제)
@@ -526,38 +535,39 @@ describe('PaymentUseCase', () => {
       expect(mockRefundPaymentUseCase.execute).not.toHaveBeenCalled()
     })
 
-    it('취소(cancel) 웹훅 시 refund usecase 1회 호출 + status="refunded" + deficitCredits 응답 포함 (PAY-P1-1)', async () => {
+    it('취소(cancel) 웹훅 시 refund usecase 1회 호출 + status="refunded" + deficitCredits 응답 포함 (CC-2b 신 경로)', async () => {
       mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
       })
-      // CC-2a 디노미 — 입문 패키지 충전액 ₩3,000 / payment.credits 는 충전 총 pt 25,000.
-      // 환불(T7)은 CC-2b 범위 — 본 테스트는 mockPayment pt 정합만 (cancel 동작 불변).
+      // CC-2b 디노미 — payment.credits 는 충전 총 pt 25,000 → refundPt 로 그대로 전달.
       mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(
         makeEvent({ type: 'order.refunded', status: 'cancel', amount: 3000 }),
       )
       mockRefundPaymentUseCase.execute.mockResolvedValueOnce({
-        actualDeducted: 25000,
-        deficitCredits: 0,
+        actualRefunded: 25000,
+        deficitIncurred: 0,
+        proportionalPt: 25000,
+        isPartial: false,
       })
 
       const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
-      // PAY-P1-1: refund usecase 정확히 1회 호출 + 입력 정합 검증
+      // CC-2b: refund usecase 정확히 1회 호출 + 신 시그니처(refundPt) 정합
       expect(mockRefundPaymentUseCase.execute).toHaveBeenCalledTimes(1)
       expect(mockRefundPaymentUseCase.execute).toHaveBeenCalledWith({
         paymentId: 'pay-1',
         authorId: 'author-1',
-        credits: 25000,
+        refundPt: 25000,
         refundedAmount: 3000,
         reason: 'polar_webhook_order.refunded',
         source: 'webhook',
       })
 
-      // updateStatus는 호출 0회 — refund usecase 내부의 $transaction이 status='refunded'를 처리
+      // updateStatus는 호출 0회 — refund usecase 내부의 $transaction이 status를 처리
       expect(mockPrisma.updateStatus).not.toHaveBeenCalled()
 
-      // 응답에 deficitCredits 포함 (정상 환수 시 0)
+      // 응답에 deficitCredits 포함 (정상 환수 시 0) — payment.usecase 가 deficitIncurred 를 매핑
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(0)
       expect(result).toHaveProperty('deficitCredits', 0)
@@ -568,7 +578,7 @@ describe('PaymentUseCase', () => {
       )
     })
 
-    it('취소(cancel) 웹훅 + 잔액 부족 시 deficitCredits 양수로 응답에 박제 (PAY-P1-1 deficit 분기)', async () => {
+    it('취소(cancel) 웹훅 + 잔액 부족 시 deficitIncurred 양수로 응답에 박제 (CC-2b 이중 외상 통합)', async () => {
       mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
@@ -577,8 +587,10 @@ describe('PaymentUseCase', () => {
         makeEvent({ type: 'order.refunded', status: 'cancel' }),
       )
       mockRefundPaymentUseCase.execute.mockResolvedValueOnce({
-        actualDeducted: 3,
-        deficitCredits: 2,
+        actualRefunded: 3000,
+        deficitIncurred: 2000,
+        proportionalPt: 5000,
+        isPartial: false,
       })
 
       const result = await useCase.processWebhook(dummyBody, dummyHeaders)
@@ -586,7 +598,7 @@ describe('PaymentUseCase', () => {
       expect(result).toEqual(expect.objectContaining({
         processed: true,
         credits: 0,
-        deficitCredits: 2,
+        deficitCredits: 2000,
       }))
     })
 
@@ -771,9 +783,9 @@ describe('PaymentUseCase', () => {
             .mockReturnValueOnce(makeEvent({ eventId: 'evt_A', type: 'order.refunded', status: 'cancel' }))
             .mockReturnValueOnce(makeEvent({ eventId: 'evt_B', type: 'order.refunded', status: 'cancel' }))
           mockRefundPaymentUseCase.execute.mockResolvedValueOnce({
-            actualDeducted: 5,
-            deficitCredits: 0,
-            proportionalCredits: 5,
+            actualRefunded: 5,
+            deficitIncurred: 0,
+            proportionalPt: 5,
             isPartial: false,
           })
 

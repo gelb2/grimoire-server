@@ -176,6 +176,88 @@ export function computeChargeLedgerEntries(
 }
 
 /**
+ * 환불 환수 우선순위 (CC-2b — 진단 §1-C).
+ *
+ * 충전 적립의 역방향이므로 충전(`charged`) 우선 환수가 회계 정합:
+ *   1. charged   — 충전 적립의 역(가장 자연스러운 환수처)
+ *   2. gift      — 선물 수령분
+ *   3. subscription — 구독 풀(매월 리셋이므로 후순위)
+ *   4. free      — 무료 적립(CAC) 마지막
+ *
+ * 잔액 부족분(4 출처 합 < 환수액)은 `Author.deficitPoints` 에 가산 → 이중 외상 통합.
+ * (구 `RefundLog.deficitCredits` 의미를 "이 환불이 유발한 외상 pt 기여분"으로 재해석)
+ */
+export const REFUND_RECOVERY_ORDER: readonly CreditSource[] = [
+  'charged',
+  'gift',
+  'subscription',
+  'free',
+] as const
+
+/**
+ * 환불 환수 1건의 ledger 박제 계획 (CC-2b — 案 R1 — 진단 §1-C).
+ *
+ * 환수 우선순위(`REFUND_RECOVERY_ORDER`)에 따라 4 출처에서 환수 가능액과
+ * 부족분(=외상 가산분)을 계산한다. CC-2a `computeChargeLedgerEntries` 패턴 정합:
+ * - 순수 함수 — DB·tx 미접촉.
+ * - `prisma-payment.repository.refundPaymentWithPoints` 와 통합 spec FakeRepo 가
+ *   동일 헬퍼를 호출 → 회계 로직 중복 0건.
+ *
+ * 회계 정합 (이중 외상 통합):
+ * - 4 출처 합 ≥ 환수액: 정상 환수 (`deficitIncurred = 0`)
+ * - 4 출처 합 < 환수액: 환수 가능액만큼 차감 + 부족분을 `deficitIncurred` 로 반환
+ *   → 호출자(`refundPaymentWithPoints`)가 `Author.deficitPoints += deficitIncurred`
+ *      + `CreditLedger type='deficit_incur'` row 박제(reason=`refund_deficit:..`).
+ *   → 다음 충전 시 CC-2a `completePaymentWithPoints` 가 `settleDeficitOnCharge` 로 자동 회수.
+ *   (구 시스템은 `RefundLog.deficitCredits` 를 누구도 상계 안 함 → 영구 외상.
+ *    CC-2b 통합으로 환불 외상도 충전으로 회수되는 단일 외상 장부 확립.)
+ *
+ * @param refundPt 환수할 포인트 (양수, 비례 계산 후의 `proportionalCredits` 입력)
+ * @param balances 현재 출처별 잔액
+ * @returns 출처별 환수액(양수) + 부족분(외상 발생분)
+ * @throws Error refundPt 가 음수 또는 비정수
+ */
+export function computeRefundLedgerEntries(
+  refundPt: number,
+  balances: SourceBalances,
+): {
+  recoveredBySource: Record<CreditSource, number>
+  totalRecovered: number
+  deficitIncurred: number
+} {
+  if (!Number.isInteger(refundPt) || refundPt < 0) {
+    throw new Error(`환수액은 0 이상 정수여야 합니다: ${refundPt}`)
+  }
+
+  const recoveredBySource: Record<CreditSource, number> = {
+    free: 0,
+    subscription: 0,
+    gift: 0,
+    charged: 0,
+  }
+
+  let remaining = refundPt
+  let totalRecovered = 0
+
+  for (const source of REFUND_RECOVERY_ORDER) {
+    if (remaining <= 0) break
+    const available = balances[source]
+    const take = Math.min(available, remaining)
+    if (take > 0) {
+      recoveredBySource[source] = take
+      totalRecovered += take
+      remaining -= take
+    }
+  }
+
+  return {
+    recoveredBySource,
+    totalRecovered,
+    deficitIncurred: remaining,
+  }
+}
+
+/**
  * 신규 채팅 차단 여부 판정 (게이트 5(c)).
  *
  * 사후 차감 구조이므로 응답 자체는 생성된다 — 하지만 외상이 상한에 도달했으면

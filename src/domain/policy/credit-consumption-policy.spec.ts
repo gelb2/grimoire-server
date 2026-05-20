@@ -2,6 +2,8 @@ import {
   planConsumption,
   settleDeficitOnCharge,
   computeChargeLedgerEntries,
+  computeRefundLedgerEntries,
+  REFUND_RECOVERY_ORDER,
   isChatBlockedByDeficit,
   totalBalance,
   SourceBalances,
@@ -179,6 +181,84 @@ describe('credit-consumption-policy — 소진 우선순위 + deficit', () => {
 
     it('충전액이 음수면 throw (settleDeficitOnCharge 위임 검증)', () => {
       expect(() => computeChargeLedgerEntries(-1, 0, 0)).toThrow()
+    })
+  })
+
+  // CC-2b — 案 R1 환불 신 경로 + 이중 외상 통합용 환수 ledger 계획 헬퍼
+  describe('computeRefundLedgerEntries — 환불 환수 ledger 박제 계획 (CC-2b)', () => {
+    it('환수 우선순위는 charged → gift → subscription → free 역방향', () => {
+      // 충전 적립의 역(가장 자연스러운 환수처) — CC-2a 충전이 charged earn → 환수도 charged 우선
+      expect(REFUND_RECOVERY_ORDER).toEqual([
+        'charged',
+        'gift',
+        'subscription',
+        'free',
+      ])
+    })
+
+    it('잔액 ≥ 환수액 — charged 우선 환수 + deficit 0', () => {
+      // charged 30,000pt 보유 작가 환불 25,000pt
+      const r = computeRefundLedgerEntries(25000, balances(5000, 10000, 3000, 30000))
+      expect(r.recoveredBySource.charged).toBe(25000)
+      expect(r.recoveredBySource.gift).toBe(0)
+      expect(r.recoveredBySource.subscription).toBe(0)
+      expect(r.recoveredBySource.free).toBe(0)
+      expect(r.totalRecovered).toBe(25000)
+      expect(r.deficitIncurred).toBe(0)
+    })
+
+    it('charged 부족 — gift → subscription → free 순서로 채움', () => {
+      // 환수 10,000 / charged 3,000 / gift 2,000 / subscription 4,000 / free 1,000
+      const r = computeRefundLedgerEntries(10000, balances(1000, 4000, 2000, 3000))
+      // charged 3,000 + gift 2,000 + subscription 4,000 + free 1,000 = 10,000
+      expect(r.recoveredBySource.charged).toBe(3000)
+      expect(r.recoveredBySource.gift).toBe(2000)
+      expect(r.recoveredBySource.subscription).toBe(4000)
+      expect(r.recoveredBySource.free).toBe(1000)
+      expect(r.totalRecovered).toBe(10000)
+      expect(r.deficitIncurred).toBe(0)
+    })
+
+    it('잔액 < 환수액 — 환수 가능액 차감 + 부족분 deficit 발생', () => {
+      // 환수 10,000 / 4 출처 합 4,000 → 부족분 6,000pt 외상
+      const r = computeRefundLedgerEntries(10000, balances(500, 1000, 500, 2000))
+      // charged 2,000 + gift 500 + subscription 1,000 + free 500 = 4,000
+      expect(r.recoveredBySource.charged).toBe(2000)
+      expect(r.recoveredBySource.gift).toBe(500)
+      expect(r.recoveredBySource.subscription).toBe(1000)
+      expect(r.recoveredBySource.free).toBe(500)
+      expect(r.totalRecovered).toBe(4000)
+      // 이중 외상 통합 — 부족분이 Author.deficitPoints 가산 대상
+      expect(r.deficitIncurred).toBe(6000)
+    })
+
+    it('잔액 0 — 전액 deficit (충전→환불 전에 모두 소진된 케이스)', () => {
+      const r = computeRefundLedgerEntries(5000, balances(0, 0, 0, 0))
+      expect(r.totalRecovered).toBe(0)
+      expect(r.deficitIncurred).toBe(5000)
+      expect(r.recoveredBySource.charged).toBe(0)
+      expect(r.recoveredBySource.gift).toBe(0)
+      expect(r.recoveredBySource.subscription).toBe(0)
+      expect(r.recoveredBySource.free).toBe(0)
+    })
+
+    it('환수액 0 — 모두 0', () => {
+      const r = computeRefundLedgerEntries(0, balances(1000, 1000, 1000, 1000))
+      expect(r.totalRecovered).toBe(0)
+      expect(r.deficitIncurred).toBe(0)
+      Object.values(r.recoveredBySource).forEach((v) => expect(v).toBe(0))
+    })
+
+    it('환수액이 음수면 throw', () => {
+      expect(() =>
+        computeRefundLedgerEntries(-1, balances(0, 0, 0, 0)),
+      ).toThrow()
+    })
+
+    it('환수액이 비정수면 throw', () => {
+      expect(() =>
+        computeRefundLedgerEntries(100.5, balances(0, 0, 0, 1000)),
+      ).toThrow()
     })
   })
 })

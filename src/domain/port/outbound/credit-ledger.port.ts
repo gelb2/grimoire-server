@@ -78,6 +78,20 @@ export interface SpendInput {
   relatedId?: string
 }
 
+/**
+ * transfer 결과 (CC-2b — 案 G1) — 응원 선물 양측 작가 1 트랜잭션 이동.
+ *
+ * sender 측은 `planConsumption` 으로 4 출처에서 소진 우선순위(무료→구독→선물→충전) 차감,
+ * receiver 측은 `source='gift'` 단일 출처에 적립. **deficit 금지** — sender 잔액 부족 시 throw
+ * (외상 선물 불가, `spend` 와 다른 점).
+ */
+export interface TransferResult {
+  /** sender 출처별 차감액 (양수) — 4 출처 합 = amount */
+  senderSpentBySource: Record<CreditSource, number>
+  /** receiver 적립 후 `Author.pointsGift` 캐시값 */
+  receiverGiftBalance: number
+}
+
 export interface CreditLedgerPort {
   /**
    * 적립 — 가입/충전/응원선물/구독풀.
@@ -104,4 +118,34 @@ export interface CreditLedgerPort {
 
   /** 작가의 ledger 이력 조회 (최신순) */
   findByAuthor(authorId: string, limit: number): Promise<CreditLedgerEntry[]>
+
+  /**
+   * 응원 선물 — 독자(sender) → 작가(receiver) 양측 1 트랜잭션 이동 (CC-2b — 案 G1).
+   *
+   * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §1-B
+   *       .claude/state/sprint-cc2b-gift-refund-wiring-plan-draft.md §2-2
+   *
+   * CLAUDE.md §9 결제 원자성 — 양측 이동을 단일 `$transaction` 으로 묶는다
+   * ("한쪽만 반영"은 §0/§9상 절대 불가):
+   *   ① 데드락 방지 lock 순서 — `senderId<receiverId` 비교로 작은 id 먼저
+   *     `SELECT ... WHERE id IN ($1,$2) ORDER BY id FOR UPDATE` (giftTransfer 패턴 그대로)
+   *   ② sender — `planConsumption`(무료→구독→선물→충전) 으로 4 출처에서 amount 차감.
+   *     **deficit 금지** — sender 잔액 부족 시 throw (외상 선물 불가, `spend` 와 다름).
+   *     출처별 `CreditLedger spend` row + Author 4 캐시 차감.
+   *   ③ receiver — `source='gift'` `earn` row + `Author.pointsGift` 캐시 가산.
+   *   ④ 자기 선물(senderId===receiverId) 차단.
+   *
+   * @param senderId 보내는 작가 id
+   * @param receiverId 받는 작가 id
+   * @param amount 선물 포인트 (양수 pt 단위 — `GIFT_POINT_OPTIONS` 1,000/3,000/5,000)
+   * @param relatedId 약결합 id (예: 'gift_request_id' 등) — null 허용
+   * @returns { senderSpentBySource, receiverGiftBalance }
+   * @throws Error 자기선물 / sender 미존재 / receiver 미존재 / sender 잔액 부족 / amount<=0
+   */
+  transfer(
+    senderId: string,
+    receiverId: string,
+    amount: number,
+    relatedId?: string,
+  ): Promise<TransferResult>
 }

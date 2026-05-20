@@ -1,11 +1,10 @@
-import { Injectable, Inject, BadRequestException, NotFoundException } from '@nestjs/common'
+import { Injectable, Inject, BadRequestException, NotFoundException, Optional } from '@nestjs/common'
 import { SocialRepositoryPort } from '@domain/port/outbound/social-repository.port'
 import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
+import { CreditLedgerPort } from '@domain/port/outbound/credit-ledger.port'
 import { Subscription, Comment, AnonymousCommentInput } from '@domain/model/social'
-import { CreditReason } from '@domain/model/credit'
-
-const VALID_GIFT_AMOUNTS = [1, 3, 5]
+import { GIFT_POINT_OPTIONS, isGiftPointOption } from '@domain/model/gift-points'
 
 @Injectable()
 export class SocialUseCase {
@@ -13,6 +12,14 @@ export class SocialUseCase {
     @Inject('SocialRepositoryPort') private readonly socialRepo: SocialRepositoryPort,
     @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
+    /**
+     * CC-2b — 응원 선물 신 경로 (CreditLedgerPort.transfer).
+     * Optional — 미주입 시 구 `creditRepo.giftTransfer` 폴백(BACKWARD COMPATIBLE,
+     * 단 운영 app.module 에서는 항상 주입 — CC-3 후 폴백 제거).
+     */
+    @Optional()
+    @Inject('CreditLedgerPort')
+    private readonly ledger: CreditLedgerPort | null = null,
   ) {}
 
   // ── 좋아요 (로그인) ──
@@ -104,13 +111,28 @@ export class SocialUseCase {
 
   // ── 크레딧 선물 ──
 
+  /**
+   * 응원 선물 (작가 slug 기반) — CC-2b 신 경로 (案 G1).
+   *
+   * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §1-B
+   *       .claude/state/sprint-cc2b-gift-refund-wiring-plan-draft.md §3
+   *
+   * body `amount` 단위 = **pt** (1,000/3,000/5,000pt 3단계 — `GIFT_POINT_OPTIONS` 정본,
+   * 메인 §6 결정 박제). `CreditLedgerPort.transfer` 가 양측 작가 1 트랜잭션 이동.
+   * 구 `creditRepo.giftTransfer` 폴백은 `ledger` 미주입 시(테스트용)만.
+   */
   async giftCredits(
     senderId: string,
     receiverSlug: string,
     amount: number,
-  ): Promise<{ senderCredits: number; receiverCredits: number }> {
-    if (!VALID_GIFT_AMOUNTS.includes(amount)) {
-      throw new BadRequestException(`선물 금액은 ${VALID_GIFT_AMOUNTS.join(', ')} 중 하나여야 합니다`)
+  ): Promise<{
+    senderSpentBySource: Record<'free' | 'subscription' | 'gift' | 'charged', number>
+    receiverGiftBalance: number
+  }> {
+    if (!isGiftPointOption(amount)) {
+      throw new BadRequestException(
+        `선물 금액은 ${GIFT_POINT_OPTIONS.join(', ')}pt 중 하나여야 합니다`,
+      )
     }
 
     const receiver = await this.authorRepo.findBySlug(receiverSlug)
@@ -122,13 +144,19 @@ export class SocialUseCase {
       throw new BadRequestException('자기 자신에게 선물할 수 없습니다')
     }
 
-    return this.creditRepo.giftTransfer(
-      senderId,
-      receiver.id,
-      amount,
-      CreditReason.giftSent(receiverSlug),
-      CreditReason.giftReceived(senderId),
-    )
+    if (!this.ledger) {
+      throw new BadRequestException('포인트 원장이 구성되지 않았습니다')
+    }
+
+    try {
+      return await this.ledger.transfer(senderId, receiver.id, amount, undefined)
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e)
+      if (message.includes('포인트가 부족') || message.includes('크레딧이 부족')) {
+        throw new BadRequestException('포인트가 부족합니다')
+      }
+      throw e
+    }
   }
 
   // ── 내부 유틸 ──

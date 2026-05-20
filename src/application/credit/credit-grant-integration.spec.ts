@@ -195,6 +195,81 @@ class FakeCreditLedger implements CreditLedgerPort {
       .reverse()
   }
 
+  /**
+   * CC-2b — 응원 선물 양측 작가 1 트랜잭션 이동 (案 G1).
+   * planConsumption 으로 sender 차감(deficit 금지) + receiver gift earn.
+   */
+  async transfer(
+    senderId: string,
+    receiverId: string,
+    amount: number,
+    relatedId?: string,
+  ): Promise<{
+    senderSpentBySource: Record<'free' | 'subscription' | 'gift' | 'charged', number>
+    receiverGiftBalance: number
+  }> {
+    if (!Number.isInteger(amount) || amount <= 0) {
+      throw new Error(`선물 금액은 양의 정수여야 합니다: ${amount}`)
+    }
+    if (senderId === receiverId) {
+      throw new Error('자기 자신에게 선물할 수 없습니다')
+    }
+    const sender = this.acc(senderId)
+    const receiver = this.acc(receiverId)
+    const plan = planConsumption(
+      {
+        free: sender.free,
+        subscription: sender.subscription,
+        gift: sender.gift,
+        charged: sender.charged,
+      },
+      amount,
+    )
+    if (plan.deficitIncurred > 0) {
+      throw new Error('포인트가 부족합니다')
+    }
+    const senderTotalBefore =
+      sender.free + sender.subscription + sender.gift + sender.charged
+    const senderBalanceAfter = senderTotalBefore - amount
+    for (const source of ['free', 'subscription', 'gift', 'charged'] as const) {
+      const take = plan.spentBySource[source]
+      if (take > 0) {
+        sender[source] -= take
+        this.rows.push({
+          id: `ledger-${this.rows.length + 1}`,
+          authorId: senderId,
+          source,
+          type: 'spend',
+          amount: -take,
+          balanceAfter: senderBalanceAfter,
+          expiresAt: null,
+          reason: `gift_sent:${receiverId}`,
+          relatedId: relatedId ?? null,
+          createdAt: new Date(),
+        })
+      }
+    }
+    receiver.gift += amount
+    const receiverTotalAfter =
+      receiver.free + receiver.subscription + receiver.gift + receiver.charged
+    this.rows.push({
+      id: `ledger-${this.rows.length + 1}`,
+      authorId: receiverId,
+      source: 'gift',
+      type: 'earn',
+      amount,
+      balanceAfter: receiverTotalAfter,
+      expiresAt: null,
+      reason: `gift_received:${senderId}`,
+      relatedId: relatedId ?? null,
+      createdAt: new Date(),
+    })
+    return {
+      senderSpentBySource: plan.spentBySource,
+      receiverGiftBalance: receiver.gift,
+    }
+  }
+
   /** 검증 헬퍼 — 특정 작가의 earn row 만 */
   earnRowsOf(authorId: string): CreditLedgerEntry[] {
     return this.rows.filter((r) => r.authorId === authorId && r.type === 'earn')

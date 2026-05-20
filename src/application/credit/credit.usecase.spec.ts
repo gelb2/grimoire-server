@@ -111,41 +111,87 @@ describe('CreditUseCase', () => {
     })
   })
 
-  describe('gift', () => {
+  describe('gift (CC-2b — ledger.transfer 신 경로)', () => {
     const mockReceiver = { id: 'author-2', slug: 'recv', name: '수신자', email: 'recv@test.com', credits: 3, createdAt: new Date() }
 
-    it('크레딧을 선물하고 양쪽 잔액을 반환한다', async () => {
+    /** ledger.transfer mock + 4 출처 적당히 채운 작가 + useCase 재구성 */
+    function setupWithLedger(senderCredits = 5000) {
+      const mockLedger = {
+        getBalance: jest.fn(),
+        earn: jest.fn(),
+        spend: jest.fn(),
+        settleDeficit: jest.fn(),
+        findByAuthor: jest.fn(),
+        transfer: jest.fn().mockResolvedValue({
+          senderSpentBySource: { free: 0, subscription: 0, gift: 0, charged: 1000 },
+          receiverGiftBalance: 1000,
+        }),
+      }
       mockAuthorRepo.findById
-        .mockResolvedValueOnce(mockAuthor)   // sender
-        .mockResolvedValueOnce(mockReceiver)  // receiver
+        .mockResolvedValueOnce({ ...mockAuthor, credits: senderCredits })  // sender
+        .mockResolvedValueOnce(mockReceiver) // receiver
+      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      return { uc, mockLedger }
+    }
 
-      const result = await useCase.gift('author-1', 'author-2', 1)
+    it('선물 시 ledger.transfer 단일 트랜잭션을 호출한다 (pt 단위)', async () => {
+      const { uc, mockLedger } = setupWithLedger()
 
-      expect(mockCreditRepo.giftTransfer).toHaveBeenCalledWith(
-        'author-1', 'author-2', 1, 'gift_sent:author-2', 'gift_received:author-1',
-      )
-      expect(result.senderCredits).toBe(2)
-      expect(result.receiverCredits).toBe(4)
+      const result = await uc.gift('author-1', 'author-2', 1000)
+
+      expect(mockLedger.transfer).toHaveBeenCalledWith('author-1', 'author-2', 1000, undefined)
+      expect(result.receiverGiftBalance).toBe(1000)
+      expect(result.senderSpentBySource.charged).toBe(1000)
+      // 구 giftTransfer 는 호출되지 않음
+      expect(mockCreditRepo.giftTransfer).not.toHaveBeenCalled()
     })
 
-    it('자기 자신에게 선물하면 에러를 던진다', async () => {
-      await expect(useCase.gift('author-1', 'author-1', 1)).rejects.toThrow('자기 자신에게')
+    it('자기 자신에게 선물하면 BadRequest', async () => {
+      const { uc } = setupWithLedger()
+      await expect(uc.gift('author-1', 'author-1', 1000)).rejects.toThrow('자기 자신에게')
     })
 
-    it('선물 금액이 0 이하이면 에러를 던진다', async () => {
-      await expect(useCase.gift('author-1', 'author-2', 0)).rejects.toThrow('양수')
+    it('선물 금액이 0 이하면 BadRequest', async () => {
+      const { uc } = setupWithLedger()
+      await expect(uc.gift('author-1', 'author-2', 0)).rejects.toThrow('양')
     })
 
-    it('크레딧이 부족하면 에러를 던진다', async () => {
-      mockAuthorRepo.findById.mockResolvedValue({ ...mockAuthor, credits: 0 })
-      await expect(useCase.gift('author-1', 'author-2', 1)).rejects.toThrow('크레딧이 부족합니다')
+    it('선물 금액이 비정수면 BadRequest', async () => {
+      const { uc } = setupWithLedger()
+      await expect(uc.gift('author-1', 'author-2', 1000.5)).rejects.toThrow('정수')
     })
 
-    it('받는 유저가 없으면 에러를 던진다', async () => {
+    it('포인트 부족 시 BadRequest (외상 선물 불가 — transfer 가 throw)', async () => {
+      const mockLedger = {
+        getBalance: jest.fn(),
+        earn: jest.fn(),
+        spend: jest.fn(),
+        settleDeficit: jest.fn(),
+        findByAuthor: jest.fn(),
+        transfer: jest.fn().mockRejectedValue(new Error('포인트가 부족합니다')),
+      }
+      mockAuthorRepo.findById
+        .mockResolvedValueOnce(mockAuthor)
+        .mockResolvedValueOnce(mockReceiver)
+      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+
+      await expect(uc.gift('author-1', 'author-2', 1000)).rejects.toThrow('포인트가 부족')
+    })
+
+    it('받는 유저가 없으면 BadRequest', async () => {
+      const mockLedger = {
+        getBalance: jest.fn(), earn: jest.fn(), spend: jest.fn(),
+        settleDeficit: jest.fn(), findByAuthor: jest.fn(), transfer: jest.fn(),
+      }
       mockAuthorRepo.findById
         .mockResolvedValueOnce(mockAuthor)
         .mockResolvedValueOnce(null)
-      await expect(useCase.gift('author-1', 'no-one', 1)).rejects.toThrow('받는 유저')
+      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      await expect(uc.gift('author-1', 'no-one', 1000)).rejects.toThrow('받는 유저')
+    })
+
+    it('CreditLedgerPort 미주입 시 BadRequest (CC-2b 신 경로 필수)', async () => {
+      await expect(useCase.gift('author-1', 'author-2', 1000)).rejects.toThrow('포인트 원장')
     })
   })
 

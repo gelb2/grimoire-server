@@ -328,4 +328,93 @@ describe('SocialUseCase', () => {
       expect(mockSocialRepo.deleteAnonymousComment).toHaveBeenCalledWith('comment-1', '1234')
     })
   })
+
+  // ── CC-2b: giftCredits 신 경로 (ledger.transfer + pt 단위 단계) ──
+  describe('giftCredits (CC-2b — ledger.transfer + GIFT_POINT_OPTIONS)', () => {
+    /** 신 경로 setup — ledger.transfer mock + authorRepo.findBySlug mock */
+    function setupCC2b() {
+      const mockLedger = {
+        getBalance: jest.fn(),
+        earn: jest.fn(),
+        spend: jest.fn(),
+        settleDeficit: jest.fn(),
+        findByAuthor: jest.fn(),
+        transfer: jest.fn().mockResolvedValue({
+          senderSpentBySource: { free: 0, subscription: 0, gift: 0, charged: 1000 },
+          receiverGiftBalance: 1000,
+        }),
+      }
+      const mockAuthorRepo2 = {
+        findById: jest.fn(),
+        findBySlug: jest.fn().mockResolvedValue({
+          id: 'author-r',
+          slug: 'receiver',
+          name: 'R',
+          email: 'r@r.com',
+          credits: 0,
+          createdAt: new Date(),
+        }),
+        findByEmail: jest.fn(),
+        create: jest.fn(),
+        updateCredits: jest.fn(),
+      }
+      const mockCreditRepo2 = { adjustCredits: jest.fn(), findLogsByAuthorId: jest.fn(), giftTransfer: jest.fn(), getGiftRanking: jest.fn() }
+      const uc = new SocialUseCase(
+        mockSocialRepo as any,
+        mockCreditRepo2 as any,
+        mockAuthorRepo2 as any,
+        mockLedger as any,
+      )
+      return { uc, mockLedger, mockAuthorRepo2, mockCreditRepo2 }
+    }
+
+    it('GIFT_POINT_OPTIONS [1000,3000,5000] 중 1000pt 선물 시 ledger.transfer 호출 + 구 giftTransfer 0건', async () => {
+      const { uc, mockLedger, mockCreditRepo2 } = setupCC2b()
+
+      const result = await uc.giftCredits('reader-1', 'receiver', 1000)
+
+      expect(mockLedger.transfer).toHaveBeenCalledWith('reader-1', 'author-r', 1000, undefined)
+      expect(mockCreditRepo2.giftTransfer).not.toHaveBeenCalled()
+      expect(result.receiverGiftBalance).toBe(1000)
+    })
+
+    it('GIFT_POINT_OPTIONS 외 값(예: 1·3·5 구 크레딧) 거부', async () => {
+      const { uc, mockLedger } = setupCC2b()
+
+      await expect(uc.giftCredits('reader-1', 'receiver', 1)).rejects.toThrow(/1000, 3000, 5000pt/)
+      await expect(uc.giftCredits('reader-1', 'receiver', 3)).rejects.toThrow()
+      await expect(uc.giftCredits('reader-1', 'receiver', 5)).rejects.toThrow()
+      expect(mockLedger.transfer).not.toHaveBeenCalled()
+    })
+
+    it('자기 자신 선물 거부', async () => {
+      const { uc, mockAuthorRepo2, mockLedger } = setupCC2b()
+      mockAuthorRepo2.findBySlug.mockResolvedValueOnce({
+        id: 'reader-1', slug: 'receiver', name: 'R', email: 'r@r.com', credits: 0, createdAt: new Date(),
+      })
+
+      await expect(uc.giftCredits('reader-1', 'receiver', 1000)).rejects.toThrow(/자기/)
+      expect(mockLedger.transfer).not.toHaveBeenCalled()
+    })
+
+    it('받는 작가 미존재 NotFound', async () => {
+      const { uc, mockAuthorRepo2, mockLedger } = setupCC2b()
+      mockAuthorRepo2.findBySlug.mockResolvedValueOnce(null)
+
+      await expect(uc.giftCredits('reader-1', 'ghost', 3000)).rejects.toThrow(/작가/)
+      expect(mockLedger.transfer).not.toHaveBeenCalled()
+    })
+
+    it('ledger transfer 잔액 부족 throw → BadRequest', async () => {
+      const { uc, mockLedger } = setupCC2b()
+      mockLedger.transfer.mockRejectedValueOnce(new Error('포인트가 부족합니다'))
+
+      await expect(uc.giftCredits('reader-1', 'receiver', 5000)).rejects.toThrow(/포인트가 부족/)
+    })
+
+    it('ledger 미주입 시 BadRequest (CC-2b 신 경로 필수)', async () => {
+      // mockLedger 미주입 — 신 경로 필수
+      await expect(useCase.giftCredits('reader-1', 'receiver', 1000)).rejects.toThrow()
+    })
+  })
 })

@@ -42,6 +42,7 @@
 | 구독 월 포인트 풀 (MembershipPlan, 이월 금지, ADR-012) | 코드 구현 완료 (2026-05-17) — dev/prod migration apply 대기 |
 | 크레딧 적립 비결제 연동 (CC-1 — 가입/첫작품/관리자지급·차감/테마차감) | 구현 완료 (2026-05-19) — CRITICAL-2 해소 |
 | 크레딧 충전 결제 적립 연동 (CC-2a — T3 충전 + 디노미 4종 + C-6 해소) | 구현 완료 (2026-05-20) — CRITICAL-2 충전분 해소 |
+| 크레딧 선물·환불 결제 적립 연동 (CC-2b — T4 선물 + T7 환불 + 이중 외상 통합) | 구현 완료 (2026-05-20) — **CRITICAL-2 완전 종결** (적립 8경로 신 시스템 이행) |
 | Plan (구독 플랜 + 테마 슬롯 관리) | 구현 완료 |
 
 > **크레딧 개편 I Phase (2026-05-17)**: `sprint-credit-overhaul` — 디노미네이션 1:1,000 + 포인트 출처 4종 분리 회계 + 채팅 4구간 사후 차감 코드 구현 완료. schema.prisma 변경 + migration 파일 작성. **로컬 DB는 PAY-S1(2026-05-19)으로 apply 완료**, dev/prod는 §7 단계6/9 사용자 키워드 게이트(`크레딧개편 dev migration 진행` / `크레딧개편 prod migration 진행`) 대기. 정본: ADR-012 + `research/CREDIT_PRICING_OVERHAUL_PLAN.md` §8.
@@ -49,6 +50,8 @@
 > **크레딧 개편 CC-1 (2026-05-19)**: 적립 비결제 연동 — I Phase 의 CRITICAL-2(`GrantPointsUseCase` 5메서드 호출처 0건 / `chargeTheme` 미연동) 해소. 비결제 적립 5경로(가입 보너스 / 첫 작품 보너스 / 관리자 수동 지급·차감 / 테마 차감)를 신 `CreditLedger` 원장으로 이행. `auth`/`work-management`/`admin`/`generate-theme` usecase 가 `GrantPointsUseCase`·`ChargePointsUseCase` 를 실제 호출하도록 재배선 + 통합 테스트(`credit-grant-integration.spec.ts`) 신설. 잔여: T3 충전 / T4 선물 / T7 환불 적립 = CC-2 범위. 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §8.
 >
 > **크레딧 개편 CC-2a (2026-05-20)**: 충전 결제 적립 연동 — CC-1 의 잔여 중 T3 충전 해소. `PaymentRepositoryPort.completePaymentWithPoints` 신설 (案 1 — 단일 `$transaction` 으로 Payment 완료 + deficit 우선 상계 + 충전 `CreditLedger` charged earn + `Author` 캐시. 헥사고날 DIP 보존). `payment.usecase` 충전 success 분기를 구 `completePaymentAtomically` → `completePaymentWithPoints` 재배선 — `settleDeficit` 가 실 충전 경로에 처음 연결돼 **C-6 해소** (deficit 상한 작가가 충전하면 외상 상계 → 채팅 차단 해제). `CREDIT_PRODUCTS` 디노미 4종 개편(입문/기본/인기/베스트, `points` Int=총 pt + `bonusRate`). 도메인 헬퍼 `computeChargeLedgerEntries` 추출. 통합 spec `payment-charge-credit-integration.spec.ts` 신설 (충전 webhook → CreditLedger 사슬 검증, RED 재현 실증). 잔여: T4 선물 / T7 환불 적립 = CC-2b 범위. 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §1-A·§6·§8.
+>
+> **크레딧 개편 CC-2b (2026-05-20)**: 선물·환불 결제 적립 연동 — **CRITICAL-2 완전 종결** (적립 8경로 中 마지막 T4 선물 + T7 환불 신 시스템 이행). `CreditLedgerPort.transfer` 신설 (案 G1 — 단일 `$transaction`: 데드락 방지 lock 순서 작은 id 먼저 FOR UPDATE + sender `planConsumption` 4 출처 차감(deficit 금지) + receiver `gift` earn). `credit.usecase.gift` 재배선 — body `amount` 단위 = **pt** (1,000/3,000/5,000pt 3단계, `GIFT_POINT_OPTIONS` 도메인 상수, 메인 §6 결정). `PaymentRepositoryPort.refundPaymentWithPoints` 신설 (案 R1 — 案 1 대칭): 비례 계산(PAY-P2-1) + `computeRefundLedgerEntries`(charged→gift→subscription→free 우선) + `$executeRawUnsafe` CAS race 차단(PAY-P3-A) + **이중 외상 통합**(부족분 `Author.deficitPoints` 가산 → CC-2a `completePaymentWithPoints` 가 다음 충전 시 자동 회수). `RefundLog.credits`/`deficitCredits` 의미 재해석(pt 단위 + 외상 기여분 — 물리 rename 0건, CC-4 위임). 통합 spec `credit-gift-refund-integration.spec.ts` 신설 (C7b 선물 양측 + C7c 4 출처 환수 + **C7d 이중 외상 통합** RED 재현 실증). jest 1042 PASS / 커버리지 61.11%. **CRITICAL-2 종결 증명**: 적립 8경로(T1~T8) 전부 신 `CreditLedger` — `ledger.transfer` + `refundPaymentWithPoints` application 호출 각 ≥1건, 구 `giftTransfer`·`refundPaymentAtomically` application 호출 0건. **CC-3 후속 필수**: `getGiftRanking`/`getLogs` (구 `CreditLog` 집계) → `CreditLedger` 재작성. 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §1-B·§1-C·§8.
 
 ### 보안 인프라
 
