@@ -213,10 +213,10 @@ HTTP 미노출. NestJS `@Cron('0 0 4 * * *')` 매일 새벽 4시 1회 — PAY-P0
 
 | Method | Path | 용도 | 인증 |
 |--------|------|------|------|
-| POST | `/api/credits/gift` | 크레딧 선물 (독자 → 작가) | JWT |
-| GET | `/api/credits/ranking` | 응원받는 작가 랭킹 | - |
-| GET | `/api/credits/balance` | 크레딧 잔액 조회 | JWT |
-| GET | `/api/credits/logs` | 크레딧 로그 조회 | JWT |
+| POST | `/api/credits/gift` | 응원 선물 (독자 → 작가) — body `{receiverId, amount}` `amount` **단위 pt** (1,000/3,000/5,000pt 3단계, CC-2b §6 결정) | JWT |
+| GET | `/api/credits/ranking` | 응원받는 작가 랭킹 (구 `CreditLog` 집계 — CC-3 후 `CreditLedger` 재작성 예정) | - |
+| GET | `/api/credits/balance` | 4 출처 포인트 잔액 (`CreditBalance` — bySource/total/deficit/available) | JWT |
+| GET | `/api/credits/logs` | 크레딧 로그 조회 (구 `CreditLog` — CC-3 후 `CreditLedger` 재작성 예정) | JWT |
 
 ### Stats
 

@@ -31,6 +31,9 @@ describe('PaymentCleanupJob', () => {
       findPendingPaymentsOlderThan: jest.fn().mockResolvedValue([]),
       expirePayment: jest.fn().mockResolvedValue(undefined),
       refundPaymentAtomically: jest.fn(),
+      // CC-2b — 환불 신 경로 mock (cleanup job 미사용이나 PaymentRepositoryPort 완전성)
+      refundPaymentWithPoints: jest.fn(),
+      completePaymentWithPoints: jest.fn(),
       findReusablePendingPayment: jest.fn(),
     } as unknown as jest.Mocked<PaymentRepositoryPort>
 

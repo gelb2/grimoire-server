@@ -70,35 +70,60 @@ export class CreditUseCase {
     return this.ledger.getBalance(authorId)
   }
 
-  /** 크레딧 선물 (독자 → 작가, 트랜잭션) */
-  async gift(senderId: string, receiverId: string, amount: number): Promise<{ senderCredits: number; receiverCredits: number }> {
-    if (amount <= 0) {
-      throw new BadRequestException('선물 금액은 양수여야 합니다')
+  /**
+   * 응원 선물 (독자 → 작가) — CC-2b 案 G1 신 경로.
+   *
+   * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §1-B
+   *       .claude/state/sprint-cc2b-gift-refund-wiring-plan-draft.md §3
+   *
+   * `CreditLedgerPort.transfer` 단일 `$transaction` 메서드가 양측 작가 이동을 원자 처리.
+   * 구 `creditRepo.giftTransfer`(`Author.credits` Int + `CreditLog`) 경로는 제거.
+   * sender 잔액 검증·자기 선물 차단은 `transfer` 내부에서 수행 — 본 메서드는 사전 검증만 보존.
+   *
+   * @param amount pt 단위 (메인 §6 결정 — 1,000/3,000/5,000pt, `GIFT_POINT_OPTIONS` 정본).
+   * @returns 양측 작가 갱신 결과 — `senderSpentBySource`(4 출처 차감액) / `receiverGiftBalance`(받는 작가 pointsGift)
+   */
+  async gift(
+    senderId: string,
+    receiverId: string,
+    amount: number,
+  ): Promise<{
+    senderSpentBySource: Record<'free' | 'subscription' | 'gift' | 'charged', number>
+    receiverGiftBalance: number
+  }> {
+    if (!Number.isInteger(amount) || amount <= 0) {
+      throw new BadRequestException('선물 금액은 양의 정수여야 합니다')
     }
     if (senderId === receiverId) {
       throw new BadRequestException('자기 자신에게 선물할 수 없습니다')
     }
+    if (!this.ledger) {
+      // CC-2b 신 경로 — CreditLedgerPort 가 정본. ledger 없으면 응답 불가.
+      throw new BadRequestException('포인트 원장이 구성되지 않았습니다')
+    }
 
+    // sender·receiver 미존재 검증은 transfer 내부 FOR UPDATE 가 throw 로 처리하지만,
+    // controller 친화적 400 응답을 위해 사전 검증 보존.
     const sender = await this.authorRepo.findById(senderId)
     if (!sender) {
       throw new BadRequestException('보내는 유저를 찾을 수 없습니다')
     }
-    if (sender.credits < amount) {
-      throw new BadRequestException('크레딧이 부족합니다')
-    }
-
     const receiver = await this.authorRepo.findById(receiverId)
     if (!receiver) {
       throw new BadRequestException('받는 유저를 찾을 수 없습니다')
     }
 
-    return this.creditRepo.giftTransfer(
-      senderId,
-      receiverId,
-      amount,
-      `gift_sent:${receiverId}`,
-      `gift_received:${senderId}`,
-    )
+    try {
+      // 단일 $transaction — sender 차감(planConsumption) + receiver gift earn
+      return await this.ledger.transfer(senderId, receiverId, amount, undefined)
+    } catch (e: unknown) {
+      // 잔액 부족(외상 선물 불가)을 4xx 로 정리 — 그 외 throw 위임
+      const message = e instanceof Error ? e.message : String(e)
+      if (message.includes('포인트가 부족') || message.includes('크레딧이 부족')) {
+        throw new BadRequestException('포인트가 부족합니다')
+      }
+      throw e
+    }
   }
 
   /** 응원받는 작가 랭킹 */

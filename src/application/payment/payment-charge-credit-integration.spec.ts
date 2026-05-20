@@ -124,7 +124,17 @@ class FakePaymentRepository {
     proportionalCredits: number
     isPartial: boolean
   }> {
-    throw new Error('환불은 CC-2b 범위 — 통합 spec 미사용')
+    throw new Error('CC-2b: 환불은 refundPaymentWithPoints 를 써야 한다 (구 경로 호출 = 미연동)')
+  }
+
+  /** CC-2b — 환불 신 경로. 본 CC-2a 통합 spec 에선 미사용(환불 케이스는 CC-2b 통합 spec). */
+  async refundPaymentWithPoints(): Promise<{
+    actualRefunded: number
+    deficitIncurred: number
+    proportionalPt: number
+    isPartial: boolean
+  }> {
+    throw new Error('환불은 CC-2b 통합 spec 영역 — payment-charge-credit-integration 미사용')
   }
 
   /** @deprecated CC-2a — 구 경로. 통합 spec 에서 호출되면 안 됨 (RED 재현 감지용). */

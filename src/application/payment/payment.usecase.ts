@@ -431,19 +431,22 @@ export class PaymentUseCase {
       // credits 필드 = 충전 총 pt (CC-2a 디노미 — payment.credits 는 product.points 저장값)
       return { processed: true, credits: payment.credits }
     } else if (event.status === NORMALIZED_WEBHOOK_STATUS.CANCEL) {
-      // 환불 처리 (Sprint PAY-P1-1) — 크레딧 환수 트랜잭션 + RefundLog + AuditLog(operator='system_refund')
-      // refund-payment.usecase가 paymentRepo.refundPaymentAtomically $transaction 호출 (정본: shared-contracts §13)
-      let deficitCredits = 0
+      // CC-2b (2026-05-20, 진단 §1-C) — 환불 신 경로 + 이중 외상 통합.
+      // refund-payment.usecase 가 paymentRepo.refundPaymentWithPoints $transaction 호출.
+      // 4 출처 환수(charged→gift→subscription→free 우선) + 부족분 Author.deficitPoints 가산
+      // → 외상 정본 단일화 + CC-2a `completePaymentWithPoints` 가 다음 충전 시 자동 회수.
+      // payment.credits = MEDIUM-4 의미 재해석 후 충전 총 pt → refundPt 로 그대로 전달
+      let deficitIncurred = 0
       try {
         const result = await this.refundPaymentUseCase.execute({
           paymentId: payment.id,
           authorId: payment.authorId,
-          credits: payment.credits,
+          refundPt: payment.credits,
           refundedAmount: event.amount,
           reason: `polar_webhook_${event.type}`,
           source: 'webhook',
         })
-        deficitCredits = result.deficitCredits
+        deficitIncurred = result.deficitIncurred
       } catch (e: unknown) {
         // PAY-P3-B 구멍-C 차단: SDK exception 분류 후 분기 처리 (cancel 분기)
         // 정본: shared-contracts §24 PolarSDKTimeoutPolicy
@@ -473,7 +476,7 @@ export class PaymentUseCase {
         payload: event as unknown as object,
         status: 'processed',
       })
-      return { processed: true, credits: 0, deficitCredits }
+      return { processed: true, credits: 0, deficitCredits: deficitIncurred }
     } else {
       // event.status === 'fail' — 결제 실패 (크레딧 환수 대상 아님 — pending → failed만)
       await this.paymentRepo.updateStatus(payment.id, 'failed')

@@ -249,17 +249,21 @@ cron 주기: `@Cron('0 */10 * * * *')` 10분 (cost-accountant 권고 — Polar `
 
 ---
 
-### refund_logs (Sprint PAY-P1-1, 2026-05-03)
+### refund_logs (Sprint PAY-P1-1, 2026-05-03; CC-2b 의미 재해석 2026-05-20)
 
-Polar 환불 webhook 수신 시 크레딧 환수 트랜잭션의 영구 박제 테이블. payment.usecase.processWebhook의 'cancel' 분기에서 RefundPaymentUseCase가 $transaction 내부에 박제. Author.credits 잔액 부족 시 0 fix + `deficit_credits` 박제로 적자 위험 차단.
+Polar 환불 webhook 수신 시 크레딧 환수 트랜잭션의 영구 박제 테이블. CC-2b 이후 RefundPaymentUseCase 가 `refundPaymentWithPoints` `$transaction` 내부에 박제 (4 출처 환수 + 이중 외상 통합).
+
+**CC-2b 컬럼 의미 재해석 (물리 변경 0건, 코드 주석 + 본 문서만 갱신, 물리 rename 은 CC-4 위임)**:
+- `credits` Int — CC-2a `Payment.credits` 의미 "pt" 재해석 정합: **실 환수 pt** (`actualRefunded`). 4 출처(charged→gift→subscription→free)에서 실제 환수된 총합.
+- `deficit_credits` Int — CC-2b 의미 재해석: **이 환불 1건이 유발한 외상 pt 기여분** (감사 추적용). 외상 잔액 정본은 `Author.deficitPoints` 단일화 — 다음 충전 시 CC-2a `completePaymentWithPoints` 가 자동 회수 (구 시스템 영구 외상 해소).
 
 | 컬럼 | 타입 | 제약 | 설명 |
 |------|------|------|------|
 | id | uuid | PK | 환불 로그 식별자 |
-| payment_id | text | - | 환불 대상 Payment id (1:N — 향후 부분 환불 호환 위해 unique 미부여) |
+| payment_id | text | - | 환불 대상 Payment id (1:N — 부분 환불 호환 위해 unique 미부여) |
 | amount | int | - | PG 환불 금액 (KRW) |
-| credits | int | - | 실제 환수된 크레딧 (잔액 충분 시 = 요청, 부족 시 = 잔액) |
-| deficit_credits | int | default(0) | 잔액 부족분 (양수 = 외상, 0 = 정상 환수). 운영자 회수 정책 결정 입력 |
+| credits | int | - | **실 환수 pt** (CC-2b 의미 재해석 — actualRefunded, 4 출처 합) |
+| deficit_credits | int | default(0) | **이 환불이 유발한 외상 pt 기여분** (CC-2b 의미 재해석 — 외상 잔액 정본은 Author.deficitPoints) |
 | reason | text | - | 환불 사유 (예: 'polar_webhook_order.refunded') |
 | processed_at | timestamptz(3) | default(now()) | 환수 처리 시각 |
 | source | text | - | 'webhook' (Polar 자동) / 'manual' (운영자 수동, P2) |
@@ -267,17 +271,18 @@ Polar 환불 webhook 수신 시 크레딧 환수 트랜잭션의 영구 박제 �
 인덱스:
 - `@@index([payment_id])` — Payment별 환불 이력 조회
 
-정책:
-- **잔액 부족 시 0 fix**: Author.credits < credits → Author.credits = 0 + deficit_credits = credits - 잔액. 음수 잔액 절대 차단.
-- **CreditLog 음수 박제 대칭**: 같은 $transaction 내부에서 `credit_logs.amount = -actualDeducted` 박제 (계정 잔액 합산 정합)
-- **AdminAuditLog 후행**: `operator='system_refund'`, `action='refund_normal' | 'refund_deficit'` ($transaction 외부 호출)
+정책 (CC-2b 갱신):
+- **이중 외상 통합**: 잔액 부족분 → `Author.deficitPoints` 가산 + `CreditLedger type='deficit_incur'` row (reason=`refund_deficit:..`). 외상 정본 단일화 — 다음 충전 시 자동 회수.
+- **4 출처 환수 우선순위**: charged → gift → subscription → free (`REFUND_RECOVERY_ORDER`). 출처별 `CreditLedger type='spend'` row 박제.
+- **PAY-P3-A CAS race 차단**: `$executeRawUnsafe UPDATE ... WHERE 컬럼 >= 환수액` count=0 시 throw CAS_MISMATCH (DLQ retry 위임).
+- **AdminAuditLog 후행**: `operator='system_refund'`, `action='refund_normal' | 'refund_partial' | 'refund_deficit' | 'refund_partial_deficit'` ($transaction 외부).
 
 3중 멱등성:
 - L1: PAY-P0-1 `webhook_events.eventId @unique` (재전송 차단)
-- L2: payment.usecase 진입 시 `payment.status='completed'` 체크 (이미 환불된 payment skip)
+- L2: payment.usecase 진입 시 status 체크 (`already_completed` / `already_refunded` / `already_partial_refunded` skip)
 - L3: refund_logs 박제 (조회 + 추적)
 
-정본: `.claude/shared-contracts.md` §13 RefundPaymentAtomically
+정본: `.claude/shared-contracts.md` §13 RefundPaymentAtomically + §30 CreditOverhaul (CC-2b 변경 이력)
 
 ---
 

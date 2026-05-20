@@ -183,4 +183,126 @@ describe('PrismaCreditLedgerRepository', () => {
       expect(balance.available).toBe(17000)
     })
   })
+
+  // CC-2b — 案 G1 transfer (응원 선물 양측 1 트랜잭션)
+  describe('transfer — 응원 선물 (案 G1)', () => {
+    /** sender(id 알파벳 작) + receiver(id 알파벳 큰) 양측 row 를 IN(...) FOR UPDATE 가 반환 */
+    function mockTwoAuthors(
+      senderId: string,
+      sender: typeof authorRow,
+      receiverId: string,
+      receiver: typeof authorRow,
+    ) {
+      const tx = mockPrisma.$transaction
+      tx.mockImplementationOnce(async (fn: any) => {
+        const inner = {
+          $queryRawUnsafe: jest.fn().mockResolvedValue([
+            { id: senderId, ...sender },
+            { id: receiverId, ...receiver },
+          ]),
+          author: {
+            update: jest.fn().mockImplementation(async (args: any) => {
+              authorUpdates.push({ where: args.where, data: args.data })
+              return {}
+            }),
+          },
+          creditLedger: {
+            create: jest.fn().mockImplementation(async (args: any) => {
+              const row = { id: `l-${createdLedgers.length + 1}`, createdAt: new Date(), ...args.data }
+              createdLedgers.push(row)
+              return row
+            }),
+          },
+        }
+        return fn(inner)
+      })
+    }
+
+    it('1,000pt 선물 — sender charged 차감 spend + receiver gift earn 양측 ledger 박제', async () => {
+      mockTwoAuthors(
+        'reader-1',
+        { points_free: 0, points_subscription: 0, points_gift: 0, points_charged: 5000, deficit_points: 0 },
+        'author-1',
+        { points_free: 0, points_subscription: 0, points_gift: 0, points_charged: 0, deficit_points: 0 },
+      )
+
+      const result = await repo.transfer('reader-1', 'author-1', 1000)
+
+      expect(result.senderSpentBySource).toEqual({
+        free: 0, subscription: 0, gift: 0, charged: 1000,
+      })
+      expect(result.receiverGiftBalance).toBe(1000)
+
+      // ledger row 2건 — sender spend + receiver gift earn
+      const spendRow = createdLedgers.find((r) => r.type === 'spend')
+      const earnRow = createdLedgers.find((r) => r.type === 'earn')
+      expect(spendRow).toMatchObject({
+        authorId: 'reader-1',
+        source: 'charged',
+        type: 'spend',
+        amount: -1000,
+        reason: 'gift_sent:author-1',
+      })
+      expect(earnRow).toMatchObject({
+        authorId: 'author-1',
+        source: 'gift',
+        type: 'earn',
+        amount: 1000,
+        reason: 'gift_received:reader-1',
+      })
+    })
+
+    it('sender 잔액 부족 — throw (외상 선물 불가)', async () => {
+      mockTwoAuthors(
+        'reader-2',
+        { points_free: 0, points_subscription: 0, points_gift: 0, points_charged: 500, deficit_points: 0 },
+        'author-2',
+        { points_free: 0, points_subscription: 0, points_gift: 0, points_charged: 0, deficit_points: 0 },
+      )
+
+      await expect(repo.transfer('reader-2', 'author-2', 1000)).rejects.toThrow('포인트가 부족')
+    })
+
+    it('자기 선물 throw (사전 검증)', async () => {
+      await expect(repo.transfer('a', 'a', 1000)).rejects.toThrow('자기')
+    })
+
+    it('amount 0 이하 throw', async () => {
+      await expect(repo.transfer('a', 'b', 0)).rejects.toThrow('양')
+    })
+
+    it('amount 비정수 throw', async () => {
+      await expect(repo.transfer('a', 'b', 100.5)).rejects.toThrow('정수')
+    })
+
+    it('4 출처 분산 차감 — free 우선 + 잔여 charged', async () => {
+      mockTwoAuthors(
+        'reader-3',
+        { points_free: 500, points_subscription: 0, points_gift: 0, points_charged: 5000, deficit_points: 0 },
+        'author-3',
+        { points_free: 0, points_subscription: 0, points_gift: 0, points_charged: 0, deficit_points: 0 },
+      )
+
+      const result = await repo.transfer('reader-3', 'author-3', 1000)
+
+      expect(result.senderSpentBySource.free).toBe(500)
+      expect(result.senderSpentBySource.charged).toBe(500)
+      // sender spend ledger 2건 (free + charged) + receiver earn 1건 = 총 3건
+      const spendRows = createdLedgers.filter((r) => r.type === 'spend')
+      expect(spendRows).toHaveLength(2)
+    })
+
+    it('sender/receiver 미존재 throw', async () => {
+      const tx = mockPrisma.$transaction
+      tx.mockImplementationOnce(async (fn: any) => {
+        const inner = {
+          $queryRawUnsafe: jest.fn().mockResolvedValue([]),
+          author: { update: jest.fn() },
+          creditLedger: { create: jest.fn() },
+        }
+        return fn(inner)
+      })
+      await expect(repo.transfer('ghost-a', 'ghost-b', 1000)).rejects.toThrow('유저를 찾을 수 없')
+    })
+  })
 })

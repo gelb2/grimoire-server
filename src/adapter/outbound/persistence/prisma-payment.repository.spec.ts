@@ -447,3 +447,241 @@ describe('PrismaPaymentRepository.completePaymentWithPoints — 충전 적립 �
     expect(mockPrisma.$transaction).not.toHaveBeenCalled()
   })
 })
+
+// ============================================================================
+// CC-2b: refundPaymentWithPoints — 환불 신 경로 + 이중 외상 통합 (案 R1)
+// 정본: reports/CREDIT_CORE_DIAGNOSIS.md §1-C
+//       .claude/state/sprint-cc2b-gift-refund-wiring-plan-draft.md §5
+// CLAUDE.md §9 결제 원자성 — 단일 $transaction (Payment 갱신 + 4 출처 환수 + 외상 통합 + RefundLog)
+// ============================================================================
+describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 (CC-2b)', () => {
+  let repo: PrismaPaymentRepository
+  let mockPrisma: any
+  let txMock: any
+  let lockedRow: {
+    points_free: number
+    points_subscription: number
+    points_gift: number
+    points_charged: number
+    deficit_points: number
+  }
+  let refundLogs: any[]
+  let createdLedgers: any[]
+  let executedUpdates: string[]
+
+  const baseInput = {
+    paymentId: 'pay-r1',
+    authorId: 'author-r1',
+    refundPt: 25000,
+    refundedAmount: 3000,
+    reason: 'polar_webhook_order.refunded',
+    source: 'webhook' as const,
+  }
+
+  beforeEach(() => {
+    lockedRow = {
+      points_free: 0,
+      points_subscription: 0,
+      points_gift: 0,
+      points_charged: 25000,
+      deficit_points: 0,
+    }
+    refundLogs = []
+    createdLedgers = []
+    executedUpdates = []
+    txMock = {
+      $queryRawUnsafe: jest.fn().mockImplementation(async () => [lockedRow]),
+      // $executeRawUnsafe — CAS UPDATE (출처별 환수). 기본 1 row 갱신
+      $executeRawUnsafe: jest.fn().mockImplementation(async (sql: string) => {
+        executedUpdates.push(sql)
+        return 1
+      }),
+      payment: {
+        findUnique: jest.fn().mockResolvedValue({
+          amount: 3000,
+          credits: 25000,
+          status: 'completed',
+        }),
+        update: jest.fn().mockResolvedValue(undefined),
+      },
+      author: {
+        update: jest.fn().mockResolvedValue(undefined),
+      },
+      creditLedger: {
+        create: jest.fn().mockImplementation(async (args: any) => {
+          createdLedgers.push(args.data)
+          return args.data
+        }),
+      },
+      refundLog: {
+        create: jest.fn().mockImplementation(async (args: any) => {
+          refundLogs.push(args.data)
+          return args.data
+        }),
+      },
+    }
+    mockPrisma = {
+      $transaction: jest.fn().mockImplementation(async (cb: any) => cb(txMock)),
+    }
+    repo = new PrismaPaymentRepository(mockPrisma)
+  })
+
+  it('전액 환불 정상 — charged 25,000 환수 + RefundLog credits=25000 + deficit_incur 0건', async () => {
+    const result = await repo.refundPaymentWithPoints(baseInput)
+
+    expect(result).toEqual({
+      actualRefunded: 25000,
+      deficitIncurred: 0,
+      proportionalPt: 25000,
+      isPartial: false,
+    })
+
+    // Payment status='refunded'
+    expect(txMock.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'refunded' } }),
+    )
+
+    // CAS UPDATE — charged 컬럼 환수
+    expect(executedUpdates.some((s) => s.includes('points_charged'))).toBe(true)
+
+    // CreditLedger — spend row 1건 (charged) + deficit_incur 0건
+    expect(createdLedgers.filter((l) => l.type === 'spend')).toHaveLength(1)
+    expect(createdLedgers.filter((l) => l.type === 'deficit_incur')).toHaveLength(0)
+    expect(createdLedgers[0]).toMatchObject({
+      source: 'charged',
+      type: 'spend',
+      amount: -25000,
+    })
+
+    // RefundLog — credits=25000(실 환수), deficitCredits=0
+    expect(refundLogs).toHaveLength(1)
+    expect(refundLogs[0]).toMatchObject({
+      paymentId: 'pay-r1',
+      amount: 3000,
+      credits: 25000,
+      deficitCredits: 0,
+    })
+  })
+
+  it('이중 외상 통합 — 잔액 부족 시 deficit_incur ledger + Author.deficitPoints 가산', async () => {
+    // 잔액 10,000 / refundPt 25,000 → 환수 10,000 + deficit 15,000
+    lockedRow.points_charged = 10000
+    const result = await repo.refundPaymentWithPoints(baseInput)
+
+    expect(result.actualRefunded).toBe(10000)
+    expect(result.deficitIncurred).toBe(15000)
+
+    // deficit_incur ledger 1건 (reason=refund_deficit:..)
+    const deficitRows = createdLedgers.filter((l) => l.type === 'deficit_incur')
+    expect(deficitRows).toHaveLength(1)
+    expect(deficitRows[0]).toMatchObject({
+      type: 'deficit_incur',
+      amount: -15000,
+      reason: expect.stringContaining('refund_deficit:pay-r1'),
+    })
+
+    // Author.deficitPoints 가산 update — 신 외상 단일 장부
+    expect(txMock.author.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { deficitPoints: 15000 } }),
+    )
+
+    // RefundLog.deficitCredits = 15000 (의미 재해석 — "이 환불이 유발한 외상 pt 기여분")
+    expect(refundLogs[0]).toMatchObject({
+      credits: 10000,
+      deficitCredits: 15000,
+    })
+  })
+
+  it('부분 환불 (50%) — proportionalPt 비례 계산 + status="partial_refunded"', async () => {
+    // 결제 ₩3,000 의 절반 ₩1,500 환불 → 12,500pt 환수
+    lockedRow.points_charged = 25000
+    const result = await repo.refundPaymentWithPoints({
+      ...baseInput,
+      refundedAmount: 1500,
+    })
+
+    expect(result.isPartial).toBe(true)
+    expect(result.proportionalPt).toBe(12500)
+    expect(result.actualRefunded).toBe(12500)
+
+    expect(txMock.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'partial_refunded' } }),
+    )
+    // reason 에 _partial suffix
+    expect(createdLedgers[0].reason).toContain('_partial')
+  })
+
+  it('환수 우선순위 — charged 부족 시 gift → subscription → free 역방향', async () => {
+    // 잔액: charged 5,000 / gift 5,000 / subscription 10,000 / free 5,000 → 25,000pt 환수 시 4 출처 분산
+    lockedRow.points_charged = 5000
+    lockedRow.points_gift = 5000
+    lockedRow.points_subscription = 10000
+    lockedRow.points_free = 5000
+
+    const result = await repo.refundPaymentWithPoints(baseInput)
+    expect(result.actualRefunded).toBe(25000)
+    expect(result.deficitIncurred).toBe(0)
+
+    // 4 출처 spend row
+    const spendRows = createdLedgers.filter((l) => l.type === 'spend')
+    expect(spendRows).toHaveLength(4)
+    const bySource = Object.fromEntries(spendRows.map((r) => [r.source, -r.amount]))
+    expect(bySource).toEqual({
+      charged: 5000, gift: 5000, subscription: 10000, free: 5000,
+    })
+  })
+
+  it('PAY-P3-A CAS — $executeRawUnsafe count=0 시 CAS_MISMATCH throw (race window 차단)', async () => {
+    lockedRow.points_charged = 25000
+    txMock.$executeRawUnsafe.mockResolvedValueOnce(0) // race detect
+
+    await expect(repo.refundPaymentWithPoints(baseInput)).rejects.toThrow(/CAS_MISMATCH/)
+
+    // refundLog 박제 0건 — 트랜잭션 rollback 위임
+    expect(refundLogs).toHaveLength(0)
+  })
+
+  it('payment 미존재 시 throw', async () => {
+    txMock.payment.findUnique.mockResolvedValueOnce(null)
+    await expect(repo.refundPaymentWithPoints(baseInput)).rejects.toThrow('Payment not found')
+  })
+
+  it('refundedAmount > payment.amount 시 throw (validation)', async () => {
+    txMock.payment.findUnique.mockResolvedValueOnce({
+      amount: 1000, credits: 25000, status: 'completed',
+    })
+    await expect(
+      repo.refundPaymentWithPoints({ ...baseInput, refundedAmount: 2000 }),
+    ).rejects.toThrow('환불 금액')
+  })
+
+  it('payment.amount === 0 (free 결제) throw', async () => {
+    txMock.payment.findUnique.mockResolvedValueOnce({
+      amount: 0, credits: 0, status: 'completed',
+    })
+    await expect(repo.refundPaymentWithPoints(baseInput)).rejects.toThrow(
+      /환불 불가/,
+    )
+  })
+
+  it('refundPt 음수면 throw (트랜잭션 진입 0건)', async () => {
+    await expect(
+      repo.refundPaymentWithPoints({ ...baseInput, refundPt: -1 }),
+    ).rejects.toThrow()
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+  })
+
+  it('refundedAmount 0 이하 throw', async () => {
+    await expect(
+      repo.refundPaymentWithPoints({ ...baseInput, refundedAmount: 0 }),
+    ).rejects.toThrow('환불 금액')
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+  })
+
+  it('잠금 대상 작가 미존재 throw', async () => {
+    txMock.$queryRawUnsafe.mockResolvedValueOnce([])
+    await expect(repo.refundPaymentWithPoints(baseInput)).rejects.toThrow(
+      '작가를 찾을 수 없습니다',
+    )
+  })
+})

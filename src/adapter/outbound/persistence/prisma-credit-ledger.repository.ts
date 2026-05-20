@@ -7,6 +7,7 @@ import {
   SpendResult,
   EarnInput,
   SpendInput,
+  TransferResult,
 } from '@domain/port/outbound/credit-ledger.port'
 import {
   CreditSource,
@@ -271,6 +272,144 @@ export class PrismaCreditLedgerRepository implements CreditLedgerPort {
       take: limit,
     })
     return rows.map(toDomain)
+  }
+
+  /**
+   * 응원 선물 — 案 G1 단일 `$transaction` (CC-2b — 진단 §1-B).
+   *
+   * sender(독자) ↔ receiver(작가) 양측 작가 1 트랜잭션 이동. CLAUDE.md §9 결제 원자성:
+   * 한쪽만 반영되는 사고는 절대 불가 → 양측 lock + 양측 ledger row + 양측 캐시를 1 tx.
+   *
+   * 트랜잭션 본문:
+   *   1. 자기 선물(senderId===receiverId) 차단 (사전 검증)
+   *   2. 데드락 방지 lock 순서 — `senderId<receiverId` 비교로 작은 id 먼저 FOR UPDATE
+   *      (`prisma-credit.repository.giftTransfer` 와 동일 패턴 — 두 선물 교차 시에도 안전)
+   *   3. sender `planConsumption`(무료→구독→선물→충전) 으로 4 출처 차감 계산.
+   *      `deficitIncurred>0` 면 throw — **외상 선물 불가** (`spend` 와 다른 점).
+   *   4. sender 출처별 `CreditLedger spend` row 박제 + Author 4 캐시 차감.
+   *      balanceAfter = sender 4 출처 합 - amount.
+   *   5. receiver `Author.pointsGift` += amount + `CreditLedger source='gift' earn` row 박제.
+   *      balanceAfter = receiver 4 출처 합 + amount.
+   *
+   * @returns { senderSpentBySource: 4 출처 차감액(합=amount), receiverGiftBalance: 갱신 후 pointsGift }
+   */
+  async transfer(
+    senderId: string,
+    receiverId: string,
+    amount: number,
+    relatedId?: string,
+  ): Promise<TransferResult> {
+    if (!Number.isInteger(amount) || amount <= 0) {
+      throw new Error(`선물 금액은 양의 정수여야 합니다: ${amount}`)
+    }
+    if (senderId === receiverId) {
+      throw new Error('자기 자신에게 선물할 수 없습니다')
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // 데드락 방지 lock 순서 — `prisma-credit.repository.giftTransfer` 와 동일 패턴.
+      // 항상 작은 id 먼저 FOR UPDATE → 두 선물이 교차 호출돼도 데드락 불가.
+      const [firstId, secondId] =
+        senderId < receiverId ? [senderId, receiverId] : [receiverId, senderId]
+      const rows = await tx.$queryRawUnsafe<
+        {
+          id: string
+          points_free: number
+          points_subscription: number
+          points_gift: number
+          points_charged: number
+          deficit_points: number
+        }[]
+      >(
+        'SELECT id, points_free, points_subscription, points_gift, points_charged, deficit_points FROM authors WHERE id IN ($1, $2) ORDER BY id FOR UPDATE',
+        firstId,
+        secondId,
+      )
+      const senderRow = rows.find((r) => r.id === senderId)
+      const receiverRow = rows.find((r) => r.id === receiverId)
+      if (!senderRow || !receiverRow) {
+        throw new Error('유저를 찾을 수 없습니다')
+      }
+
+      const senderBalances: SourceBalances = {
+        free: Number(senderRow.points_free),
+        subscription: Number(senderRow.points_subscription),
+        gift: Number(senderRow.points_gift),
+        charged: Number(senderRow.points_charged),
+      }
+
+      // sender 4 출처 차감 계획 — 소진 우선순위(무료→구독→선물→충전)
+      const plan = planConsumption(senderBalances, amount)
+      if (plan.deficitIncurred > 0) {
+        // 외상 선물 불가 — 잔액이 부족하면 transfer 자체를 throw (채팅 spend 와 다름)
+        throw new Error('포인트가 부족합니다')
+      }
+
+      const senderTotalBefore =
+        senderBalances.free +
+        senderBalances.subscription +
+        senderBalances.gift +
+        senderBalances.charged
+      const senderBalanceAfter = senderTotalBefore - amount
+
+      // sender 측 — 출처별 차감 + 출처별 spend ledger
+      for (const source of [
+        'free',
+        'subscription',
+        'gift',
+        'charged',
+      ] as CreditSource[]) {
+        const spent = plan.spentBySource[source]
+        if (spent > 0) {
+          await tx.author.update({
+            where: { id: senderId },
+            data: {
+              [sourceColumn(source)]: senderBalances[source] - spent,
+            },
+          })
+          await tx.creditLedger.create({
+            data: {
+              authorId: senderId,
+              source,
+              type: 'spend',
+              amount: -spent,
+              balanceAfter: senderBalanceAfter,
+              reason: `gift_sent:${receiverId}`,
+              relatedId: relatedId ?? null,
+            },
+          })
+        }
+      }
+
+      // receiver 측 — pointsGift 가산 + gift earn ledger
+      const receiverGiftBefore = Number(receiverRow.points_gift)
+      const receiverGiftBalance = receiverGiftBefore + amount
+      const receiverTotalAfter =
+        Number(receiverRow.points_free) +
+        Number(receiverRow.points_subscription) +
+        receiverGiftBalance +
+        Number(receiverRow.points_charged)
+      await tx.author.update({
+        where: { id: receiverId },
+        data: { pointsGift: receiverGiftBalance },
+      })
+      await tx.creditLedger.create({
+        data: {
+          authorId: receiverId,
+          source: 'gift',
+          type: 'earn',
+          amount,
+          balanceAfter: receiverTotalAfter,
+          reason: `gift_received:${senderId}`,
+          relatedId: relatedId ?? null,
+        },
+      })
+
+      return {
+        senderSpentBySource: plan.spentBySource,
+        receiverGiftBalance,
+      }
+    })
   }
 }
 
