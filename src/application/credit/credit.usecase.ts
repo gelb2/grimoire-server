@@ -1,11 +1,18 @@
-import { Injectable, Inject, Optional, BadRequestException } from '@nestjs/common'
+import { Injectable, Inject, Optional, BadRequestException, Logger } from '@nestjs/common'
 import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
-import { CreditLedgerPort, CreditBalance } from '@domain/port/outbound/credit-ledger.port'
+import {
+  CreditLedgerPort,
+  CreditBalance,
+  CreditLedgerEntry,
+} from '@domain/port/outbound/credit-ledger.port'
+import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
 import { CreditLog } from '@domain/model/credit'
 
 @Injectable()
 export class CreditUseCase {
+  private readonly logger = new Logger(CreditUseCase.name)
+
   constructor(
     @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
@@ -17,6 +24,14 @@ export class CreditUseCase {
     @Optional()
     @Inject('CreditLedgerPort')
     private readonly ledger: CreditLedgerPort | null = null,
+    /**
+     * CC-3 (CRITICAL-1 案 B) — lazy 안전망. 잔액 조회 진입점에서 plan 만료 시 즉시 리셋.
+     * Optional — 미주입 시 lazy 미적용(BACKWARD COMPATIBLE, cron 단일 안전망).
+     * 정본: ADR-014.
+     */
+    @Optional()
+    @Inject('MembershipPlanPort')
+    private readonly membershipRepo: MembershipPlanPort | null = null,
   ) {}
 
   async deduct(authorId: string, amount: number, reason: string): Promise<{ credits: number; log: CreditLog }> {
@@ -57,6 +72,12 @@ export class CreditUseCase {
    * 잔액(무료 적립 / 구독 풀 / 응원 선물 / 충전) + deficit(외상) + 총합 + 가용량을
    * 반환한다. 정본: shared-contracts §30 CreditBalance.
    *
+   * CC-3 (CRITICAL-1 案 B) — lazy 안전망 진입점.
+   * `MembershipPlanPort` 가 주입되면 `getBalance` 직전에 `checkAndResetExpiredPool` 호출:
+   *   - plan 만료(poolResetAt < now) 시 즉시 `resetMonthlyPool` 실행 → 캐시 갱신.
+   *   - cron 실패해도 작가가 잔액 보는 순간 자동 보정 → 이월 금지 코드 강제.
+   * lazy 실패는 silent log + 잔액 조회 진행 (잔액 조회 자체 실패 방지 — fallback 안전망).
+   *
    * @throws BadRequestException 작가 미존재
    */
   async getPointBalance(authorId: string): Promise<CreditBalance> {
@@ -67,6 +88,20 @@ export class CreditUseCase {
     if (!this.ledger) {
       throw new BadRequestException('포인트 원장이 구성되지 않았습니다')
     }
+
+    // CC-3 lazy 안전망 — membershipRepo 주입 시 plan 만료 자동 보정.
+    if (this.membershipRepo) {
+      try {
+        await this.membershipRepo.checkAndResetExpiredPool(authorId, new Date())
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        // lazy 실패는 잔액 조회 자체를 막지 않음 — silent log + 진행
+        this.logger.warn(
+          `lazy checkAndResetExpiredPool 실패 (잔액 조회 진행) — authorId=${authorId} msg=${msg}`,
+        )
+      }
+    }
+
     return this.ledger.getBalance(authorId)
   }
 
@@ -126,12 +161,36 @@ export class CreditUseCase {
     }
   }
 
-  /** 응원받는 작가 랭킹 */
+  /**
+   * 응원받는 작가 랭킹 — CC-3 (HIGH-3) `CreditLedger` 위임.
+   *
+   * CC-2b 가 선물 적립을 `CreditLedger source='gift', type='earn'` 으로 이행하면서
+   * 구 `creditRepo.getGiftRanking`(`CreditLog reason='gift_received'` groupBy)이 신 선물을
+   * 못 보는 **신·구 분열** 발생. CC-3 가 신 ledger 기반 집계로 재작성.
+   *
+   * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §5-B / ADR-014.
+   * 미주입(ledger null) 시 구 경로 폴백(BACKWARD COMPATIBLE).
+   */
   async getGiftRanking(limit: number = 10): Promise<{ authorId: string; totalGifted: number }[]> {
+    if (this.ledger) {
+      return this.ledger.getGiftRanking(limit)
+    }
     return this.creditRepo.getGiftRanking(limit)
   }
 
-  async getLogs(authorId: string): Promise<CreditLog[]> {
+  /**
+   * 작가 크레딧 이력 조회 — CC-3 (HIGH-3) `CreditLedger` 위임.
+   *
+   * 반환 타입 변경: `CreditLog[]` → `CreditLedgerEntry[]`.
+   * `GET /credits/logs` 응답 형태가 신 4 출처 모델(source/type/balanceAfter/expiresAt/relatedId)로 확장.
+   * shared-contracts §30 + docs/api-contract.md 변경 이력 박제.
+   *
+   * 미주입(ledger null) 시 구 `CreditLog[]` 반환(BACKWARD COMPATIBLE) — 통합 모드 결정 필요 시 controller 분기.
+   */
+  async getLogs(authorId: string): Promise<CreditLedgerEntry[] | CreditLog[]> {
+    if (this.ledger) {
+      return this.ledger.findByAuthor(authorId, 100)
+    }
     return this.creditRepo.findLogsByAuthorId(authorId)
   }
 }

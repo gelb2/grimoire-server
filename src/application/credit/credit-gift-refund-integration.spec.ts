@@ -209,6 +209,22 @@ class FakeCreditLedger implements CreditLedgerPort {
       .map((r, i) => ({ ...r, id: `l-${i}`, expiresAt: null, createdAt: new Date() }))
   }
 
+  /** CC-3 (HIGH-3) — 신 ledger 기반 선물 랭킹 fake */
+  async getGiftRanking(
+    limit: number,
+  ): Promise<{ authorId: string; totalGifted: number }[]> {
+    const sums = new Map<string, number>()
+    for (const r of this.store.rows) {
+      if (r.source === 'gift' && r.type === 'earn') {
+        sums.set(r.authorId, (sums.get(r.authorId) ?? 0) + r.amount)
+      }
+    }
+    return Array.from(sums.entries())
+      .map(([authorId, totalGifted]) => ({ authorId, totalGifted }))
+      .sort((a, b) => b.totalGifted - a.totalGifted)
+      .slice(0, limit)
+  }
+
   /**
    * 案 G1 — 案 G1 prisma-credit-ledger.repository.transfer 와 동일.
    * planConsumption 으로 sender 차감(deficit 금지) + receiver gift earn.

@@ -3,6 +3,7 @@ import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import {
   MembershipPlanPort,
   MembershipPlanState,
+  LazyResetResult,
 } from '@domain/port/outbound/membership-plan.port'
 import {
   MembershipTier,
@@ -126,30 +127,66 @@ export class PrismaMembershipPlanRepository implements MembershipPlanPort {
         where: { authorId, status: 'active' },
         orderBy: { startedAt: 'desc' },
       })
-      if (existing) {
-        return tx.membershipPlan.update({
-          where: { id: existing.id },
-          data: {
-            tier,
-            monthlyPoolPoints: newPool,
-            poolBalance: newPool,
-            poolResetAt: nextResetAt,
-          },
-        })
-      }
-      // 멤버십 row 가 없는 작가 (마이그레이션 누락 방어) — 신규 생성
-      return tx.membershipPlan.create({
-        data: {
-          authorId,
-          tier,
-          monthlyPoolPoints: newPool,
-          poolBalance: newPool,
-          poolResetAt: nextResetAt,
-          status: 'active',
-        },
+      const planRow = existing
+        ? await tx.membershipPlan.update({
+            where: { id: existing.id },
+            data: {
+              tier,
+              monthlyPoolPoints: newPool,
+              poolBalance: newPool,
+              poolResetAt: nextResetAt,
+            },
+          })
+        : // 멤버십 row 가 없는 작가 (마이그레이션 누락 방어) — 신규 생성
+          await tx.membershipPlan.create({
+            data: {
+              authorId,
+              tier,
+              monthlyPoolPoints: newPool,
+              poolBalance: newPool,
+              poolResetAt: nextResetAt,
+              status: 'active',
+            },
+          })
+
+      // CC-3 (HIGH-1 案 A) — Author.plan + planExpireAt 동기 갱신.
+      // 정본: ADR-014. `Author.plan` 정본 유지 + `MembershipPlan.tier` 미러.
+      // - free 전환 시 planExpireAt = null (만기 의미 없음 — 기존 plan.usecase 정합)
+      // - pro/premium 전환 시 planExpireAt = poolResetAt (다음 풀 리셋 = 미러 정책)
+      //   CC-5 PAY-P1-4 시 구독 결제 만기와 정합 재확인 — 본 sprint 는 미러 정책으로 진입.
+      const newPlanExpireAt = tier === 'free' ? null : nextResetAt
+      await tx.author.update({
+        where: { id: authorId },
+        data: { plan: tier, planExpireAt: newPlanExpireAt },
       })
+
+      return planRow
     })
     return toDomain(updated)
+  }
+
+  async checkAndResetExpiredPool(
+    authorId: string,
+    now: Date,
+  ): Promise<LazyResetResult> {
+    // 정본: ADR-014 — CRITICAL-1 案 B (cron + lazy 이중 안전망).
+    // S Phase draft §8-6 "cron + lazy 이중 안전망" 원안 복원 — I Phase 가 명시 유예한 후속.
+    const plan = await this.getPlan(authorId)
+    if (!plan) {
+      return { reset: false, plan: null }
+    }
+    // free 또는 non-active 는 no-op — 풀이 없거나 멤버십 종료.
+    if (plan.tier === 'free' || plan.status !== 'active') {
+      return { reset: false, plan }
+    }
+    // poolResetAt 미만료 — no-op (현 풀 유효).
+    if (plan.poolResetAt.getTime() > now.getTime()) {
+      return { reset: false, plan }
+    }
+    // poolResetAt 만료 — cron 과 동일 메서드 호출 (idempotent — FOR UPDATE 직렬화).
+    await this.resetMonthlyPool(authorId, now)
+    const refreshed = await this.getPlan(authorId)
+    return { reset: true, plan: refreshed }
   }
 }
 

@@ -101,13 +101,88 @@ describe('CreditUseCase', () => {
 
       await expect(uc.getPointBalance('no-author')).rejects.toThrow('작가를 찾을 수 없습니다')
     })
+
+    describe('CC-3 lazy 안전망 (CRITICAL-1 案 B)', () => {
+      it('MembershipPlanPort 주입 시 getBalance 직전에 checkAndResetExpiredPool 호출', async () => {
+        const mockLedger = { getBalance: jest.fn().mockResolvedValue(mockBalance) }
+        const mockMembership = {
+          checkAndResetExpiredPool: jest.fn().mockResolvedValue({ reset: false, plan: null }),
+        }
+        const uc = new CreditUseCase(
+          mockCreditRepo as any,
+          mockAuthorRepo as any,
+          mockLedger as any,
+          mockMembership as any,
+        )
+        await uc.getPointBalance('author-1')
+        expect(mockMembership.checkAndResetExpiredPool).toHaveBeenCalledWith(
+          'author-1',
+          expect.any(Date),
+        )
+        expect(mockLedger.getBalance).toHaveBeenCalledWith('author-1')
+      })
+
+      it('lazy 호출이 throw 해도 잔액 조회는 진행 (silent log fallback)', async () => {
+        const mockLedger = { getBalance: jest.fn().mockResolvedValue(mockBalance) }
+        const mockMembership = {
+          checkAndResetExpiredPool: jest.fn().mockRejectedValue(new Error('DB error')),
+        }
+        const uc = new CreditUseCase(
+          mockCreditRepo as any,
+          mockAuthorRepo as any,
+          mockLedger as any,
+          mockMembership as any,
+        )
+        const balance = await uc.getPointBalance('author-1')
+        // lazy 실패에도 ledger.getBalance 가 정상 호출됐고 결과 반환
+        expect(mockLedger.getBalance).toHaveBeenCalledWith('author-1')
+        expect(balance.total).toBe(10000)
+      })
+
+      it('MembershipPlanPort 미주입 시 lazy 호출 없음 (BACKWARD COMPATIBLE)', async () => {
+        const mockLedger = { getBalance: jest.fn().mockResolvedValue(mockBalance) }
+        const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+        await uc.getPointBalance('author-1')
+        // membershipRepo 가 없으니 잔액 조회만 진행 (정상 동작)
+        expect(mockLedger.getBalance).toHaveBeenCalled()
+      })
+    })
   })
 
   describe('getLogs', () => {
-    it('작가의 크레딧 로그를 반환한다', async () => {
+    it('ledger 미주입 시 구 creditRepo.findLogsByAuthorId 폴백 (BACKWARD COMPATIBLE)', async () => {
       const logs = await useCase.getLogs('author-1')
       expect(logs).toHaveLength(1)
-      expect(logs[0].reason).toBe('theme_generate')
+      expect((logs[0] as any).reason).toBe('theme_generate')
+      expect(mockCreditRepo.findLogsByAuthorId).toHaveBeenCalledWith('author-1')
+    })
+
+    it('CC-3 (HIGH-3) — ledger 주입 시 findByAuthor 위임 (CreditLedgerEntry[] 반환)', async () => {
+      const ledgerEntries = [
+        {
+          id: 'l-1',
+          authorId: 'author-1',
+          source: 'gift',
+          type: 'earn',
+          amount: 1000,
+          balanceAfter: 1000,
+          expiresAt: null,
+          reason: 'gift_received:author-2',
+          relatedId: null,
+          createdAt: new Date(),
+        },
+      ]
+      const mockLedger = {
+        getBalance: jest.fn(),
+        findByAuthor: jest.fn().mockResolvedValue(ledgerEntries),
+      }
+      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      const logs = await uc.getLogs('author-1')
+      expect(mockLedger.findByAuthor).toHaveBeenCalledWith('author-1', 100)
+      // 구 creditRepo.findLogsByAuthorId 미호출
+      expect(mockCreditRepo.findLogsByAuthorId).not.toHaveBeenCalled()
+      expect(logs).toHaveLength(1)
+      expect((logs[0] as any).source).toBe('gift')
     })
   })
 
@@ -196,10 +271,30 @@ describe('CreditUseCase', () => {
   })
 
   describe('getGiftRanking', () => {
-    it('응원받는 작가 랭킹을 반환한다', async () => {
+    it('ledger 미주입 시 구 creditRepo.getGiftRanking 폴백 (BACKWARD COMPATIBLE)', async () => {
       const ranking = await useCase.getGiftRanking(10)
       expect(ranking).toHaveLength(1)
       expect(ranking[0].totalGifted).toBe(10)
+      expect(mockCreditRepo.getGiftRanking).toHaveBeenCalledWith(10)
+    })
+
+    it('CC-3 (HIGH-3) — ledger 주입 시 ledger.getGiftRanking 위임', async () => {
+      const mockLedger = {
+        getBalance: jest.fn(),
+        findByAuthor: jest.fn(),
+        getGiftRanking: jest.fn().mockResolvedValue([
+          { authorId: 'author-A', totalGifted: 9000 },
+          { authorId: 'author-B', totalGifted: 3000 },
+        ]),
+      }
+      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      const ranking = await uc.getGiftRanking(5)
+      expect(mockLedger.getGiftRanking).toHaveBeenCalledWith(5)
+      // 구 경로 미호출
+      expect(mockCreditRepo.getGiftRanking).not.toHaveBeenCalled()
+      expect(ranking).toHaveLength(2)
+      expect(ranking[0].authorId).toBe('author-A')
+      expect(ranking[0].totalGifted).toBe(9000)
     })
   })
 })
