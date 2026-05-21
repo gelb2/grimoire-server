@@ -16,16 +16,8 @@ export interface PaymentRepositoryPort {
   updateExternalTransactionId(paymentId: string, tradeNo: string): Promise<void>
   findByAuthorId(authorId: string): Promise<PaymentRecord[]>
 
-  /**
-   * @deprecated CC-2a (2026-05-20) — 충전 적립이 신 포인트 원장(`CreditLedger`)으로 이행됨.
-   * 충전 success 경로는 `completePaymentWithPoints`를 사용한다.
-   * 본 메서드는 구 `Author.credits` Int + `CreditLog` 박제 경로 — CC-2b(선물·환불) 완결 후 회귀
-   * 안전이 확보되면 일괄 제거. 그때까지 호출처 0건 상태로 잔존(계획 §3 C3c / §9 rollback).
-   *
-   * 결제 완료 원자 처리 — payment 상태 + 크레딧 증가 + 로그 기록을 단일 트랜잭션으로 실행
-   * 하나라도 실패하면 전부 롤백 (돈 냈는데 크레딧 안 들어오는 사고 방지)
-   */
-  completePaymentAtomically(paymentId: string, authorId: string, credits: number, productId: string): Promise<void>
+  // CC-4 Phase 1 (2026-05-21) — `completePaymentAtomically`(구 `Author.credits` Int + `CreditLog`) 시그니처 제거.
+  // 모든 충전 success 경로는 `completePaymentWithPoints`(신 포인트 원장) 단일 사용.
 
   /**
    * 결제 완료 + 충전 포인트 적립 원자 처리 (CC-2a 신설 — 案 1 트랜잭션 통합).
@@ -98,50 +90,8 @@ export interface PaymentRepositoryPort {
     expireSince: Date,
   ): Promise<PaymentRecord | null>
 
-  /**
-   * @deprecated CC-2b (2026-05-20) — 구 `Author.credits` Int + `CreditLog` 경로.
-   * 환불 cancel 경로는 `refundPaymentWithPoints`(신 포인트 원장 + 이중 외상 통합) 사용.
-   * 본 메서드는 회귀 안전망으로 잔존 — CC-3/CC-4 후속에서 일괄 제거.
-   *
-   * 환불 원자 처리 — payment 상태 + 크레딧 환수 + CreditLog 음수 + RefundLog를 단일 트랜잭션으로 실행
-   * (Sprint PAY-P1-1 신설, PAY-P2-1 부분 환불 비율 보강 — 정본: `.claude/shared-contracts.md` §13 + §17)
-   *
-   * 부분 환불 비율 정책 (PAY-P2-1):
-   * - ratio = refundedAmount / payment.amount (transaction 내부 조회)
-   * - proportionalCredits = ratio === 1.0 ? credits : Math.floor(credits * ratio)
-   * - Math.floor 고정 (사용자 우호 — 차감 ↓)
-   * - refundedAmount > payment.amount: throw (validation)
-   * - payment.amount === 0: throw (free 결제 환불 무의미)
-   *
-   * 분기:
-   * - Author.credits >= proportionalCredits: 정상 환수 (actualDeducted=proportionalCredits, deficitCredits=0)
-   * - Author.credits < proportionalCredits: 0 fix (actualDeducted=잔액, deficitCredits=proportionalCredits-잔액). 음수 절대 차단.
-   *
-   * Payment.status 갱신:
-   * - 전액 환불 (ratio === 1.0): 'refunded'
-   * - 부분 환불 (ratio < 1.0): 'partial_refunded'
-   *
-   * @param input.paymentId 환불 대상 Payment id
-   * @param input.authorId 환수 대상 Author id
-   * @param input.credits 원래 결제 적립 크레딧 (양수 — 비율로 비례 차감)
-   * @param input.refundedAmount PG 환불 금액 (KRW) — 전액 시 payment.amount, 부분 시 그 미만
-   * @param input.reason 환불 사유 (예: 'polar_webhook_order.refunded')
-   * @param input.source 'webhook' | 'manual'
-   * @returns actualDeducted, deficitCredits, proportionalCredits, isPartial
-   */
-  refundPaymentAtomically(input: {
-    paymentId: string
-    authorId: string
-    credits: number
-    refundedAmount: number
-    reason: string
-    source: 'webhook' | 'manual'
-  }): Promise<{
-    actualDeducted: number
-    deficitCredits: number
-    proportionalCredits: number
-    isPartial: boolean
-  }>
+  // CC-4 Phase 1 (2026-05-21) — `refundPaymentAtomically`(구 `Author.credits` Int + `CreditLog`) 시그니처 제거.
+  // 모든 환불 경로는 `refundPaymentWithPoints`(신 포인트 원장 + 이중 외상 통합) 단일 사용.
 
   /**
    * 환불 신 경로 — 4 출처 환수 + 이중 외상 통합 (CC-2b — 案 R1 — 진단 §1-C).

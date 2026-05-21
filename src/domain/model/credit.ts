@@ -1,3 +1,12 @@
+/**
+ * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — `CreditReason` enum 폐기.
+ *
+ * 신 reason 문자열은 `CreditLedger.reason`(자유 문자열)을 직접 사용 — `signup_bonus`/
+ * `first_work_bonus`/`gift_sent:<authorId>`/`admin_grant:<reason>` 등 합의된 prefix 규약.
+ * (정본: shared-contracts.md §30 CreditOverhaul, .claude/state/sprint-cc1-*.md 박제.)
+ *
+ * `CreditLog` interface 는 `prisma-credit.repository` (Phase 3 폐기 예정) 잔존 폴백용으로 유지.
+ */
 export interface CreditLog {
   id: string
   authorId: string
@@ -5,19 +14,3 @@ export interface CreditLog {
   reason: string
   createdAt: Date
 }
-
-/** 크레딧 변동 사유 */
-export const CreditReason = {
-  SIGNUP_BONUS: 'signup_bonus',
-  FIRST_WORK_BONUS: 'first_work_bonus',
-  THEME_GENERATE: 'theme_generate',
-  THEME_REGENERATE: 'theme_regenerate',
-  NOVEL_ANALYSIS: 'novel_analysis',
-  NOVEL_ANALYSIS_REFUND: 'novel_analysis_refund',
-  PURCHASE_CREDIT_5: 'purchase_credit_5',
-  GIFT_SENT: 'gift_sent',
-  GIFT_RECEIVED: 'gift_received',
-  adminSet: (adminId: string) => `admin_set_by_${adminId}`,
-  giftSent: (receiverSlug: string) => `gift_sent_to_${receiverSlug}`,
-  giftReceived: (senderSlug: string) => `gift_received_from_${senderSlug}`,
-} as const

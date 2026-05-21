@@ -28,26 +28,8 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
     return this.prisma.payment.findMany({ where: { authorId }, orderBy: { createdAt: 'desc' } }) as unknown as PaymentRecord[]
   }
 
-  /**
-   * @deprecated CC-2a (2026-05-20) — 구 `Author.credits` Int + `CreditLog` 경로.
-   * 충전 success 는 `completePaymentWithPoints`(신 포인트 원장)를 사용한다.
-   * CC-2b 완결 후 일괄 제거 예정 — 현재 호출처 0건 (계획 §3 C3c).
-   */
-  async completePaymentAtomically(paymentId: string, authorId: string, credits: number, productId: string): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      await tx.payment.update({
-        where: { id: paymentId },
-        data: { status: 'completed', completedAt: new Date() },
-      })
-      await tx.author.update({
-        where: { id: authorId },
-        data: { credits: { increment: credits } },
-      })
-      await tx.creditLog.create({
-        data: { authorId, amount: credits, reason: `purchase_${productId}_${paymentId}` },
-      })
-    })
-  }
+  // CC-4 Phase 1 (2026-05-21) — `completePaymentAtomically` 본문 제거 (port 시그니처 제거 정합).
+  // 충전 success 는 `completePaymentWithPoints`(신 포인트 원장) 단일 경로.
 
   /**
    * 결제 완료 + 충전 포인트 적립 원자 처리 (CC-2a 신설 — 案 1 트랜잭션 통합).
@@ -217,145 +199,9 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
     })) as unknown as PaymentRecord | null
   }
 
-  /**
-   * @deprecated CC-2b (2026-05-20) — 구 `Author.credits` Int + `CreditLog` 경로.
-   * 환불 cancel 경로는 `refundPaymentWithPoints`(신 포인트 원장 + 이중 외상 통합) 사용.
-   * 본 메서드는 회귀 안전망으로 잔존 — CC-3/CC-4 후속에서 일괄 제거.
-   *
-   * 환불 원자 처리 — payment.status='refunded' + Author.credits decrement(0 fix) + CreditLog(음수) + RefundLog 박제
-   * (Sprint PAY-P1-1 신설, PAY-P2-1 부분 환불 비율 계산 보강 — 정본: `.claude/shared-contracts.md` §13 + §17)
-   *
-   * $transaction 내부 처리 순서:
-   *   1. tx.payment.findUniqueOrThrow — payment.amount 조회 (부분 환불 비율 계산용)
-   *   2. validation: refundedAmount ≤ payment.amount + payment.amount > 0
-   *   3. ratio = refundedAmount / payment.amount (0 < ratio ≤ 1.0)
-   *   4. proportionalCredits = Math.floor(credits * ratio) — 사용자 우호 floor 정책
-   *   5. tx.payment.update — status='refunded' (전액 시) | 'partial_refunded' (부분 시)
-   *   6. tx.author.findUnique — 현재 잔액 조회
-   *   7. actualDeducted = Math.min(currentBalance, proportionalCredits) (0 fix 보장)
-   *   8. deficitCredits = Math.max(0, proportionalCredits - currentBalance)
-   *   9. tx.author.update — credits decrement(actualDeducted)
-   *  10. tx.creditLog.create — amount=-actualDeducted (음수, 대칭)
-   *  11. tx.refundLog.create — paymentId/amount/credits/deficitCredits/reason/source
-   *
-   * 비율 정책 (PAY-P2-1):
-   *   - ratio === 1.0 (전액 환불): proportionalCredits = credits (PAY-P1-1 회귀 보존)
-   *   - 0 < ratio < 1.0 (부분 환불): proportionalCredits = Math.floor(credits * ratio)
-   *   - 반올림: Math.floor 고정 (소수점 버림으로 차감 ↓ — 사용자 우호)
-   *   - refundedAmount > payment.amount: BadRequestException (validation)
-   *   - payment.amount === 0: BadRequestException (free 결제 환불 무의미)
-   *
-   * 분기:
-   *   정상 환수 (잔액 ≥ proportionalCredits): actualDeducted=proportionalCredits, deficitCredits=0
-   *   deficit 환수 (잔액 < proportionalCredits): actualDeducted=잔액, deficitCredits=proportionalCredits-잔액
-   */
-  async refundPaymentAtomically(input: {
-    paymentId: string
-    authorId: string
-    credits: number
-    refundedAmount: number
-    reason: string
-    source: 'webhook' | 'manual'
-  }): Promise<{
-    actualDeducted: number
-    deficitCredits: number
-    proportionalCredits: number
-    isPartial: boolean
-  }> {
-    const { paymentId, authorId, credits, refundedAmount, reason, source } = input
-
-    return await this.prisma.$transaction(async (tx) => {
-      // 1. Payment 조회 — 원래 결제 금액 확인 (부분 환불 비율 계산용)
-      const payment = await tx.payment.findUnique({
-        where: { id: paymentId },
-        select: { amount: true, status: true },
-      })
-      if (!payment) {
-        throw new Error(`Payment not found: ${paymentId}`)
-      }
-
-      // 2. validation — refundedAmount/payment.amount 정합
-      if (payment.amount <= 0) {
-        throw new Error(`환불 불가 — payment.amount=${payment.amount} (free 결제 또는 비정상 데이터)`)
-      }
-      if (refundedAmount <= 0) {
-        throw new Error(`환불 금액은 양수여야 합니다: ${refundedAmount}`)
-      }
-      if (refundedAmount > payment.amount) {
-        throw new Error(
-          `환불 금액(${refundedAmount})이 결제 금액(${payment.amount})을 초과할 수 없습니다`,
-        )
-      }
-
-      // 3-4. 비율 + 비례 크레딧 계산 (PAY-P2-1)
-      const ratio = refundedAmount / payment.amount
-      const isPartial = ratio < 1.0
-      const proportionalCredits = isPartial ? Math.floor(credits * ratio) : credits
-
-      // 5. Payment 상태 — 전액 환불은 'refunded', 부분 환불은 'partial_refunded'
-      await tx.payment.update({
-        where: { id: paymentId },
-        data: { status: isPartial ? 'partial_refunded' : 'refunded' },
-      })
-
-      // 6. 현재 Author 잔액 조회 — findUniqueOrThrow (race 시 author 미존재 케이스도 throw로 명시)
-      // PAY-P3-A 정본: shared-contracts §22 PaymentRaceCondition (CAS 패턴 강화)
-      const author = await tx.author.findUniqueOrThrow({
-        where: { id: authorId },
-        select: { credits: true },
-      })
-
-      // 7. actualDeducted / deficitCredits 계산 — 음수 잔액 절대 차단
-      const currentBalance = author.credits
-      const actualDeducted = Math.min(currentBalance, proportionalCredits)
-      const deficitCredits = Math.max(0, proportionalCredits - currentBalance)
-
-      // 8. Author.credits decrement (0 fix 보장) — PAY-P3-A CAS 패턴 적용
-      // updateMany WHERE credits >= actualDeducted (Postgres atomic check-and-set)
-      // 동시 트랜잭션이 author.credits를 변경한 경우 0 row 갱신 → throw CAS_MISMATCH
-      // 호출자(refund-payment.usecase + payment.usecase)는 catch → webhookEventRepo 'failed' + DLQ enqueue
-      if (actualDeducted > 0) {
-        const updateResult = await tx.author.updateMany({
-          where: {
-            id: authorId,
-            credits: { gte: actualDeducted },
-          },
-          data: { credits: { decrement: actualDeducted } },
-        })
-        if (updateResult.count === 0) {
-          // race window 검출 — 다른 트랜잭션이 author.credits를 변경하여 CAS 조건 미충족
-          // PAY-P2-2 DLQ retry 위임 (WebhookRetryJob @Cron 5분이 재처리)
-          throw new Error(
-            `CAS_MISMATCH — race condition detected on author.credits (authorId=${authorId}, expected_min=${actualDeducted})`,
-          )
-        }
-      }
-
-      // 9. CreditLog 음수 박제 (대칭 — completePaymentAtomically의 양수와 정합)
-      // 0 차감 시도도 박제 (deficit 추적용)
-      await tx.creditLog.create({
-        data: {
-          authorId,
-          amount: -actualDeducted,
-          reason: `refund_${paymentId}_${source}${isPartial ? '_partial' : ''}`,
-        },
-      })
-
-      // 10. RefundLog 박제
-      await tx.refundLog.create({
-        data: {
-          paymentId,
-          amount: refundedAmount,
-          credits: actualDeducted,
-          deficitCredits,
-          reason,
-          source,
-        },
-      })
-
-      return { actualDeducted, deficitCredits, proportionalCredits, isPartial }
-    })
-  }
+  // CC-4 Phase 1 (2026-05-21) — `refundPaymentAtomically` 본문 제거 (port 시그니처 제거 정합).
+  // 환불 cancel 경로는 `refundPaymentWithPoints`(신 포인트 원장 + 이중 외상 통합) 단일 경로.
+  // PAY-P3-A CAS race 차단 + PAY-P2-1 부분 환불 비율은 신 메서드 본문에서 재현.
 
   /**
    * 환불 신 경로 — 案 R1 (CC-2b — 진단 §1-C). CC-2a `completePaymentWithPoints` 와 대칭.

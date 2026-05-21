@@ -68,18 +68,14 @@ describe('PaymentUseCase', () => {
       findByExternalTransactionId: paymentMock.findUnique,
       updateExternalTransactionId: jest.fn().mockResolvedValue(undefined),
       findByAuthorId: paymentMock.findMany,
-      // CC-2a — 구 completePaymentAtomically deprecated (충전 success 미사용, 회귀 안전 mock 잔존)
-      completePaymentAtomically: jest.fn().mockResolvedValue(undefined),
       // CC-2a — 신 충전 적립 트랜잭션 메서드. 기본: 외상 0 → 전액 충전 적립 (입문 25,000pt)
+      // (CC-4 P1 — 구 completePaymentAtomically port 시그니처 자체 제거)
       completePaymentWithPoints: jest
         .fn()
         .mockResolvedValue({ settledDeficit: 0, chargedPoints: 25000 }),
       updateStatus: jest.fn().mockResolvedValue(undefined),
-      // CC-2b — 구 refundPaymentAtomically deprecated (회귀 안전 mock 잔존)
-      refundPaymentAtomically: jest.fn().mockResolvedValue({
-        actualDeducted: 0, deficitCredits: 0, proportionalCredits: 0, isPartial: false,
-      }),
       // CC-2b — 신 환불 신 경로 (4 출처 환수 + 이중 외상 통합)
+      // (CC-4 P1 — 구 refundPaymentAtomically port 시그니처 자체 제거)
       refundPaymentWithPoints: jest.fn().mockResolvedValue({
         actualRefunded: 0, deficitIncurred: 0, proportionalPt: 0, isPartial: false,
       }),
@@ -409,7 +405,7 @@ describe('PaymentUseCase', () => {
 
       expect(result.processed).toBe(false)
       expect(result.reason).toBe('already_completed')
-      expect(mockCreditUseCase.grant).not.toHaveBeenCalled()
+      // CC-4 P1: 구 CreditUseCase.grant port 자체 제거됨 → mockCreditUseCase.grant 검증 불요
       expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
         expect.objectContaining({
           eventId: 'evt_test_001',
@@ -430,11 +426,11 @@ describe('PaymentUseCase', () => {
       expect(result.processed).toBe(true)
       // credits 필드 = 충전 총 pt (입문 25,000pt)
       expect(result.credits).toBe(25000)
-      // CC-2a — 충전 success 는 신 completePaymentWithPoints 사용 (구 completePaymentAtomically 0건)
+      // CC-2a — 충전 success 는 신 completePaymentWithPoints 사용
+      // (CC-4 P1: 구 completePaymentAtomically port 자체 제거됨 → 호출 검증 불요)
       expect(mockPrisma.completePaymentWithPoints).toHaveBeenCalledWith(
         'pay-1', 'author-1', 25000, 'credit-starter', 'pay-1',
       )
-      expect(mockPrisma.completePaymentAtomically).not.toHaveBeenCalled()
       expect(mockWebhookEventRepo.findByEventId).toHaveBeenCalledWith('evt_test_001')
       expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -733,7 +729,7 @@ describe('PaymentUseCase', () => {
           expect(result.reason).toBe('already_refunded')
         })
 
-        it('AC-2: payment.status=partial_refunded 시 추가 환불 webhook 진입은 skip + refundPaymentAtomically 호출 0건', async () => {
+        it('AC-2: payment.status=partial_refunded 시 추가 환불 webhook 진입은 skip + refund usecase 호출 0건 (CC-4 P1 정합)', async () => {
           mockPrisma.findByExternalTransactionId.mockResolvedValue({
             ...mockPayment,
             status: 'partial_refunded',

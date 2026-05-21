@@ -275,6 +275,30 @@ export class PrismaCreditLedgerRepository implements CreditLedgerPort {
   }
 
   /**
+   * 작가 누적 소진 pt 합 — CC-4 Phase 1 L2d 구현.
+   *
+   * 정본: shared-contracts.md §30 / sprint-cc4-postcleanup-plan-draft.md §3-2 L2c/L2d.
+   *
+   * 구 `prisma-credit.repository.sumNegativeAmounts`(`CreditLog.amount<0` 합) 동등성:
+   * `CreditLedger type='spend'` row 의 amount(음수) 합을 절대값으로 반환.
+   *
+   * `authorId` null/undefined 면 전체 합, 지정 시 해당 작가만.
+   * 통계용 — admin.usecase.getStats.totalCreditsConsumed 입력값.
+   */
+  async sumSpendByAuthor(authorId?: string | null): Promise<number> {
+    const result = await this.prisma.creditLedger.aggregate({
+      _sum: { amount: true },
+      where: {
+        type: 'spend',
+        ...(authorId ? { authorId } : {}),
+      },
+    })
+    const raw = result._sum.amount ?? 0
+    // spend ledger 의 amount 는 음수 → 절대값 반환 (구 sumNegativeAmounts 와 동일 의미).
+    return Math.abs(raw)
+  }
+
+  /**
    * 응원받는 작가 랭킹 — CC-3 (HIGH-3).
    *
    * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §5-B / ADR-014.

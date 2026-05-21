@@ -36,14 +36,12 @@ describe('PaymentReconciliationJob', () => {
       findByExternalTransactionId: jest.fn(),
       updateExternalTransactionId: jest.fn(),
       findByAuthorId: jest.fn(),
-      completePaymentAtomically: jest.fn(),
-      // CC-2a — webhook 누락 보정도 신 충전 적립 트랜잭션 사용
+      // CC-2a — webhook 누락 보정은 신 충전 적립 트랜잭션 사용 (구 completePaymentAtomically 제거 — CC-4 P1)
       completePaymentWithPoints: jest
         .fn()
         .mockResolvedValue({ settledDeficit: 0, chargedPoints: 25000 }),
-      // CC-2b — 환불 신 경로 mock (reconciliation 미사용이나 PaymentRepositoryPort 완전성)
+      // CC-2b — 환불 신 경로 mock (구 refundPaymentAtomically 제거 — CC-4 P1)
       refundPaymentWithPoints: jest.fn(),
-      refundPaymentAtomically: jest.fn(),
       updateStatus: jest.fn(),
       findPendingPaymentsOlderThan: jest.fn(),
       expirePayment: jest.fn(),
@@ -131,7 +129,6 @@ describe('PaymentReconciliationJob', () => {
       'credit-starter',
       'payment-1',
     )
-    expect(mockPaymentRepo.completePaymentAtomically).not.toHaveBeenCalled()
     expect(mockAuditLog.log).toHaveBeenCalledWith(
       'system_reconciliation',
       'reconciliation_boost',
@@ -185,7 +182,6 @@ describe('PaymentReconciliationJob', () => {
     await job.run()
 
     expect(mockPaymentRepo.completePaymentWithPoints).not.toHaveBeenCalled()
-    expect(mockPaymentRepo.completePaymentAtomically).not.toHaveBeenCalled()
     expect(mockPaymentRepo.expirePayment).not.toHaveBeenCalled()
     expect(mockAuditLog.log).toHaveBeenCalledTimes(1)
     expect(mockAuditLog.log).toHaveBeenCalledWith(
@@ -232,7 +228,6 @@ describe('PaymentReconciliationJob', () => {
     expect(mockPaymentRepo.expirePayment).toHaveBeenCalledTimes(1)
     expect(mockPaymentRepo.expirePayment).toHaveBeenCalledWith('payment-3')
     expect(mockPaymentRepo.completePaymentWithPoints).not.toHaveBeenCalled()
-    expect(mockPaymentRepo.completePaymentAtomically).not.toHaveBeenCalled()
     expect(mockAuditLog.log).toHaveBeenCalledWith(
       'system_reconciliation',
       'reconciliation_expire',
@@ -280,7 +275,6 @@ describe('PaymentReconciliationJob', () => {
     await job.run()
 
     expect(mockPaymentRepo.completePaymentWithPoints).not.toHaveBeenCalled()
-    expect(mockPaymentRepo.completePaymentAtomically).not.toHaveBeenCalled()
     expect(mockPaymentRepo.expirePayment).not.toHaveBeenCalled()
     expect(mockAuditLog.log).not.toHaveBeenCalled()
     // processedCount는 1, 나머지 카운터 0
@@ -372,7 +366,6 @@ describe('PaymentReconciliationJob', () => {
     await job.run()
 
     expect(mockPaymentRepo.completePaymentWithPoints).not.toHaveBeenCalled()
-    expect(mockPaymentRepo.completePaymentAtomically).not.toHaveBeenCalled()
     expect(mockPaymentRepo.expirePayment).not.toHaveBeenCalled()
     expect(mockAuditLog.log).not.toHaveBeenCalled()
     expect(mockCheckpointRepo.update).toHaveBeenCalledTimes(1)
