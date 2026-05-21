@@ -9,6 +9,22 @@ import {
 import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
 import { CreditLog } from '@domain/model/credit'
 
+/**
+ * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — 구 메서드 제거.
+ *
+ * 폐기 항목 (호출처 0건 확인 후 제거):
+ * - `deduct(authorId, amount, reason)` — `Author.credits` Int 차감. 차감 8경로(T1~T4) 전부
+ *   `ChargePointsUseCase.charge*` 로 이행 완료 (CC-1).
+ * - `grant(authorId, amount, reason)` — `Author.credits` Int 적립. 적립 8경로(T5~T8) 전부
+ *   `GrantPointsUseCase.grant*` + `CreditLedgerPort.earn` 으로 이행 완료 (CC-1·CC-2a·CC-2b).
+ * - `getBalance(authorId)` — `Author.credits` Int 단일 잔액. `getPointBalance` 4 출처 응답으로 대체.
+ *
+ * 잔존 메서드 4종은 전부 신 시스템 위임(CC-2b·CC-3):
+ *   - getPointBalance — CreditLedgerPort.getBalance (4 출처 + deficit + available)
+ *   - gift          — CreditLedgerPort.transfer ($transaction)
+ *   - getGiftRanking — CreditLedgerPort.getGiftRanking (CC-3 신 ledger 위임, ledger 미주입 시 폴백)
+ *   - getLogs       — CreditLedgerPort.findByAuthor (CC-3 신 ledger 위임, ledger 미주입 시 폴백)
+ */
 @Injectable()
 export class CreditUseCase {
   private readonly logger = new Logger(CreditUseCase.name)
@@ -33,37 +49,6 @@ export class CreditUseCase {
     @Inject('MembershipPlanPort')
     private readonly membershipRepo: MembershipPlanPort | null = null,
   ) {}
-
-  async deduct(authorId: string, amount: number, reason: string): Promise<{ credits: number; log: CreditLog }> {
-    if (amount <= 0) {
-      throw new BadRequestException('차감 금액은 양수여야 합니다')
-    }
-
-    const author = await this.authorRepo.findById(authorId)
-    if (!author) {
-      throw new BadRequestException('작가를 찾을 수 없습니다')
-    }
-    if (author.credits < amount) {
-      throw new BadRequestException('크레딧이 부족합니다')
-    }
-
-    return this.creditRepo.adjustCredits(authorId, -amount, reason)
-  }
-
-  async grant(authorId: string, amount: number, reason: string): Promise<{ credits: number; log: CreditLog }> {
-    if (amount <= 0) {
-      throw new BadRequestException('적립 금액은 양수여야 합니다')
-    }
-    return this.creditRepo.adjustCredits(authorId, amount, reason)
-  }
-
-  async getBalance(authorId: string): Promise<number> {
-    const author = await this.authorRepo.findById(authorId)
-    if (!author) {
-      throw new BadRequestException('작가를 찾을 수 없습니다')
-    }
-    return author.credits
-  }
 
   /**
    * 크레딧 개편 I Phase (2026-05-17) — 4 출처 포인트 잔액 조회.

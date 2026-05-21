@@ -5,8 +5,8 @@ describe('AdminUseCase', () => {
   let useCase: AdminUseCase
   let mockAuthorRepo: any
   let mockWorkRepo: any
-  let mockCreditRepo: any
   // 크레딧 개편 CC-1 (2026-05-19) — 구 mockCreditUseCase → mockGrantPoints + mockLedger
+  // CC-4 Phase 1 (2026-05-21) — 구 mockCreditRepo 제거 (sumSpendByAuthor/findByAuthor 모두 ledger)
   let mockGrantPoints: any
   let mockLedger: any
   let mockAuditLog: any
@@ -31,16 +31,12 @@ describe('AdminUseCase', () => {
       countAll: jest.fn().mockResolvedValue(25),
       countAllEpisodes: jest.fn().mockResolvedValue(120),
     }
-    mockCreditRepo = {
-      sumNegativeAmounts: jest.fn().mockResolvedValue(-50),
-      findLogsByAuthorId: jest.fn().mockResolvedValue([]),
-    }
     // 신 포인트 원장 적립 UseCase mock — grantManual 호출 검증용
     mockGrantPoints = {
       grantManual: jest.fn().mockResolvedValue(undefined),
     }
-    // 신 CreditLedger 포트 mock — getBalance(잔액 박제용) + spend(관리자 차감)
-    // getBalance 기본: 가용 10,000pt (deductCredits 잔액 검증 통과 기본값)
+    // CC-4 P1 L2c/L2e — admin.usecase 가 ledger.sumSpendByAuthor + ledger.findByAuthor 호출.
+    // sumSpendByAuthor 는 절대값(양수)으로 반환 (구 sumNegativeAmounts(-50) → 50 동등).
     mockLedger = {
       getBalance: jest.fn().mockResolvedValue({
         free: 5000, subscription: 0, gift: 0, charged: 5000,
@@ -51,6 +47,8 @@ describe('AdminUseCase', () => {
         deficitIncurred: 0,
         balanceAfter: 5000,
       }),
+      sumSpendByAuthor: jest.fn().mockResolvedValue(50),
+      findByAuthor: jest.fn().mockResolvedValue([]),
     }
     mockAuditLog = {
       log: jest.fn().mockResolvedValue(undefined),
@@ -96,8 +94,9 @@ describe('AdminUseCase', () => {
       deleteSystemTheme: jest.fn().mockResolvedValue(undefined),
     }
 
+    // CC-4 Phase 1 — AdminUseCase 생성자에서 creditRepo 인자 제거.
     useCase = new AdminUseCase(
-      mockAuthorRepo, mockWorkRepo, mockCreditRepo, mockAdminRepo as any,
+      mockAuthorRepo, mockWorkRepo, mockAdminRepo as any,
       mockGrantPoints, mockLedger, mockAuditLog,
     )
   })
@@ -115,9 +114,14 @@ describe('AdminUseCase', () => {
     })
 
     it('크레딧 소비가 없으면 0을 반환한다', async () => {
-      mockCreditRepo.sumNegativeAmounts.mockResolvedValue(0)
+      mockLedger.sumSpendByAuthor.mockResolvedValue(0)
       const result = await useCase.getStats()
       expect(result.totalCreditsConsumed).toBe(0)
+    })
+
+    it('CC-4 P1 L2c — ledger.sumSpendByAuthor(null) 호출로 통계 합산', async () => {
+      await useCase.getStats()
+      expect(mockLedger.sumSpendByAuthor).toHaveBeenCalledWith(null)
     })
   })
 

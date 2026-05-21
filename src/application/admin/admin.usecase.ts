@@ -2,7 +2,6 @@ import { Injectable, Inject, BadRequestException, NotFoundException } from '@nes
 import * as bcrypt from 'bcryptjs'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
-import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
 import { CreditLedgerPort, CreditBalance } from '@domain/port/outbound/credit-ledger.port'
 import { CreditSource, isCreditSource } from '@domain/model/credit-source'
 import { AdminRepositoryPort } from '@domain/port/outbound/admin-repository.port'
@@ -11,12 +10,19 @@ import { AuditLogService } from './audit-log.service'
 import { Author } from '@domain/model/author'
 import { EpisodeStatus } from '@domain/model/work'
 
+/**
+ * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — admin.usecase 신·구 분열 해소.
+ *
+ * 변경:
+ *   - `creditRepo.sumNegativeAmounts` → `ledger.sumSpendByAuthor(null)` (L2c/L2d)
+ *   - `creditRepo.findLogsByAuthorId` → `ledger.findByAuthor(authorId, 100)` (L2e)
+ * 신 `CreditLedger` 원장 기반 통계/이력 — CC-2b 이후 신 선물·환불이 admin 통계에 정상 반영.
+ */
 @Injectable()
 export class AdminUseCase {
   constructor(
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
-    @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
     @Inject('AdminRepositoryPort') private readonly adminRepo: AdminRepositoryPort,
     // 크레딧 개편 CC-1 (2026-05-19) — 관리자 수동 지급·차감을 신 포인트 원장으로 이행.
     // 지급 = GrantPointsUseCase.grantManual, 차감 = CreditLedgerPort.spend (사전 잔액 검증).
@@ -32,7 +38,9 @@ export class AdminUseCase {
       this.authorRepo.count(),
       this.workRepo.countAll(),
       this.workRepo.countAllEpisodes(),
-      this.creditRepo.sumNegativeAmounts(),
+      // CC-4 P1 L2c/L2d — 구 creditRepo.sumNegativeAmounts → ledger.sumSpendByAuthor 전환.
+      // sumSpendByAuthor 는 절대값으로 반환 → Math.abs 불필요 (구 호환 1줄 유지).
+      this.ledger.sumSpendByAuthor(null),
       this.adminRepo.countComments(),
       this.adminRepo.countCompletedPayments(),
     ])
@@ -174,7 +182,9 @@ export class AdminUseCase {
   }
 
   async getAllCreditLogs(authorId?: string) {
-    if (authorId) return this.creditRepo.findLogsByAuthorId(authorId)
+    // CC-4 P1 L2e — 구 creditRepo.findLogsByAuthorId → ledger.findByAuthor 전환.
+    // 신 CreditLedgerEntry[] 반환 (CC-3 이후 admin 화면이 4 출처/type/balanceAfter 인식 가능).
+    if (authorId) return this.ledger.findByAuthor(authorId, 100)
     return []
   }
 

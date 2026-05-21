@@ -1,0 +1,24 @@
+-- CC-4 Phase 2 — Payment.credits → Payment.points 컬럼 물리 rename.
+--
+-- 배경:
+--   CC-2a(2026-05-20)에서 Payment.credits Int 의미를 "패키지 수량"→"충전 총 pt"로
+--   재해석 완료. 단 컬럼명 자체는 미변경(주석 박제 한정). CC-4 Phase 2가 컬럼명
+--   정합 종결 — Payment.points Int (단위 = pt, 디노미 1:1,000 — V Phase).
+--
+-- 안전성 (Postgres native ALTER):
+--   - 메타데이터 한정 락 (ACCESS EXCLUSIVE 짧음) — 데이터 미터치, 즉시 완료.
+--   - 인덱스/제약 무영향 (credits 컬럼 인덱스 미부여, externalTransactionId UNIQUE만 보유).
+--   - FK 무영향 (refundLogs.paymentId FK는 credits 무관).
+--   - 비파괴 — 데이터 100% 보존. 롤백 = `ALTER TABLE payments RENAME COLUMN points TO credits` 역방향.
+--
+-- RefundLog.credits / RefundLog.deficitCredits 는 보존 (案 Y, planner 권고 정합):
+--   - 명명 충돌 회피 (Author.deficitPoints 외상 잔액 정본과 의미 충돌 방지)
+--   - 회귀 범위 최소화 (admin/audit 전용, HTTP 미노출)
+--   - 의미 재해석은 schema.prisma 주석 + shared-contracts §13/§30 박제로 강화
+--
+-- 정본:
+--   .claude/state/sprint-cc4-phase2-rename-plan-draft.md §3-1 M1a
+--   reports/CREDIT_CORE_DIAGNOSIS.md §2-3 폐기 의존 그래프
+--   reports/sprint-cc4-postcleanup-phase1-progress.md §7 Phase 2 이월
+
+ALTER TABLE "payments" RENAME COLUMN "credits" TO "points";

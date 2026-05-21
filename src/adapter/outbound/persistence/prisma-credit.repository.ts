@@ -3,89 +3,20 @@ import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
 import { CreditLog } from '@domain/model/credit'
 
+/**
+ * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — 폐기 어댑터. Phase 3 에서 파일 자체 제거 예정.
+ *
+ * 잔존 메서드 2종은 ledger 미주입 시 폴백 경로 (테스트용):
+ *   - `findLogsByAuthorId` — `CreditUseCase.getLogs` 폴백
+ *   - `getGiftRanking`     — `CreditUseCase.getGiftRanking` 폴백
+ * 제거된 메서드 (Phase 1):
+ *   - `adjustCredits` — 차감/적립 신 시스템(`ChargePointsUseCase`/`GrantPointsUseCase`) 이행 완료
+ *   - `giftTransfer` — `CreditLedgerPort.transfer` 단일 경로
+ *   - `sumNegativeAmounts` — `CreditLedgerPort.sumSpendByAuthor` 단일 경로
+ */
 @Injectable()
 export class PrismaCreditRepository implements CreditRepositoryPort {
   constructor(private readonly prisma: PrismaService) {}
-
-  async adjustCredits(
-    authorId: string,
-    amount: number,
-    reason: string,
-  ): Promise<{ credits: number; log: CreditLog }> {
-    // Serializable 트랜잭션 — 동시 크레딧 변경 시 데드락 방지
-    const result = await this.prisma.$transaction(async (tx) => {
-      // SELECT FOR UPDATE: 같은 작가 행을 동시 수정하는 트랜잭션을 직렬화
-      const [locked] = await tx.$queryRawUnsafe<{ credits: number }[]>(
-        'SELECT credits FROM authors WHERE id = $1 FOR UPDATE',
-        authorId,
-      )
-      if (!locked) throw new Error('작가를 찾을 수 없습니다')
-
-      // 차감 시 잔액 검증을 UPDATE 전에 수행
-      const newBalance = locked.credits + amount
-      if (newBalance < 0) {
-        throw new Error('크레딧이 부족합니다')
-      }
-
-      const author = await tx.author.update({
-        where: { id: authorId },
-        data: { credits: newBalance },
-      })
-
-      const log = await tx.creditLog.create({
-        data: { authorId, amount, reason },
-      })
-
-      return { credits: author.credits, log: toDomain(log) }
-    })
-
-    return result
-  }
-
-  async giftTransfer(
-    senderId: string,
-    receiverId: string,
-    amount: number,
-    senderReason: string,
-    receiverReason: string,
-  ): Promise<{ senderCredits: number; receiverCredits: number }> {
-    return this.prisma.$transaction(async (tx) => {
-      // 데드락 방지: ID 순서로 잠금 (항상 작은 ID를 먼저 잠금)
-      const [firstId, secondId] = senderId < receiverId
-        ? [senderId, receiverId]
-        : [receiverId, senderId]
-
-      const rows = await tx.$queryRawUnsafe<{ id: string; credits: number }[]>(
-        'SELECT id, credits FROM authors WHERE id IN ($1, $2) ORDER BY id FOR UPDATE',
-        firstId, secondId,
-      )
-      const senderRow = rows.find(r => r.id === senderId)
-      const receiverRow = rows.find(r => r.id === receiverId)
-      if (!senderRow || !receiverRow) throw new Error('유저를 찾을 수 없습니다')
-
-      if (senderRow.credits < amount) {
-        throw new Error('크레딧이 부족합니다')
-      }
-
-      const sender = await tx.author.update({
-        where: { id: senderId },
-        data: { credits: senderRow.credits - amount },
-      })
-      const receiver = await tx.author.update({
-        where: { id: receiverId },
-        data: { credits: receiverRow.credits + amount },
-      })
-
-      await tx.creditLog.createMany({
-        data: [
-          { authorId: senderId, amount: -amount, reason: senderReason },
-          { authorId: receiverId, amount, reason: receiverReason },
-        ],
-      })
-
-      return { senderCredits: sender.credits, receiverCredits: receiver.credits }
-    })
-  }
 
   async getGiftRanking(limit: number): Promise<{ authorId: string; totalGifted: number }[]> {
     const rows = await this.prisma.creditLog.groupBy({
@@ -104,14 +35,6 @@ export class PrismaCreditRepository implements CreditRepositoryPort {
       orderBy: { createdAt: 'desc' },
     })
     return rows.map(toDomain)
-  }
-
-  async sumNegativeAmounts(): Promise<number> {
-    const result = await this.prisma.creditLog.aggregate({
-      _sum: { amount: true },
-      where: { amount: { lt: 0 } },
-    })
-    return result._sum.amount ?? 0
   }
 }
 

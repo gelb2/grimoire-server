@@ -27,8 +27,9 @@ describe('DiscoveryUseCase', () => {
       findRecentPaginated: jest.fn().mockResolvedValue({ works: [mockWorkWithMeta], totalCount: 15 }),
     }
 
-    const mockCreditRepo = { adjustCredits: jest.fn(), findLogsByAuthorId: jest.fn(), giftTransfer: jest.fn(), getGiftRanking: jest.fn().mockResolvedValue([]) }
-    useCase = new DiscoveryUseCase(mockAuthorRepo as any, mockWorkRepo as any, mockCreditRepo as any)
+    // CC-4 Phase 1 — DiscoveryUseCase 가 CreditUseCase.getGiftRanking 위임 (creditRepo 의존 제거).
+    const mockCreditUseCase = { getGiftRanking: jest.fn().mockResolvedValue([]) }
+    useCase = new DiscoveryUseCase(mockAuthorRepo as any, mockWorkRepo as any, mockCreditUseCase as any)
   })
 
   describe('searchAuthors', () => {

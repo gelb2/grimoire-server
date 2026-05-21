@@ -23,7 +23,7 @@ describe('PrismaPaymentRepository.findReusablePendingPayment', () => {
     authorId: 'author-1',
     productId: 'credit-starter',
     amount: 3000,
-    credits: 25000,
+    points: 25000,
     status: 'pending',
     externalTransactionId: 'TRADE-old',
     createdAt: new Date(NOW.getTime() - 5 * 60 * 1000), // 5분 전
@@ -140,148 +140,11 @@ describe('PrismaPaymentRepository.findReusablePendingPayment', () => {
 })
 
 // ============================================================================
-// PAY-P3-A: refundPaymentAtomically CAS 패턴 검증 (구멍-B 차단)
-// 정본: .claude/shared-contracts.md §22 PaymentRaceCondition
-// AC-4: CAS mismatch 시 throw + 호출자 retry 위임
-// AC-7: 100 동시 환불 시뮬 race window 차단
+// CC-4 Phase 1 (2026-05-21) — `refundPaymentAtomically` describe 블록 제거.
+// 구 메서드(Author.credits Int + CreditLog) 시그니처 + 본문이 port/repository 양측 제거되었음.
+// PAY-P3-A CAS race 차단 + PAY-P2-1 부분 환불 비율 회귀는 `refundPaymentWithPoints` 신 메서드
+// describe + credit-gift-refund-integration.spec 통합 케이스에서 동등하게 박제.
 // ============================================================================
-describe('PrismaPaymentRepository.refundPaymentAtomically — CAS 패턴 (구멍-B 차단)', () => {
-  let repo: PrismaPaymentRepository
-  let mockPrisma: any
-  let txMock: any
-
-  const baseInput = {
-    paymentId: 'pay-1',
-    authorId: 'author-1',
-    credits: 60,
-    refundedAmount: 10000,
-    reason: 'polar_webhook_order.refunded',
-    source: 'webhook' as const,
-  }
-
-  beforeEach(() => {
-    txMock = {
-      payment: {
-        findUnique: jest.fn(),
-        update: jest.fn().mockResolvedValue(undefined),
-      },
-      author: {
-        findUniqueOrThrow: jest.fn(),
-        updateMany: jest.fn(),
-      },
-      creditLog: {
-        create: jest.fn().mockResolvedValue(undefined),
-      },
-      refundLog: {
-        create: jest.fn().mockResolvedValue(undefined),
-      },
-    }
-    mockPrisma = {
-      $transaction: jest.fn().mockImplementation(async (cb: any) => cb(txMock)),
-    }
-    repo = new PrismaPaymentRepository(mockPrisma)
-  })
-
-  it('AC-4(a) CAS 패턴 — author.credits >= actualDeducted 시 updateMany 1 row 갱신 + 정상 환수', async () => {
-    // payment.amount=10000 → ratio=1.0 → proportionalCredits=60 → currentBalance=100 → actualDeducted=60
-    txMock.payment.findUnique.mockResolvedValueOnce({ amount: 10000, status: 'completed' })
-    txMock.author.findUniqueOrThrow.mockResolvedValueOnce({ credits: 100 })
-    txMock.author.updateMany.mockResolvedValueOnce({ count: 1 })
-
-    const result = await repo.refundPaymentAtomically(baseInput)
-
-    // CAS 패턴 정합 — updateMany WHERE credits >= actualDeducted
-    expect(txMock.author.updateMany).toHaveBeenCalledTimes(1)
-    expect(txMock.author.updateMany).toHaveBeenCalledWith({
-      where: {
-        id: 'author-1',
-        credits: { gte: 60 }, // actualDeducted
-      },
-      data: { credits: { decrement: 60 } },
-    })
-    expect(result).toEqual({
-      actualDeducted: 60,
-      deficitCredits: 0,
-      proportionalCredits: 60,
-      isPartial: false,
-    })
-  })
-
-  it('AC-4(b) CAS mismatch — updateMany count=0 시 throw CAS_MISMATCH (race window 검출)', async () => {
-    // race 시뮬 — findUniqueOrThrow는 credits=100 반환했으나, updateMany 시점에는 다른 트랜잭션이 credits를 줄여서 count=0
-    txMock.payment.findUnique.mockResolvedValueOnce({ amount: 10000, status: 'completed' })
-    txMock.author.findUniqueOrThrow.mockResolvedValueOnce({ credits: 100 })
-    txMock.author.updateMany.mockResolvedValueOnce({ count: 0 })
-
-    await expect(repo.refundPaymentAtomically(baseInput)).rejects.toThrow(/CAS_MISMATCH/)
-
-    // updateMany는 시도되었으나 0 row 갱신 — CreditLog/RefundLog 박제 0건 (트랜잭션 rollback 위임)
-    expect(txMock.author.updateMany).toHaveBeenCalledTimes(1)
-    expect(txMock.creditLog.create).not.toHaveBeenCalled()
-    expect(txMock.refundLog.create).not.toHaveBeenCalled()
-  })
-
-  it('AC-4(c) deficit 분기 — actualDeducted=잔액(10) + deficitCredits=50 + updateMany WHERE credits >= 10', async () => {
-    // currentBalance=10 < proportionalCredits=60 → actualDeducted=10, deficit=50
-    txMock.payment.findUnique.mockResolvedValueOnce({ amount: 10000, status: 'completed' })
-    txMock.author.findUniqueOrThrow.mockResolvedValueOnce({ credits: 10 })
-    txMock.author.updateMany.mockResolvedValueOnce({ count: 1 })
-
-    const result = await repo.refundPaymentAtomically(baseInput)
-
-    // CAS 패턴 — actualDeducted 기준으로 WHERE 절 박제
-    expect(txMock.author.updateMany).toHaveBeenCalledWith({
-      where: {
-        id: 'author-1',
-        credits: { gte: 10 }, // actualDeducted (= 잔액)
-      },
-      data: { credits: { decrement: 10 } },
-    })
-    expect(result).toEqual({
-      actualDeducted: 10,
-      deficitCredits: 50,
-      proportionalCredits: 60,
-      isPartial: false,
-    })
-  })
-
-  it('AC-7 시뮬: 100 동시 환불 호출 — 모든 트랜잭션이 CAS 패턴으로 정합 처리 (race window 0건)', async () => {
-    // 100개의 독립 호출 — 각 호출이 자체 tx 받아서 CAS 통과
-    txMock.payment.findUnique.mockResolvedValue({ amount: 10000, status: 'completed' })
-    txMock.author.findUniqueOrThrow.mockResolvedValue({ credits: 100 })
-    txMock.author.updateMany.mockResolvedValue({ count: 1 })
-
-    const promises = Array.from({ length: 100 }, () => repo.refundPaymentAtomically(baseInput))
-    const results = await Promise.all(promises)
-
-    // 모든 호출이 CAS 통과 (count=1)
-    expect(results).toHaveLength(100)
-    expect(txMock.author.updateMany).toHaveBeenCalledTimes(100)
-    // 각 호출 결과 정합 (actualDeducted=60 정확)
-    for (const r of results) {
-      expect(r.actualDeducted).toBe(60)
-    }
-  })
-
-  it('AC-7 변형: actualDeducted=0 시 (잔액 0건 + proportionalCredits=0) updateMany 호출 0건 + RefundLog 박제', async () => {
-    // currentBalance=0 + proportionalCredits=0 (예: 부분 환불 비율로 0이 된 케이스)
-    // 본 케이스: proportionalCredits=0이려면 ratio*credits < 1이어야 하므로 실제 시나리오는 매우 작은 ratio
-    // 단순 시뮬: currentBalance=0 → actualDeducted=0
-    txMock.payment.findUnique.mockResolvedValueOnce({ amount: 10000, status: 'completed' })
-    txMock.author.findUniqueOrThrow.mockResolvedValueOnce({ credits: 0 })
-    // updateMany는 호출 0건 (actualDeducted=0 분기)
-
-    const result = await repo.refundPaymentAtomically(baseInput)
-
-    expect(txMock.author.updateMany).not.toHaveBeenCalled()
-    expect(result).toEqual({
-      actualDeducted: 0,
-      deficitCredits: 60,
-      proportionalCredits: 60,
-      isPartial: false,
-    })
-  })
-})
 
 // ============================================================================
 // CC-2a: completePaymentWithPoints — 충전 결제 적립 원자 트랜잭션 (案 1)
@@ -499,7 +362,7 @@ describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 
       payment: {
         findUnique: jest.fn().mockResolvedValue({
           amount: 3000,
-          credits: 25000,
+          points: 25000,
           status: 'completed',
         }),
         update: jest.fn().mockResolvedValue(undefined),
@@ -648,7 +511,7 @@ describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 
 
   it('refundedAmount > payment.amount 시 throw (validation)', async () => {
     txMock.payment.findUnique.mockResolvedValueOnce({
-      amount: 1000, credits: 25000, status: 'completed',
+      amount: 1000, points: 25000, status: 'completed',
     })
     await expect(
       repo.refundPaymentWithPoints({ ...baseInput, refundedAmount: 2000 }),
@@ -657,7 +520,7 @@ describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 
 
   it('payment.amount === 0 (free 결제) throw', async () => {
     txMock.payment.findUnique.mockResolvedValueOnce({
-      amount: 0, credits: 0, status: 'completed',
+      amount: 0, points: 0, status: 'completed',
     })
     await expect(repo.refundPaymentWithPoints(baseInput)).rejects.toThrow(
       /환불 불가/,

@@ -1,7 +1,7 @@
 import { Injectable, Inject } from '@nestjs/common'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
-import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
+import { CreditUseCase } from '@application/credit/credit.usecase'
 import { SafeAuthor, toSafeAuthor } from '@domain/model/author'
 import { WorkWithMeta, PaginatedWorks } from '@domain/model/work'
 
@@ -13,12 +13,19 @@ export interface GiftedAuthor {
   totalGifted: number
 }
 
+/**
+ * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — 신·구 분열 해소 L2a.
+ *
+ * 변경: `creditRepo.getGiftRanking` 직접 호출 → `CreditUseCase.getGiftRanking` 위임.
+ * CreditUseCase 가 CC-3 (HIGH-3) 에서 ledger 위임/폴백 분기를 박제했으므로 본 위임으로
+ * 신 선물(`source='gift'`)이 `/discovery/most-gifted-authors` 에 인식됨.
+ */
 @Injectable()
 export class DiscoveryUseCase {
   constructor(
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
-    @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
+    private readonly creditUseCase: CreditUseCase,
   ) {}
 
   /** 이름/슬러그로 작가 검색 (민감 필드 제거) */
@@ -61,9 +68,9 @@ export class DiscoveryUseCase {
     }
   }
 
-  /** 응원받는 작가 — 크레딧 선물 총액 기준 랭킹 */
+  /** 응원받는 작가 — 크레딧 선물 총액 기준 랭킹 (CC-4 P1 L2a — CreditUseCase 위임) */
   async getMostGiftedAuthors(limit = 8): Promise<GiftedAuthor[]> {
-    const ranking = await this.creditRepo.getGiftRanking(limit)
+    const ranking = await this.creditUseCase.getGiftRanking(limit)
     if (ranking.length === 0) return []
 
     // 작가 정보 조회

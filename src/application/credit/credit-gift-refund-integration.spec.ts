@@ -209,6 +209,14 @@ class FakeCreditLedger implements CreditLedgerPort {
       .map((r, i) => ({ ...r, id: `l-${i}`, expiresAt: null, createdAt: new Date() }))
   }
 
+  /** CC-4 Phase 1 L2d — type='spend' amount 합 (절대값) */
+  async sumSpendByAuthor(authorId?: string | null): Promise<number> {
+    const rows = this.store.rows.filter(
+      (r) => r.type === 'spend' && (authorId == null || r.authorId === authorId),
+    )
+    return Math.abs(rows.reduce((acc, r) => acc + r.amount, 0))
+  }
+
   /** CC-3 (HIGH-3) — 신 ledger 기반 선물 랭킹 fake */
   async getGiftRanking(
     limit: number,
@@ -524,7 +532,7 @@ describe('CC-2b — 선물·환불 신 시스템 연동 + 이중 외상 통합 (
       authorId,
       productId: 'credit-starter',
       amount: 3000,
-      credits: STARTER_POINTS,
+      points: STARTER_POINTS,
       externalTransactionId: tradeNo,
       status: 'pending',
       createdAt: new Date(),
@@ -561,16 +569,10 @@ describe('CC-2b — 선물·환불 신 시스템 연동 + 이중 외상 통합 (
         }
       }),
     }
+    // CC-4 Phase 1 — CreditRepositoryPort 잔존 시그니처 2종만 (폴백 경로 검증용)
     const creditRepo = {
-      adjustCredits: jest.fn(),
-      giftTransfer: jest.fn().mockRejectedValue(
-        new Error(
-          'CC-2b: 선물은 ledger.transfer 를 써야 한다 (구 creditRepo.giftTransfer = 미연동)',
-        ),
-      ),
       getGiftRanking: jest.fn().mockResolvedValue([]),
       findLogsByAuthorId: jest.fn().mockResolvedValue([]),
-      sumNegativeAmounts: jest.fn(),
     }
 
     // 실 CreditUseCase — ledger fake + authorRepo fake
@@ -813,7 +815,7 @@ describe('CC-2b — 선물·환불 신 시스템 연동 + 이중 외상 통합 (
         authorId: 'author-X',
         productId: 'credit-starter',
         amount: 3000,
-        credits: STARTER_POINTS,
+        points: STARTER_POINTS,
         externalTransactionId: 'TRADE-charge',
         status: 'pending',
         createdAt: new Date(),
@@ -864,7 +866,7 @@ describe('CC-2b — 선물·환불 신 시스템 연동 + 이중 외상 통합 (
         authorId: 'author-K',
         productId: 'credit-starter',
         amount: 3000,
-        credits: STARTER_POINTS,
+        points: STARTER_POINTS,
         externalTransactionId: 'TRADE-K1',
         status: 'pending',
         createdAt: new Date(),
@@ -879,7 +881,7 @@ describe('CC-2b — 선물·환불 신 시스템 연동 + 이중 외상 통합 (
         authorId: 'author-K',
         productId: 'credit-starter',
         amount: 3000,
-        credits: STARTER_POINTS,
+        points: STARTER_POINTS,
         externalTransactionId: 'TRADE-K2',
         status: 'pending',
         createdAt: new Date(),

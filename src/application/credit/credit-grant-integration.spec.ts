@@ -195,6 +195,14 @@ class FakeCreditLedger implements CreditLedgerPort {
       .reverse()
   }
 
+  /** CC-4 Phase 1 L2d — type='spend' amount 합 (절대값) */
+  async sumSpendByAuthor(authorId?: string | null): Promise<number> {
+    const rows = this.rows.filter(
+      (r) => r.type === 'spend' && (authorId == null || r.authorId === authorId),
+    )
+    return Math.abs(rows.reduce((acc, r) => acc + r.amount, 0))
+  }
+
   /** CC-3 (HIGH-3) — 신 ledger 기반 선물 랭킹 fake */
   async getGiftRanking(
     limit: number,
@@ -440,14 +448,13 @@ describe('CC-1 적립·차감 연동 통합 테스트 (CreditLedger 실 연동 �
         }),
       }
       const workRepo = {}
-      const creditRepo = {}
       const adminRepo = {}
       const auditLog = { log: jest.fn().mockResolvedValue(undefined) }
+      // CC-4 Phase 1 — AdminUseCase 생성자에서 creditRepo 인자 제거.
       // 실 GrantPointsUseCase + 실 ledger fake 주입
       return new AdminUseCase(
         authorRepo as any,
         workRepo as any,
-        creditRepo as any,
         adminRepo as any,
         grantPoints,
         ledger,

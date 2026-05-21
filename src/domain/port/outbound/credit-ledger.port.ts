@@ -120,6 +120,17 @@ export interface CreditLedgerPort {
   findByAuthor(authorId: string, limit: number): Promise<CreditLedgerEntry[]>
 
   /**
+   * 작가 누적 소진 pt 합 — CC-4 Phase 1 L2c 신설.
+   *
+   * `CreditLedger.type='spend'` 음수 amount 의 합(절대값). admin.usecase 통계용.
+   * 구 `creditRepo.sumNegativeAmounts`(`CreditLog.amount<0` 합) 의 신 시스템 대체.
+   *
+   * @param authorId 옵션 — null/미지정 시 전체 작가 합, 지정 시 해당 작가 합.
+   * @returns 누적 소진 pt 절대값 (양수)
+   */
+  sumSpendByAuthor(authorId?: string | null): Promise<number>
+
+  /**
    * 응원받는 작가 랭킹 — CC-3 (HIGH-3) 신 ledger 기반.
    *
    * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §5-B / ADR-014.

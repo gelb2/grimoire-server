@@ -52,7 +52,7 @@ export class RefundPaymentUseCase {
   /**
    * @param input.paymentId 환불 대상 Payment id (이미 completed 상태여야 함)
    * @param input.authorId 환수 대상 Author id
-   * @param input.refundPt 환수할 포인트 (양수 — `Payment.credits` 의미 pt 재해석, MEDIUM-4)
+   * @param input.refundPt 환수할 포인트 (양수 — `Payment.points` pt 단위, CC-4 Phase 2 rename 완료)
    * @param input.refundedAmount PG 환불 금액 (KRW)
    * @param input.reason 환불 사유 (예: 'polar_webhook_order.refunded')
    * @param input.source 'webhook' (Polar 자동) | 'manual' (운영자 수동, P2)
