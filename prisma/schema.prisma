@@ -20,10 +20,9 @@ model Author {
   passwordHash       String?         @map("password_hash")
   bio                String?
   role               String          @default("user")
-  /// [DEPRECATED → 크레딧 개편 I Phase, 2026-05-17] 디노미네이션 후 pointsCharged 등 4 필드로 이행.
-  /// 마이그레이션에서 즉시 DROP 하지 않음 — 1 sprint 유예 후 별도 sprint 에서 제거(롤백 안전망, §8-6 Cursor 반면교사).
-  /// 신규 코드는 이 필드를 차감/적립에 사용하지 말 것 — CreditLedgerPort 경유.
-  credits            Int             @default(0)
+  /// [CC-4 Phase 3 — 2026-05-21] 구 `credits Int` 컬럼 DROP. 신 4 출처 캐시(`points*`) + `deficitPoints` 단일 정본.
+  ///   응답 키 `credits`(/auth/me 등)는 controller 측에서 `CreditLedgerPort.getBalance().total` 매핑으로 보존(案 P3-Y 옵션 A).
+  ///   마이그레이션: 20260521_author_credits_drop_credit_log_phase3.
   // 크레딧 개편 I Phase (2026-05-17) — 포인트 출처 4종 분리 회계 잔액 캐시 (1-C 하이브리드).
   // 입출금 원장은 CreditLedger — 본 4 필드는 빠른 조회용 캐시 ($transaction 동기 갱신).
   pointsFree         Int             @default(0) @map("points_free") // 무료 적립 (가입·첫작품) — CAC, 매출 0
@@ -51,8 +50,8 @@ model Author {
   refreshTokens   RefreshToken[]
 
   // Restrict 영역 (회계/세무/감사 영구 보존, Author hard delete 시 PG 자동 차단)
+  // CC-4 Phase 3 (2026-05-21) — `creditLogs CreditLog[]` 관계 제거. `CreditLog` 모델 폐기 정합.
   payments         Payment[]
-  creditLogs       CreditLog[]
   analysisReports  AnalysisReport[]
   sanctionedAuthor UserSanction[]   @relation("SanctionedAuthor")
   // 크레딧 개편 I Phase (2026-05-17) — CreditLedger 회계 원장 / MembershipPlan 구독 이력 (ADR-007 Restrict 정합)
@@ -151,16 +150,9 @@ model Episode {
   @@map("episodes")
 }
 
-model CreditLog {
-  id        String   @id @default(uuid())
-  authorId  String   @map("author_id")
-  author    Author   @relation(fields: [authorId], references: [id], onDelete: Restrict)
-  amount    Int
-  reason    String
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-
-  @@map("credit_logs")
-}
+/// [CC-4 Phase 3 — 2026-05-21] `model CreditLog` 폐기 — 4 출처 신 ledger(`CreditLedger`)가 단일 정본.
+///   마이그레이션: 20260521_author_credits_drop_credit_log_phase3 (`DROP TABLE "credit_logs" CASCADE`).
+///   감사 박제는 `CreditLedger` row(audit + balanceAfter + relatedId)가 정본 — 회계/세무 영구 보존 정합.
 
 model SocialAccount {
   id            String   @id @default(uuid())

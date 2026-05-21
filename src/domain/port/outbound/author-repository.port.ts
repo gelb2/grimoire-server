@@ -6,7 +6,8 @@ export interface AuthorRepositoryPort {
   findByEmail(email: string): Promise<Author | null>
   findBySocialAccount(provider: string, providerId: string): Promise<Author | null>
   create(input: { slug: string; name: string; email: string; passwordHash?: string }): Promise<Author>
-  updateCredits(id: string, credits: number): Promise<Author>
+  // CC-4 Phase 3 (2026-05-21) — `updateCredits(id, credits)` 시그니처 제거. `Author.credits` 컬럼 DROP 정합.
+  //   차감/적립은 신 `ChargePointsUseCase`/`GrantPointsUseCase` + `CreditLedgerPort` 단일 경로.
   linkSocialAccount(authorId: string, provider: string, providerId: string, email?: string): Promise<void>
   /** 이름 또는 슬러그로 작가 검색 (LIKE) */
   search(query: string, limit: number): Promise<Author[]>

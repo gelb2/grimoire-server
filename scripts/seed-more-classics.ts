@@ -1087,26 +1087,26 @@ async function main() {
     if (!author && authorDef.isNew) {
       // 신규 작가 생성
       const passwordHash = await bcrypt.hash(authorDef.password, 10)
+      // CC-4 Phase 3 (2026-05-21) — `Author.credits` 컬럼 DROP. 신 4 출처 캐시는 schema @default(0).
       author = await prisma.author.create({
         data: {
           slug: authorDef.slug,
           name: authorDef.name,
           email: authorDef.email,
           passwordHash,
-          credits: 3,
         },
       })
       console.log(`  -> 신규 작가 생성 완료 (id: ${author.id})`)
     } else if (!author) {
       // 기존 작가인데 DB에 없는 경우 — 생성
       const passwordHash = await bcrypt.hash(authorDef.password, 10)
+      // CC-4 Phase 3 (2026-05-21) — `Author.credits` 컬럼 DROP. 신 4 출처 캐시는 schema @default(0).
       author = await prisma.author.create({
         data: {
           slug: authorDef.slug,
           name: authorDef.name,
           email: authorDef.email,
           passwordHash,
-          credits: 3,
         },
       })
       console.log(`  -> 기존 작가 DB 부재, 새로 생성 (id: ${author.id})`)

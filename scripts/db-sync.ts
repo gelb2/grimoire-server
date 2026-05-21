@@ -155,7 +155,7 @@ async function main() {
     const episodes = await sourceDb.episode.findMany()
     const socialAccounts = await sourceDb.socialAccount.findMany()
     const signupHistories = await sourceDb.signupHistory.findMany()
-    const creditLogs = await sourceDb.creditLog.findMany()
+    // CC-4 Phase 3 (2026-05-21) — `creditLog` 모델 폐기. `CreditLedger` 단일 정본.
     const bookmarks = await sourceDb.bookmark.findMany()
     const readingProgress = await sourceDb.readingProgress.findMany()
     const likes = await sourceDb.like.findMany()
@@ -169,7 +169,7 @@ async function main() {
     const systemSettings = await sourceDb.systemSetting.findMany()
 
     console.log(`  authors: ${authors.length}, themes: ${themes.length}, works: ${works.length}, episodes: ${episodes.length}`)
-    console.log(`  socialAccounts: ${socialAccounts.length}, creditLogs: ${creditLogs.length}, payments: ${payments.length}`)
+    console.log(`  socialAccounts: ${socialAccounts.length}, payments: ${payments.length}`)
     console.log(`  bookmarks: ${bookmarks.length}, likes: ${likes.length}, comments: ${comments.length}, dailyViews: ${dailyViews.length}`)
     console.log(`  announcements: ${announcements.length}, featuredWorks: ${featuredWorks.length}, systemSettings: ${systemSettings.length}`)
 
@@ -195,7 +195,7 @@ async function main() {
     await targetDb.readingProgress.deleteMany()
     await targetDb.bookmark.deleteMany()
     await targetDb.payment.deleteMany()
-    await targetDb.creditLog.deleteMany()
+    // CC-4 Phase 3 (2026-05-21) — `creditLog.deleteMany` 제거. `CreditLog` 모델 폐기.
     // 플랫폼 관리자 데이터 — Author/Work에 느슨 참조(FK 없음)
     await targetDb.systemSetting.deleteMany()
     await targetDb.featuredWork.deleteMany()
@@ -241,10 +241,7 @@ async function main() {
     }
     console.log(`  ✓ signupHistories: ${signupHistories.length}`)
 
-    for (const cl of creditLogs) {
-      await targetDb.creditLog.create({ data: cl })
-    }
-    console.log(`  ✓ creditLogs: ${creditLogs.length}`)
+    // CC-4 Phase 3 (2026-05-21) — `creditLog.create` 루프 제거. `CreditLog` 모델 폐기.
 
     for (const bm of bookmarks) {
       await targetDb.bookmark.create({ data: bm as any })

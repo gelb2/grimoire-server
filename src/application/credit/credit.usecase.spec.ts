@@ -1,41 +1,37 @@
 import { CreditUseCase } from './credit.usecase'
 
 /**
- * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — 구 메서드 spec 제거.
+ * 크레딧 개편 CC-4 Phase 3 (2026-05-21) — `CreditRepositoryPort` DI 제거 정합.
  *
- * 폐기 spec (호출처 0건 확인 후 제거):
+ * Phase 1 폐기 spec (제거 완료):
  *   - describe('deduct') — `Author.credits` Int 차감 (구 경로)
  *   - describe('grant') — `Author.credits` Int 적립 (구 경로)
  *   - describe('getBalance') — `Author.credits` Int 단일 잔액 (구 경로)
  *
- * 잔존 spec 4 메서드는 전부 신 시스템 위임 검증:
+ * Phase 3 폐기 spec (제거 — 2026-05-21):
+ *   - `creditRepo`/`mockCreditRepo` mock 전체 — `CreditRepositoryPort` DI 자체 제거.
+ *   - `getLogs`/`getGiftRanking` ledger 미주입 폴백 case — `ledger` Required 강제 (미주입 시 BadRequest).
+ *
+ * 잔존 spec 4 메서드는 전부 신 시스템 단일 경로 검증:
  *   - getPointBalance (CreditLedgerPort.getBalance + lazy 안전망)
  *   - gift (CreditLedgerPort.transfer)
- *   - getGiftRanking (CC-3 ledger 위임 + 폴백)
- *   - getLogs (CC-3 ledger 위임 + 폴백)
- *
- * mockCreditRepo 잔존 항목: `findLogsByAuthorId`/`getGiftRanking` — getLogs/getGiftRanking 폴백 검증용
- * (구 `giftTransfer`/`adjustCredits` 는 제거 — P1c/P1h 에서 port 시그니처 제거 정합).
+ *   - getGiftRanking (CreditLedgerPort.getGiftRanking 단일 경로)
+ *   - getLogs (CreditLedgerPort.findByAuthor 단일 경로)
  */
 describe('CreditUseCase', () => {
   let useCase: CreditUseCase
-  let mockCreditRepo: { findLogsByAuthorId: jest.Mock; getGiftRanking: jest.Mock }
-  let mockAuthorRepo: { findById: jest.Mock; findBySlug: jest.Mock; findByEmail: jest.Mock; create: jest.Mock; updateCredits: jest.Mock }
+  let mockAuthorRepo: { findById: jest.Mock; findBySlug: jest.Mock; findByEmail: jest.Mock; create: jest.Mock }
 
-  const mockAuthor = { id: 'author-1', slug: 'test', name: '테스트', email: 'test@test.com', credits: 3, createdAt: new Date() }
-  const mockLog = { id: 'log-1', authorId: 'author-1', amount: -1, reason: 'theme_generate', createdAt: new Date() }
+  const mockAuthor = { id: 'author-1', slug: 'test', name: '테스트', email: 'test@test.com', createdAt: new Date() }
 
   beforeEach(() => {
-    mockCreditRepo = {
-      findLogsByAuthorId: jest.fn().mockResolvedValue([mockLog]),
-      getGiftRanking: jest.fn().mockResolvedValue([{ authorId: 'author-2', totalGifted: 10 }]),
-    }
     mockAuthorRepo = {
       findById: jest.fn().mockResolvedValue(mockAuthor),
-      findBySlug: jest.fn(), findByEmail: jest.fn(), create: jest.fn(), updateCredits: jest.fn(),
+      findBySlug: jest.fn(), findByEmail: jest.fn(), create: jest.fn(),
     }
 
-    useCase = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any)
+    // CC-4 Phase 3 — `creditRepo` 인자 제거. ledger Required 강제는 각 it 안에서 검증.
+    useCase = new CreditUseCase(mockAuthorRepo as any)
   })
 
   describe('getPointBalance', () => {
@@ -46,7 +42,7 @@ describe('CreditUseCase', () => {
 
     it('CreditLedgerPort 주입 시 4 출처 포인트 잔액을 반환한다', async () => {
       const mockLedger = { getBalance: jest.fn().mockResolvedValue(mockBalance) }
-      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
 
       const balance = await uc.getPointBalance('author-1')
 
@@ -62,7 +58,7 @@ describe('CreditUseCase', () => {
 
     it('작가가 없으면 에러를 던진다', async () => {
       const mockLedger = { getBalance: jest.fn() }
-      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
       mockAuthorRepo.findById.mockResolvedValue(null)
 
       await expect(uc.getPointBalance('no-author')).rejects.toThrow('작가를 찾을 수 없습니다')
@@ -75,7 +71,6 @@ describe('CreditUseCase', () => {
           checkAndResetExpiredPool: jest.fn().mockResolvedValue({ reset: false, plan: null }),
         }
         const uc = new CreditUseCase(
-          mockCreditRepo as any,
           mockAuthorRepo as any,
           mockLedger as any,
           mockMembership as any,
@@ -94,7 +89,6 @@ describe('CreditUseCase', () => {
           checkAndResetExpiredPool: jest.fn().mockRejectedValue(new Error('DB error')),
         }
         const uc = new CreditUseCase(
-          mockCreditRepo as any,
           mockAuthorRepo as any,
           mockLedger as any,
           mockMembership as any,
@@ -107,7 +101,7 @@ describe('CreditUseCase', () => {
 
       it('MembershipPlanPort 미주입 시 lazy 호출 없음 (BACKWARD COMPATIBLE)', async () => {
         const mockLedger = { getBalance: jest.fn().mockResolvedValue(mockBalance) }
-        const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+        const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
         await uc.getPointBalance('author-1')
         // membershipRepo 가 없으니 잔액 조회만 진행 (정상 동작)
         expect(mockLedger.getBalance).toHaveBeenCalled()
@@ -116,11 +110,8 @@ describe('CreditUseCase', () => {
   })
 
   describe('getLogs', () => {
-    it('ledger 미주입 시 구 creditRepo.findLogsByAuthorId 폴백 (BACKWARD COMPATIBLE)', async () => {
-      const logs = await useCase.getLogs('author-1')
-      expect(logs).toHaveLength(1)
-      expect((logs[0] as any).reason).toBe('theme_generate')
-      expect(mockCreditRepo.findLogsByAuthorId).toHaveBeenCalledWith('author-1')
+    it('CC-4 Phase 3 — ledger 미주입 시 BadRequest (구 creditRepo 폴백 제거)', async () => {
+      await expect(useCase.getLogs('author-1')).rejects.toThrow('포인트 원장이 구성되지 않았습니다')
     })
 
     it('CC-3 (HIGH-3) — ledger 주입 시 findByAuthor 위임 (CreditLedgerEntry[] 반환)', async () => {
@@ -142,21 +133,19 @@ describe('CreditUseCase', () => {
         getBalance: jest.fn(),
         findByAuthor: jest.fn().mockResolvedValue(ledgerEntries),
       }
-      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
       const logs = await uc.getLogs('author-1')
       expect(mockLedger.findByAuthor).toHaveBeenCalledWith('author-1', 100)
-      // 구 creditRepo.findLogsByAuthorId 미호출
-      expect(mockCreditRepo.findLogsByAuthorId).not.toHaveBeenCalled()
       expect(logs).toHaveLength(1)
       expect((logs[0] as any).source).toBe('gift')
     })
   })
 
   describe('gift (CC-2b — ledger.transfer 신 경로)', () => {
-    const mockReceiver = { id: 'author-2', slug: 'recv', name: '수신자', email: 'recv@test.com', credits: 3, createdAt: new Date() }
+    const mockReceiver = { id: 'author-2', slug: 'recv', name: '수신자', email: 'recv@test.com', createdAt: new Date() }
 
     /** ledger.transfer mock + 4 출처 적당히 채운 작가 + useCase 재구성 */
-    function setupWithLedger(senderCredits = 5000) {
+    function setupWithLedger() {
       const mockLedger = {
         getBalance: jest.fn(),
         earn: jest.fn(),
@@ -169,9 +158,9 @@ describe('CreditUseCase', () => {
         }),
       }
       mockAuthorRepo.findById
-        .mockResolvedValueOnce({ ...mockAuthor, credits: senderCredits })  // sender
+        .mockResolvedValueOnce({ ...mockAuthor })  // sender
         .mockResolvedValueOnce(mockReceiver) // receiver
-      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
       return { uc, mockLedger }
     }
 
@@ -213,7 +202,7 @@ describe('CreditUseCase', () => {
       mockAuthorRepo.findById
         .mockResolvedValueOnce(mockAuthor)
         .mockResolvedValueOnce(mockReceiver)
-      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
 
       await expect(uc.gift('author-1', 'author-2', 1000)).rejects.toThrow('포인트가 부족')
     })
@@ -226,7 +215,7 @@ describe('CreditUseCase', () => {
       mockAuthorRepo.findById
         .mockResolvedValueOnce(mockAuthor)
         .mockResolvedValueOnce(null)
-      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
       await expect(uc.gift('author-1', 'no-one', 1000)).rejects.toThrow('받는 유저')
     })
 
@@ -236,11 +225,8 @@ describe('CreditUseCase', () => {
   })
 
   describe('getGiftRanking', () => {
-    it('ledger 미주입 시 구 creditRepo.getGiftRanking 폴백 (BACKWARD COMPATIBLE)', async () => {
-      const ranking = await useCase.getGiftRanking(10)
-      expect(ranking).toHaveLength(1)
-      expect(ranking[0].totalGifted).toBe(10)
-      expect(mockCreditRepo.getGiftRanking).toHaveBeenCalledWith(10)
+    it('CC-4 Phase 3 — ledger 미주입 시 BadRequest (구 creditRepo 폴백 제거)', async () => {
+      await expect(useCase.getGiftRanking(10)).rejects.toThrow('포인트 원장이 구성되지 않았습니다')
     })
 
     it('CC-3 (HIGH-3) — ledger 주입 시 ledger.getGiftRanking 위임', async () => {
@@ -252,11 +238,9 @@ describe('CreditUseCase', () => {
           { authorId: 'author-B', totalGifted: 3000 },
         ]),
       }
-      const uc = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any, mockLedger as any)
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
       const ranking = await uc.getGiftRanking(5)
       expect(mockLedger.getGiftRanking).toHaveBeenCalledWith(5)
-      // 구 경로 미호출
-      expect(mockCreditRepo.getGiftRanking).not.toHaveBeenCalled()
       expect(ranking).toHaveLength(2)
       expect(ranking[0].authorId).toBe('author-A')
       expect(ranking[0].totalGifted).toBe(9000)
