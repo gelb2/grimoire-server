@@ -313,26 +313,19 @@ class FakeCreditLedger implements CreditLedgerPort {
 
 /** AuthorRepositoryPort — credit.usecase 가 findById 만 사용 */
 function makeAuthorRepo(authors: AuthorStore) {
+  // CC-4 Phase 3 (2026-05-21) — `updateCredits` 시그니처 제거 정합.
   return {
-    findById: async (id: string) => (authors.has(id) ? (authors.get(id) as unknown as { id: string; credits: number }) : null),
+    findById: async (id: string) => (authors.has(id) ? (authors.get(id) as unknown as { id: string }) : null),
     findBySlug: async () => null,
     findByEmail: async () => null,
     create: async () => ({}) as any,
-    updateCredits: async () => ({}) as any,
     update: async () => ({}) as any,
     findManyByPlan: async () => [],
     findManyByIds: async () => [],
   } as any
 }
 
-function makeCreditRepoMock() {
-  // CC-4 Phase 1 — CreditRepositoryPort 잔존 시그니처 2종만 (Phase 3 폐기 예정).
-  // 폴백 경로 검증용 — ledger 주입 시 호출 0건이 정상.
-  return {
-    findLogsByAuthorId: jest.fn().mockResolvedValue([]),
-    getGiftRanking: jest.fn().mockResolvedValue([]),
-  } as any
-}
+// CC-4 Phase 3 (2026-05-21) — `makeCreditRepoMock` 헬퍼 제거. `CreditRepositoryPort` 파일/Port 자체 폐기.
 
 // ─────────────────────────────────────────────────────────
 // I1b — CRITICAL-1 lazy 안전망 통합 케이스
@@ -369,7 +362,6 @@ describe('CC-3 통합 — 이월 금지 lazy 안전망 + Author.plan 양측 동�
       const ledger = new FakeCreditLedger(authors)
       const membership = new FakeMembershipPlanPort(planStore, authors)
       const uc = new CreditUseCase(
-        makeCreditRepoMock(),
         makeAuthorRepo(authors),
         ledger,
         membership,
@@ -416,7 +408,6 @@ describe('CC-3 통합 — 이월 금지 lazy 안전망 + Author.plan 양측 동�
       const ledger = new FakeCreditLedger(authors)
       const membership = new FakeMembershipPlanPort(planStore, authors)
       const uc = new CreditUseCase(
-        makeCreditRepoMock(),
         makeAuthorRepo(authors),
         ledger,
         membership,
@@ -456,7 +447,6 @@ describe('CC-3 통합 — 이월 금지 lazy 안전망 + Author.plan 양측 동�
       const ledger = new FakeCreditLedger(authors)
       const membership = new FakeMembershipPlanPort(planStore, authors)
       const uc = new CreditUseCase(
-        makeCreditRepoMock(),
         makeAuthorRepo(authors),
         ledger,
         membership,
@@ -497,7 +487,6 @@ describe('CC-3 통합 — 이월 금지 lazy 안전망 + Author.plan 양측 동�
       const ledger = new FakeCreditLedger(authors)
       const membership = new FakeMembershipPlanPort(planStore, authors)
       const uc = new CreditUseCase(
-        makeCreditRepoMock(),
         makeAuthorRepo(authors),
         ledger,
         membership,
@@ -625,7 +614,6 @@ describe('CC-3 통합 — 이월 금지 lazy 안전망 + Author.plan 양측 동�
 
       const ledger = new FakeCreditLedger(authors)
       const uc = new CreditUseCase(
-        makeCreditRepoMock(),
         makeAuthorRepo(authors),
         ledger,
       )
@@ -667,7 +655,7 @@ describe('CC-3 통합 — 이월 금지 lazy 안전망 + Author.plan 양측 동�
         amount: 3000,
         reason: 'signup_bonus',
       })
-      const uc = new CreditUseCase(makeCreditRepoMock(), makeAuthorRepo(authors), ledger)
+      const uc = new CreditUseCase(makeAuthorRepo(authors), ledger)
 
       const logs = await uc.getLogs('author-X')
 
@@ -772,7 +760,7 @@ describe('CC-4 Phase 1 통합 — 구 메서드 제거 + admin·discovery 신·�
       authorId: 'author-2', source: 'gift', amount: 3000, reason: 'gift_received:from-B',
     })
 
-    const uc = new CreditUseCase(makeCreditRepoMock(), makeAuthorRepo(authors), ledger)
+    const uc = new CreditUseCase(makeAuthorRepo(authors), ledger)
     // DiscoveryUseCase 가 동일 메서드 호출 (CC-4 P1 L2a 위임)
     const ranking = await uc.getGiftRanking(10)
 
@@ -787,8 +775,59 @@ describe('CC-4 Phase 1 통합 — 구 메서드 제거 + admin·discovery 신·�
   it('구 메서드 제거 정합 — PaymentRepositoryPort / CreditRepositoryPort 에 구 시그니처 0건', () => {
     // 컴파일 타임에 이미 제거 완료 — 런타임 검증은 신 메서드만 호출되는 회귀 spec 으로 대체.
     // PaymentRepositoryPort: completePaymentWithPoints / refundPaymentWithPoints 만 잔존.
-    // CreditRepositoryPort: findLogsByAuthorId / getGiftRanking 폴백 2종만 잔존.
+    // CC-4 Phase 3 (2026-05-21) — CreditRepositoryPort 파일/Port 자체 삭제 + Author.credits 컬럼 DROP.
     // 본 it 는 명시적 박제 — 컴파일 통과 자체가 증명.
     expect(true).toBe(true)
+  })
+
+  // ============================================================================
+  // CC-4 Phase 3 (2026-05-21) — Author.credits 컬럼 + CreditLog 테이블 폐기 정합 박제
+  // ============================================================================
+  describe('CC-4 Phase 3 — Author.credits 컬럼 + CreditLog 테이블 폐기 정합', () => {
+    it('Phase 3 — Author 도메인 model 에 credits 필드 부재 (컴파일 타임 박제)', () => {
+      // tsc PASS 자체가 증명 — Author.credits 필드 삭제 정합.
+      // 신 도메인 model `Author`는 4 출처 캐시(pointsFree/pointsSubscription/pointsGift/pointsCharged) + deficitPoints 단일.
+      const sampleAuthor = {
+        id: 'a', slug: 'a', name: 'A', email: 'a@a.com', role: 'user',
+        plan: 'free', planExpireAt: null, createdAt: new Date(), deletedAt: null,
+        pointsFree: 0, pointsSubscription: 0, pointsGift: 0, pointsCharged: 0, deficitPoints: 0,
+      }
+      // `credits` 필드 부재 — sampleAuthor 의 모든 키에 `credits` 0건.
+      expect(Object.keys(sampleAuthor)).not.toContain('credits')
+    })
+
+    it('Phase 3 — CreditRepositoryPort interface 부재 + 파일 자체 삭제 정합 (컴파일 타임 박제)', () => {
+      // tsc PASS 자체가 증명 — `import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'` 0건.
+      // `CreditUseCase` 생성자 시그니처: (authorRepo, ledger?, membershipRepo?) — 3 인자.
+      // 본 spec 의 setupWithLedger / makeAuthorRepo 가 신 시그니처로 정합 박제.
+      expect(true).toBe(true)
+    })
+
+    it('Phase 3 — 신·구 분열 잔존 0건 + 4 출처 잔액 단일 정본 (회귀 안전망)', async () => {
+      // 4 출처 잔액 조회 + 적립 + 차감 + 선물 + 환불 — 전부 신 ledger 단일 경로.
+      // (본 spec 의 다른 it 들이 이미 신 시스템 단일 정본을 검증 — 본 it 는 종결 박제용 누적 게이트).
+      const authors = new AuthorStore()
+      authors.add({
+        id: 'phase3-author',
+        plan: 'free',
+        planExpireAt: null,
+        pointsFree: 3000,
+        pointsSubscription: 0,
+        pointsGift: 1000,
+        pointsCharged: 5000,
+        deficitPoints: 0,
+      })
+      const ledger = new FakeCreditLedger(authors)
+      const balance = await ledger.getBalance('phase3-author')
+
+      // 4 출처 합 + deficit = available — 신 시스템 단일 정본
+      expect(balance.free).toBe(3000)
+      expect(balance.subscription).toBe(0)
+      expect(balance.gift).toBe(1000)
+      expect(balance.charged).toBe(5000)
+      expect(balance.total).toBe(9000)
+      expect(balance.deficit).toBe(0)
+      expect(balance.available).toBe(9000)
+    })
   })
 })

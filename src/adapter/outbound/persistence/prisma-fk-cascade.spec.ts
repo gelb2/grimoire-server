@@ -33,13 +33,14 @@ describe('PAY-P3-E FK Cascade Policy', () => {
   })
 
   // ============================================================================
-  // it 1 — Author 삭제 시 Restrict 8건 박제 (회계/세무/감사 영구 보존)
+  // it 1 — Author 삭제 시 Restrict 박제 (회계/세무/감사 영구 보존)
+  // CC-4 Phase 3 (2026-05-21) — CreditLog 모델 폐기 → 현 schema Restrict 7건(Work·Payment·UserSanction·AnalysisReport·AdminAuditLog·RefundLog + 신 CreditLedger·MembershipPlan은 본 spec 범위 외 영역).
+  //   PAY-P3-E 마이그레이션 박제(migration.sql)는 비가역 — `credit_logs_author_id_fkey` 정합 박제는 그대로 보존(과거 박제 증명).
   // ============================================================================
-  it('Restrict 8건 박제 정합 — Payment/CreditLog/Work/UserSanction/AnalysisReport/AdminAuditLog/RefundLog (회계/세무/감사 영구 보존)', () => {
-    // schema.prisma 박제 (8 Restrict @relation)
+  it('Restrict 박제 정합 — Payment/Work/UserSanction/AnalysisReport/AdminAuditLog/RefundLog (회계/세무/감사 영구 보존, CC-4 Phase 3 후 7건)', () => {
+    // CC-4 Phase 3 후 schema.prisma 박제 (CreditLog 제거 — 6 Restrict @relation Author 측 + RefundLog Payment 측 = 7건)
     const restrictRelations = [
       { model: 'Work', fk: 'authorId', target: 'Author' },
-      { model: 'CreditLog', fk: 'authorId', target: 'Author' },
       { model: 'Payment', fk: 'authorId', target: 'Author' },
       { model: 'UserSanction', fk: 'authorId', target: 'Author' }, // SanctionedAuthor named relation
       { model: 'AnalysisReport', fk: 'authorId', target: 'Author' },
@@ -53,7 +54,10 @@ describe('PAY-P3-E FK Cascade Policy', () => {
       expect(schemaContent).toMatch(pattern)
     }
 
-    // migration.sql ON DELETE RESTRICT 박제 (7 raw FK + works.author_id_fkey 기존 6 박제 영역)
+    // CC-4 Phase 3 후 schema.prisma `model CreditLog` 부재 박제 정합
+    expect(schemaContent).not.toMatch(/^model\s+CreditLog\b/m)
+
+    // PAY-P3-E migration.sql ON DELETE RESTRICT 박제 — 비가역 SQL 박제는 보존 (과거 마이그레이션 증명용)
     expect(migrationContent).toContain('"works_author_id_fkey" FOREIGN KEY ("author_id") REFERENCES "authors"("id") ON DELETE RESTRICT')
     expect(migrationContent).toContain('"credit_logs_author_id_fkey" FOREIGN KEY ("author_id") REFERENCES "authors"("id") ON DELETE RESTRICT')
     expect(migrationContent).toContain('"payments_author_id_fkey" FOREIGN KEY ("author_id") REFERENCES "authors"("id") ON DELETE RESTRICT')

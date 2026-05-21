@@ -1,10 +1,10 @@
 /**
- * RefundPaymentUseCase spec — CC-2b (2026-05-20) 신 경로.
+ * RefundPaymentUseCase spec — CC-2b (2026-05-20) 신 경로 + CC-4 Phase 3 (2026-05-21) authorRepo 폴백 제거.
  *
  * usecase 자체의 책임:
  *  - 입력 검증 (refundPt ≥ 0 / refundedAmount > 0)
  *  - paymentRepo.refundPaymentWithPoints 호출 정합 (CC-2b 신 메서드)
- *  - balanceBefore 조회 (ledger 우선, fallback authorRepo)
+ *  - balanceBefore 조회 (ledger 단일 — CC-4 Phase 3 authorRepo 폴백 제거)
  *  - auditLog 분기 (정상/deficit × 전액/부분 4 액션) + state JSON 박제
  *  - logger warn/log 분기
  *
@@ -34,7 +34,6 @@ describe('RefundPaymentUseCase — CC-2b 신 경로 + 이중 외상 통합', () 
     log: jest.Mock
     findAll: jest.Mock
   }
-  let mockAuthorRepo: { findById: jest.Mock }
   let mockLedger: { getBalance: jest.Mock }
 
   const baseInput = {
@@ -76,19 +75,13 @@ describe('RefundPaymentUseCase — CC-2b 신 경로 + 이중 외상 통합', () 
       log: jest.fn().mockResolvedValue(undefined),
       findAll: jest.fn(),
     }
-    mockAuthorRepo = {
-      findById: jest.fn().mockResolvedValue({
-        id: 'author-1', slug: 'a', name: 'A', email: 'a@a.com',
-        role: 'user', credits: 25000, plan: 'free', planExpireAt: null, createdAt: new Date(),
-      }),
-    }
     mockLedger = {
       getBalance: jest.fn().mockResolvedValue(baseBalance),
     }
+    // CC-4 Phase 3 (2026-05-21) — `authorRepo` 인자 제거 (구 `author.credits` 폴백 정합).
     useCase = new RefundPaymentUseCase(
       mockPaymentRepo as never,
       mockAuditLogService as never,
-      mockAuthorRepo as never,
       mockLedger as never,
     )
   })
@@ -252,31 +245,7 @@ describe('RefundPaymentUseCase — CC-2b 신 경로 + 이중 외상 통합', () 
   })
 
   describe('balanceBefore 조회 분기', () => {
-    it('ledger 미주입 + authorRepo 만 — fallback (charged 만 박제)', async () => {
-      const ucNoLedger = new RefundPaymentUseCase(
-        mockPaymentRepo as never,
-        mockAuditLogService as never,
-        mockAuthorRepo as never,
-      )
-      mockPaymentRepo.refundPaymentWithPoints.mockResolvedValueOnce({
-        actualRefunded: 25000,
-        deficitIncurred: 0,
-        proportionalPt: 25000,
-        isPartial: false,
-      })
-
-      await ucNoLedger.execute(baseInput)
-
-      const [, , , , before] = mockAuditLogService.log.mock.calls[0]
-      // fallback — author.credits 만 charged 슬롯에 박제
-      expect(before).toEqual(
-        expect.objectContaining({
-          charged: 25000,
-          total: 25000,
-          deficit: 0,
-        }),
-      )
-    })
+    // CC-4 Phase 3 (2026-05-21) — `ledger 미주입 + authorRepo` 폴백 spec 제거. ledger 단일 경로.
 
     it('ledger 조회 실패해도 환수 트랜잭션은 진행 (auditLog state 만 미박제)', async () => {
       mockLedger.getBalance.mockRejectedValueOnce(new Error('DB down'))
