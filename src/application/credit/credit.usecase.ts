@@ -1,5 +1,4 @@
 import { Injectable, Inject, Optional, BadRequestException, Logger } from '@nestjs/common'
-import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import {
   CreditLedgerPort,
@@ -7,35 +6,37 @@ import {
   CreditLedgerEntry,
 } from '@domain/port/outbound/credit-ledger.port'
 import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
-import { CreditLog } from '@domain/model/credit'
 
 /**
- * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — 구 메서드 제거.
+ * 크레딧 개편 CC-4 Phase 3 (2026-05-21) — 구 `CreditRepositoryPort` 폴백 제거.
  *
- * 폐기 항목 (호출처 0건 확인 후 제거):
+ * Phase 1 폐기 항목 (호출처 0건 확인 후 제거 완료):
  * - `deduct(authorId, amount, reason)` — `Author.credits` Int 차감. 차감 8경로(T1~T4) 전부
  *   `ChargePointsUseCase.charge*` 로 이행 완료 (CC-1).
  * - `grant(authorId, amount, reason)` — `Author.credits` Int 적립. 적립 8경로(T5~T8) 전부
  *   `GrantPointsUseCase.grant*` + `CreditLedgerPort.earn` 으로 이행 완료 (CC-1·CC-2a·CC-2b).
  * - `getBalance(authorId)` — `Author.credits` Int 단일 잔액. `getPointBalance` 4 출처 응답으로 대체.
  *
- * 잔존 메서드 4종은 전부 신 시스템 위임(CC-2b·CC-3):
+ * Phase 3 폐기 항목 (Phase 3 — 2026-05-21):
+ * - `CreditRepositoryPort` DI 제거 — 잔존 폴백(`findLogsByAuthorId`/`getGiftRanking`) 제거 + 파일/Port 자체 삭제.
+ * - `getGiftRanking`/`getLogs` ledger 미주입 폴백 제거 — `ledger` Required 강제 (미주입 시 BadRequest).
+ *
+ * 잔존 메서드 4종은 전부 신 시스템 단일 경로(CC-2b·CC-3·CC-4 Phase 3):
  *   - getPointBalance — CreditLedgerPort.getBalance (4 출처 + deficit + available)
  *   - gift          — CreditLedgerPort.transfer ($transaction)
- *   - getGiftRanking — CreditLedgerPort.getGiftRanking (CC-3 신 ledger 위임, ledger 미주입 시 폴백)
- *   - getLogs       — CreditLedgerPort.findByAuthor (CC-3 신 ledger 위임, ledger 미주입 시 폴백)
+ *   - getGiftRanking — CreditLedgerPort.getGiftRanking (단일 경로)
+ *   - getLogs       — CreditLedgerPort.findByAuthor (단일 경로)
  */
 @Injectable()
 export class CreditUseCase {
   private readonly logger = new Logger(CreditUseCase.name)
 
   constructor(
-    @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
     /**
      * 크레딧 개편 I Phase (2026-05-17) — CreditLedger 4 출처 회계 원장.
-     * Optional — 주입 시 `getPointBalance` 가 4 출처 잔액(CreditBalance)을 반환,
-     * 미주입 시 구 정수 `credits` 만 가용(BACKWARD COMPATIBLE — novel-analysis.usecase 패턴 차용).
+     * CC-4 Phase 3 (2026-05-21) — 구 `creditRepo` 폴백 제거 후에도 Optional 유지(spec/통합 spec 호환성).
+     * 실 운영(`app.module.ts`)에서는 항상 주입 — 미주입 시 BadRequest.
      */
     @Optional()
     @Inject('CreditLedgerPort')
@@ -147,35 +148,33 @@ export class CreditUseCase {
   }
 
   /**
-   * 응원받는 작가 랭킹 — CC-3 (HIGH-3) `CreditLedger` 위임.
+   * 응원받는 작가 랭킹 — CC-3 (HIGH-3) `CreditLedger` 단일 경로.
    *
    * CC-2b 가 선물 적립을 `CreditLedger source='gift', type='earn'` 으로 이행하면서
    * 구 `creditRepo.getGiftRanking`(`CreditLog reason='gift_received'` groupBy)이 신 선물을
    * 못 보는 **신·구 분열** 발생. CC-3 가 신 ledger 기반 집계로 재작성.
+   * CC-4 Phase 3 (2026-05-21) — 구 `creditRepo.getGiftRanking` 폴백 제거.
    *
    * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §5-B / ADR-014.
-   * 미주입(ledger null) 시 구 경로 폴백(BACKWARD COMPATIBLE).
    */
   async getGiftRanking(limit: number = 10): Promise<{ authorId: string; totalGifted: number }[]> {
-    if (this.ledger) {
-      return this.ledger.getGiftRanking(limit)
+    if (!this.ledger) {
+      throw new BadRequestException('포인트 원장이 구성되지 않았습니다')
     }
-    return this.creditRepo.getGiftRanking(limit)
+    return this.ledger.getGiftRanking(limit)
   }
 
   /**
-   * 작가 크레딧 이력 조회 — CC-3 (HIGH-3) `CreditLedger` 위임.
+   * 작가 크레딧 이력 조회 — CC-3 (HIGH-3) `CreditLedger` 단일 경로.
    *
-   * 반환 타입 변경: `CreditLog[]` → `CreditLedgerEntry[]`.
+   * 반환 타입: `CreditLedgerEntry[]` (구 `CreditLog[]` 폴백 제거 — CC-4 Phase 3).
    * `GET /credits/logs` 응답 형태가 신 4 출처 모델(source/type/balanceAfter/expiresAt/relatedId)로 확장.
    * shared-contracts §30 + docs/api-contract.md 변경 이력 박제.
-   *
-   * 미주입(ledger null) 시 구 `CreditLog[]` 반환(BACKWARD COMPATIBLE) — 통합 모드 결정 필요 시 controller 분기.
    */
-  async getLogs(authorId: string): Promise<CreditLedgerEntry[] | CreditLog[]> {
-    if (this.ledger) {
-      return this.ledger.findByAuthor(authorId, 100)
+  async getLogs(authorId: string): Promise<CreditLedgerEntry[]> {
+    if (!this.ledger) {
+      throw new BadRequestException('포인트 원장이 구성되지 않았습니다')
     }
-    return this.creditRepo.findLogsByAuthorId(authorId)
+    return this.ledger.findByAuthor(authorId, 100)
   }
 }

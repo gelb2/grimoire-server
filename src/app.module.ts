@@ -67,7 +67,7 @@ import { ChatController } from '@adapter/inbound/http/controller/chat.controller
 import { PrismaAuthorRepository } from '@adapter/outbound/persistence/prisma-author.repository'
 import { PrismaThemeRepository } from '@adapter/outbound/persistence/prisma-theme.repository'
 import { PrismaWorkRepository } from '@adapter/outbound/persistence/prisma-work.repository'
-import { PrismaCreditRepository } from '@adapter/outbound/persistence/prisma-credit.repository'
+// CC-4 Phase 3 (2026-05-21) — `PrismaCreditRepository`/`CreditRepositoryPort` 파일 자체 삭제. 신 `CreditLedgerPort` 단일 경로.
 // 크레딧 개편 I Phase (2026-05-17) — CreditLedger 원장 / MembershipPlan 구독 / SystemSetting 동적값
 import { PrismaCreditLedgerRepository } from '@adapter/outbound/persistence/prisma-credit-ledger.repository'
 import { PrismaMembershipPlanRepository } from '@adapter/outbound/persistence/prisma-membership-plan.repository'
@@ -176,7 +176,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'AuthorRepositoryPort', useClass: PrismaAuthorRepository },
     { provide: 'ThemeRepositoryPort', useClass: PrismaThemeRepository },
     { provide: 'WorkRepositoryPort', useClass: PrismaWorkRepository },
-    { provide: 'CreditRepositoryPort', useClass: PrismaCreditRepository },
+    // CC-4 Phase 3 (2026-05-21) — `CreditRepositoryPort` DI 제거 (신 `CreditLedgerPort` 단일 경로).
     // 크레딧 개편 I Phase (2026-05-17) — CreditLedger 원장 / MembershipPlan 구독 / SystemSetting 동적값
     { provide: 'CreditLedgerPort', useClass: PrismaCreditLedgerRepository },
     { provide: 'MembershipPlanPort', useClass: PrismaMembershipPlanRepository },

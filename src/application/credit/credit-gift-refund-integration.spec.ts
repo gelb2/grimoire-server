@@ -569,25 +569,19 @@ describe('CC-2b — 선물·환불 신 시스템 연동 + 이중 외상 통합 (
         }
       }),
     }
-    // CC-4 Phase 1 — CreditRepositoryPort 잔존 시그니처 2종만 (폴백 경로 검증용)
-    const creditRepo = {
-      getGiftRanking: jest.fn().mockResolvedValue([]),
-      findLogsByAuthorId: jest.fn().mockResolvedValue([]),
-    }
+    // CC-4 Phase 3 (2026-05-21) — CreditRepositoryPort 파일/Port 자체 삭제. ledger 단일 경로.
 
     // 실 CreditUseCase — ledger fake + authorRepo fake
     creditUseCase = new CreditUseCase(
-      creditRepo as never,
       authorRepo as never,
       ledger,
     )
 
-    // 실 RefundPaymentUseCase — paymentRepo fake + ledger 주입 (balanceBefore 4 출처)
+    // 실 RefundPaymentUseCase — paymentRepo fake + ledger 단일 경로 (CC-4 Phase 3 authorRepo 폴백 제거)
     const auditLog = { log: jest.fn().mockResolvedValue(undefined), findAll: jest.fn() }
     refundUseCase = new RefundPaymentUseCase(
       paymentRepo as never,
       auditLog as never,
-      authorRepo as never,
       ledger,
     )
 

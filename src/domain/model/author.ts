@@ -8,8 +8,10 @@ export interface Author {
   passwordHash?: string
   bio?: string
   role: string
-  /** @deprecated 크레딧 개편 — 구 크레딧 잔액. 신 4 출처 캐시(`points*`)로 이행. 1 sprint 유예 후 DROP. */
-  credits: number
+  /**
+   * CC-4 Phase 3 (2026-05-21) — 구 `credits Int` 컬럼 DROP. 신 4 출처 캐시(`points*`)로 완전 이행.
+   * `Author.credits` 필드는 도메인 model + DB 컬럼 양측 제거 (案 P3-Y 옵션 A — 응답 키 `credits`는 controller 측에서 ledger 잔액으로 매핑 보존).
+   */
   plan: string
   planExpireAt: Date | null
   defaultThemeId?: string | null

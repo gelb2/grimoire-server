@@ -1,6 +1,5 @@
 import { Injectable, Inject, BadRequestException, Logger, Optional } from '@nestjs/common'
 import { PaymentRepositoryPort } from '@domain/port/outbound/payment-repository.port'
-import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { CreditLedgerPort } from '@domain/port/outbound/credit-ledger.port'
 import { AuditLogService } from '@application/admin/audit-log.service'
 
@@ -33,16 +32,9 @@ export class RefundPaymentUseCase {
     @Inject('PaymentRepositoryPort') private readonly paymentRepo: PaymentRepositoryPort,
     private readonly auditLogService: AuditLogService,
     /**
-     * PAY-P2-4 — 잔액 사전 조회 (beforeState 박제용).
-     * Optional이지만 실 운영(`app.module.ts`)에서는 항상 주입됨.
-     * 미주입 시 beforeState 박제 skip (BACKWARD COMPATIBLE).
-     */
-    @Optional()
-    @Inject('AuthorRepositoryPort')
-    private readonly authorRepo: AuthorRepositoryPort | null = null,
-    /**
      * CC-2b — 4 출처 잔액 조회용 (beforeState 박제 디노미 정합).
-     * Optional — 미주입 시 4 출처 분해 skip, balanceBefore 만 박제.
+     * Optional — 미주입 시 balanceBefore 박제 skip(BACKWARD COMPATIBLE).
+     * CC-4 Phase 3 (2026-05-21) — 구 `authorRepo` 폴백(author.credits ?? 0) 제거. ledger 단일 경로.
      */
     @Optional()
     @Inject('CreditLedgerPort')
@@ -84,8 +76,9 @@ export class RefundPaymentUseCase {
     // PAY-P2-1: $transaction 내부에서 payment.amount 조회 + refundedAmount > payment.amount 시 throw.
     // 본 usecase는 그 throw를 catch → 호출자(payment.usecase)에 위임 → webhook event 'failed' 박제.
 
-    // CC-2b: 잔액 사전 조회 — ledger.getBalance(4 출처) 우선, fallback authorRepo (pointsCharged 단일)
-    // beforeState 박제는 4 출처 디노미 정합 — CC-2a auditLog 패턴과 일관
+    // CC-2b: 잔액 사전 조회 — ledger.getBalance(4 출처) 단일 경로.
+    // CC-4 Phase 3 (2026-05-21) — 구 authorRepo.findById → author.credits 폴백 완전 제거.
+    // ledger 미주입 또는 throw 시 balanceBefore 박제 skip (auditLog state 만 미박제, 환수 트랜잭션은 진행).
     let balanceBefore: {
       free: number
       subscription: number
@@ -104,27 +97,6 @@ export class RefundPaymentUseCase {
           charged: b.charged,
           total: b.total,
           deficit: b.deficit,
-        }
-      } catch (e: unknown) {
-        this.logger.warn(
-          `잔액 사전 조회 실패 (authorId=${authorId}, paymentId=${paymentId}): ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        )
-      }
-    } else if (this.authorRepo) {
-      // fallback — ledger 미주입 시 author 캐시 pointsCharged 만 박제(회귀 보존)
-      try {
-        const author = await this.authorRepo.findById(authorId)
-        if (author) {
-          balanceBefore = {
-            free: 0,
-            subscription: 0,
-            gift: 0,
-            charged: author.credits ?? 0,
-            total: author.credits ?? 0,
-            deficit: 0,
-          }
         }
       } catch (e: unknown) {
         this.logger.warn(

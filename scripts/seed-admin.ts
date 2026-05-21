@@ -38,7 +38,7 @@ async function main() {
         name,
         passwordHash,
         role: 'admin',
-        credits: 0,
+        // CC-4 Phase 3 (2026-05-21) — `Author.credits` 컬럼 DROP. 신 4 출처 캐시는 schema @default(0).
         plan: 'premium',
       },
     })

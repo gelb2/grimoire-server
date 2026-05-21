@@ -383,6 +383,7 @@ async function main() {
   for (const author of AUTHORS) {
     try {
       // 1. 작가 upsert (slug 기준)
+      // CC-4 Phase 3 (2026-05-21) — `Author.credits` 컬럼 DROP. 신 4 출처 캐시는 schema @default(0).
       const upsertedAuthor = await prisma.author.upsert({
         where: { slug: author.slug },
         create: {
@@ -390,12 +391,10 @@ async function main() {
           slug: author.slug,
           email: author.email,
           passwordHash,
-          credits: 10,
         },
         update: {
           email: author.email,
           passwordHash,
-          credits: 10,
         },
       })
 

@@ -35,14 +35,6 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
     return social ? toDomain(social.author) : null
   }
 
-  async updateCredits(id: string, credits: number): Promise<Author> {
-    const row = await this.prisma.author.update({
-      where: { id },
-      data: { credits },
-    })
-    return toDomain(row)
-  }
-
   async linkSocialAccount(authorId: string, provider: string, providerId: string, email?: string): Promise<void> {
     await this.prisma.socialAccount.create({
       data: { authorId, provider, providerId, providerEmail: email },
@@ -221,7 +213,6 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
       password_hash: string | null
       bio: string | null
       role: string
-      credits: number
       plan: string
       plan_expire_at: Date | null
       default_theme_id: string | null
@@ -245,13 +236,12 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
       passwordHash: row.password_hash ?? undefined,
       bio: row.bio ?? undefined,
       role: row.role,
-      credits: row.credits,
+      // CC-4 Phase 3 (2026-05-21) — 구 `credits` 컬럼 DROP. 신 4 출처 캐시 + deficit (raw query SELECT * snake_case).
       plan: row.plan,
       planExpireAt: row.plan_expire_at ?? null,
       defaultThemeId: row.default_theme_id ?? null,
       createdAt: row.created_at,
       deletedAt: row.deleted_at,
-      // 크레딧 개편 I Phase — 신 4 출처 캐시 + deficit (raw query SELECT * snake_case)
       pointsFree: row.points_free ?? 0,
       pointsSubscription: row.points_subscription ?? 0,
       pointsGift: row.points_gift ?? 0,
@@ -273,7 +263,6 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
       password_hash: string | null
       bio: string | null
       role: string
-      credits: number
       plan: string
       plan_expire_at: Date | null
       default_theme_id: string | null
@@ -296,13 +285,12 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
       passwordHash: row.password_hash ?? undefined,
       bio: row.bio ?? undefined,
       role: row.role,
-      credits: row.credits,
+      // CC-4 Phase 3 (2026-05-21) — 구 `credits` 컬럼 DROP. 신 4 출처 캐시 + deficit (raw query SELECT * snake_case).
       plan: row.plan,
       planExpireAt: row.plan_expire_at ?? null,
       defaultThemeId: row.default_theme_id ?? null,
       createdAt: row.created_at,
       deletedAt: row.deleted_at,
-      // 크레딧 개편 I Phase — 신 4 출처 캐시 + deficit (raw query SELECT * snake_case)
       pointsFree: row.points_free ?? 0,
       pointsSubscription: row.points_subscription ?? 0,
       pointsGift: row.points_gift ?? 0,
@@ -312,6 +300,9 @@ export class PrismaAuthorRepository implements AuthorRepositoryPort {
   }
 }
 
+/**
+ * CC-4 Phase 3 (2026-05-21) — 구 `credits Int` 컬럼 DROP. 신 4 출처 캐시(`points*`)만 도메인 model 박제.
+ */
 function toDomain(row: {
   id: string
   slug: string
@@ -320,7 +311,6 @@ function toDomain(row: {
   passwordHash?: string | null
   bio?: string | null
   role: string
-  credits: number
   plan: string
   planExpireAt?: Date | null
   defaultThemeId?: string | null
@@ -341,7 +331,6 @@ function toDomain(row: {
     passwordHash: row.passwordHash ?? undefined,
     bio: row.bio ?? undefined,
     role: row.role,
-    credits: row.credits,
     plan: row.plan,
     planExpireAt: row.planExpireAt ?? null,
     defaultThemeId: row.defaultThemeId ?? null,

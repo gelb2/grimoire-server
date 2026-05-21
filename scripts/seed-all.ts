@@ -172,8 +172,9 @@ async function step1CreateAuthorsAndThemes(): Promise<void> {
   for (const a of AUTHORS_WITH_THEMES) {
     const upserted = await prisma.author.upsert({
       where: { slug: a.slug },
-      create: { name: a.name, slug: a.slug, email: a.email, passwordHash, credits: 10 },
-      update: { email: a.email, passwordHash, credits: 10 },
+      // CC-4 Phase 3 (2026-05-21) — `Author.credits` 컬럼 DROP. 신 4 출처 캐시는 schema @default(0).
+      create: { name: a.name, slug: a.slug, email: a.email, passwordHash },
+      update: { email: a.email, passwordHash },
     })
 
     // 테마 upsert (1:N이므로 findFirst 후 update/create)
