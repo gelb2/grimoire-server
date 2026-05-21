@@ -8,11 +8,23 @@ export interface Author {
   passwordHash?: string
   bio?: string
   role: string
+  /** @deprecated 크레딧 개편 — 구 크레딧 잔액. 신 4 출처 캐시(`points*`)로 이행. 1 sprint 유예 후 DROP. */
   credits: number
   plan: string
   planExpireAt: Date | null
   defaultThemeId?: string | null
   createdAt: Date
+  /**
+   * 크레딧 개편 I Phase (2026-05-17) — 포인트 출처 4종 잔액 캐시 (shared-contracts §30).
+   * `CreditLedger` 원장이 audit 정본 — 본 4 필드는 빠른 조회용 캐시.
+   * schema.prisma `@default(0)` — 항상 존재 (마이그레이션 `credit_overhaul_i_phase`).
+   */
+  pointsFree: number
+  pointsSubscription: number
+  pointsGift: number
+  pointsCharged: number
+  /** 채팅 사후 차감 외상 (deficit) — 충전 시 우선 상계 (§8-4). schema `@default(0)`. */
+  deficitPoints: number
   /**
    * USER-SOFT-DELETE sprint (2026-05-15) — Author soft delete 표식.
    * NULL = 활성 / NOT NULL = soft deleted (deletedAt 시점 박제).

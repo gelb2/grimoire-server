@@ -584,6 +584,162 @@ ACCEPTED (사용자 5/15 verbatim 정합 "B + A 모두 진행" — 5/10 verbatim
 
 ---
 
+## ADR-012: 크레딧 디노미네이션 + 포인트 출처 분리 회계 + 채팅 4구간 차감 (크레딧 개편 I Phase, 2026-05-17)
+
+### 상태
+ACCEPTED — 사용자 결정 게이트 6건 통과 (5/17, S Phase Draft §16-1 권장값 1-C/2-C/5필드/4-C/5/6-B 일괄 채택).
+
+### 컨텍스트
+- 정수 크레딧(`Author.credits Int`)은 채팅 가변 비용을 표현 불가 — 짧은 턴 바가지·긴 턴 적자(§0 위반).
+- 단일 Int 로는 포인트 출처 4종(무료적립/구독풀/응원선물/충전)을 분리 회계할 수 없음 — CAC/COGS 미분리.
+- 정본: `research/CREDIT_PRICING_OVERHAUL_PLAN.md` §8 (v6 골격·수치) + `.claude/state/sprint-credit-overhaul-s-phase-draft.md`.
+
+### 결정 (게이트 6건)
+1. **디노미네이션 1:1,000 단일 통화** — 1 크레딧 = 1,000pt. 기존 잔액 ×1,000 자동 환산.
+2. **출처 4종 회계 = 1-C 하이브리드** — `Author` 4 필드(`pointsFree`/`pointsSubscription`/`pointsGift`/`pointsCharged`) 잔액 캐시 + `CreditLedger` 입출금 원장. 적립/소진은 $transaction(원장 insert + 캐시 동기).
+3. **`credits` 폐기 = 2-C** — `[DEPRECATED]` 표기, 마이그레이션에서 즉시 DROP 안 함(1 sprint 유예 후 별도 sprint 제거 — Cursor 가격개편 반면교사).
+4. **구독 = `MembershipPlan` 신설 + `CreditLedger` 통합 (4-C)** — 현행 `Subscription`(독자→작가 팔로우)과 별개 도메인. 월 풀 적립/만료를 `source='subscription'` ledger 의 `expiresAt` 으로 관리 → **이월이 코드 버그로도 불가능**.
+5. **채팅 사후 차감 4구간 + `deficit` 외상** — 토큰은 API 응답 후 확정 → 사후 차감. 잔액 부족 시 `Author.deficitPoints` 누적, 충전 시 우선 상계. 경계값·차감 N 은 `SystemSetting` 동적(운영 1~2주 실측 후 재확정). 외상 상한 -10,000pt.
+6. **재산정 sensor + 핸드오프 명문화 (6-B)** — `sensor-credit-overhaul-recalc.sh` + researcher/cost-accountant 핸드오프.
+
+### 대안 (거부)
+- 이중 통화(옵션 B) — 지갑 2개 UX 복잡 → 거부.
+- 출처 4 필드만(1-A) — 회계 입출금 이력 불가 → 거부.
+- 구독 풀 이월 차단을 cron 로직에 의존(4-A/4-B) — cron 누락 시 §0 0.14× 붕괴 → 거부(4-C 가 스키마로 강제).
+
+### §0 정합
+- 차감 N(채팅 4구간 190/810/3,390/5,520pt, 분석 2,440pt, 테마 590pt)은 전부 cost-accountant v3 스트레스 원가 `ceil(스트레스원가×3 ÷ ₩0.09856)` 산출값 — server Generator 재산출 0건.
+- cost-accountant `ai-cost-table.md` 개정 완료(`786b0f3`) — §0 전 항목 ≥3× PASS(경계선 운영, 쿠션 거의 0).
+- §8-8 CRITICAL 5건 전건 준수: 비스트레스 차감 0 / 풀 이월 차단(`expiresAt`) / 토큰 실측 필드 선행(`ChatMessage` 5필드) / 채팅 4구간(`xlong` 분리) / 재산정 sensor.
+
+### 결과
+- 채팅 가변 비용을 4구간 정액으로 표현 + 출처별 CAC/COGS 분리 + 풀 이월 구조적 차단.
+- 신규 모델 2건(`CreditLedger`/`MembershipPlan`) FK `authorId` Restrict(회계·구독 이력 영구 보존, ADR-007 정합).
+- jest 신규 162 it (805 → 967).
+
+### 잔존 영역
+- 채팅 토큰 P50~P99 실측 — I Phase 배포 후 운영 1~2주 → 구간 경계·N 재확정 (현 경계값은 §8-4 가정).
+- `credits` 컬럼 후속 sprint DROP (1 sprint 유예).
+- Polar 구독 결제 연동 — 별도 sprint PAY-P1-4 (`MembershipPlan.polarSubscriptionId` 필드만 본 sprint).
+- dev migration apply — `크레딧개편 dev migration 진행` 키워드 게이트 (§7 단계6, 본 sprint 범위 밖).
+- prod migration — `크레딧개편 prod migration 진행` 키워드 게이트 (§7 단계9).
+- 잔액 캐시(`Author` 4필드) ↔ 원장(`CreditLedger`) 정합 cron — PAY-P0-2 `ReconciliationCheckpoint` 패턴 (I Phase 후속).
+
+---
+
+## ADR-013: 충전 결제 적립 단일 트랜잭션 통합 — `completePaymentWithPoints` (크레딧 개편 CC-2a, 2026-05-20)
+
+### 상태
+승인 — 구현 완료 (CC-2a sprint)
+
+### 맥락
+ADR-012(I Phase)는 충전 적립 경로(`GrantPointsUseCase.grantCharge`)를 만들었으나 호출처가 0건이었다 (CRITICAL-2 충전분). 실제 충전 경로 `payment.usecase` 는 구 `completePaymentAtomically`(`Author.credits` Int + `CreditLog`)만 호출 — `settleDeficit`(외상 상계)가 실 충전 경로에 한 번도 연결되지 않았다.
+
+문제: 충전 적립을 신 경로로 옮기려면 트랜잭션 경계가 충돌한다.
+- `completePaymentAtomically` 는 `PaymentRepository` 가 자체 `$transaction` 으로 (Payment 상태 + 크레딧 + 로그) 3건 원자 처리 (CLAUDE.md §9 결제 원자성).
+- `grantCharge` 는 내부 `settleDeficit`($tx#1) + `earn`($tx#2) — **2개 별도 트랜잭션**.
+- 두 경로를 합치면 경계가 어긋난다. "돈은 냈는데 포인트 없음"은 §0·§9상 절대 불가.
+
+### 결정
+**案 1 — `PaymentRepositoryPort` 에 단일 `$transaction` 메서드 `completePaymentWithPoints` 신설.**
+
+`completePaymentWithPoints(paymentId, authorId, totalPoints, productId, relatedId?)` 가 단일 `$transaction` 으로:
+1. authors row FOR UPDATE 잠금 (동시 차감/적립 직렬화 — `prisma-credit-ledger.repository` 패턴)
+2. Payment status='completed'
+3. deficit 우선 상계 — `CreditLedger` type='deficit_settle' + `Author.deficitPoints` 차감
+4. 남은 충전액 적립 — `CreditLedger` source='charged' type='earn' + `Author.pointsCharged` 가산
+
+금액 계산은 도메인 순수 함수 `computeChargeLedgerEntries`(`settleDeficitOnCharge` 재사용)에 위임 — `PaymentRepository` 와 `CreditLedgerRepository` 가 동일 헬퍼를 호출해 로직 중복 0건.
+
+### 기각안 — 案 2 (`CreditLedgerPort` 에 외부 `tx` 핸들 오버로드)
+`earn`/`settleDeficit` 가 외부 Prisma `tx` 인자를 받는 오버로드 추가 → `payment.usecase` 가 결제 `$transaction` 안에서 `grantCharge` 호출.
+- **기각 사유**: 헥사고날 DIP 위반. `CreditLedgerPort`(domain port)가 Prisma `Prisma.TransactionClient` 를 시그니처에 노출 → application/domain 레이어가 ORM 구현에 결합. CLAUDE.md §5 헥사고날 규칙 정면 충돌.
+
+### 트레이드오프
+- 案 1 은 `PaymentRepository` 가 `CreditLedger`/`Author` 캐시까지 건드려 단일책임이 다소 넓어진다. 단 "결제 완료 = 포인트 적립"이 §9상 원자 1단위이므로 같은 트랜잭션 메서드에 두는 것이 도메인 정합. 案 2 의 DIP 위반 대가가 훨씬 크다.
+- 기존 패턴과 정합 — `completePaymentAtomically`(구)·`refundPaymentAtomically`(PAY-P1-1)가 이미 "결제 도메인 다건 원자 처리"를 `PaymentRepository` 단일 `$transaction` 으로 캡슐화. 案 1 은 그 패턴의 자연 확장.
+
+### 결과
+- **C-6 해소** — `settleDeficit` 가 실 충전 경로에 처음 연결. deficit 상한(10,000pt) 도달로 채팅 차단된 작가가 충전하면 외상이 상계돼 차단 해제. "충전해도 채팅 영구 차단" 결함 소멸.
+- 구 `completePaymentAtomically` 는 `@deprecated` — 호출처 0건. CC-2b(선물·환불) 회귀 안전 확보 후 일괄 제거.
+- 통합 spec `payment-charge-credit-integration.spec.ts` — 충전 webhook → `CreditLedger` charged earn 사슬 검증 + RED 재현 실증.
+- CC-2b(선물 T4 / 환불 T7)가 본 案 1 패턴(도메인 헬퍼 추출 + Repository 단일 `$transaction`)을 재사용 — CC-2a 가 "트랜잭션 패턴 확립" sprint 인 이유.
+
+### 잔존 영역
+- `Payment.credits` 컬럼 물리 rename(`credits`→`points`) — MEDIUM-4. 마이그레이션 동반 → CC-2b/CC-4 위임 (CC-2a 는 컬럼 의미 재해석만).
+- `completePaymentAtomically` 제거 — CC-2b 종료 후.
+- 선물(T4)·환불(T7) 적립 — CC-2b 범위.
+
+---
+
+## ADR-014: 이월 금지 lazy 안전망 + Author.plan ↔ MembershipPlan.tier 양측 동기 + 신 ledger 선물 랭킹 (크레딧 개편 CC-3, 2026-05-20)
+
+### 상태
+승인 — 구현 완료 (CC-3 sprint)
+
+### 맥락 — 3개 잔존 결함
+
+ADR-012(I Phase)·ADR-013(CC-2a)·CC-2b 가 적립 8경로(T1~T8)와 충전·선물·환불 트랜잭션을 신 `CreditLedger` 로 이행 완료(CRITICAL-2 종결). 그러나 진단 `reports/CREDIT_CORE_DIAGNOSIS.md` 가 잔존 결함 3건 추가 식별:
+
+1. **CRITICAL-1** — `prisma-credit-ledger.repository.getBalance` 가 `Author` 5 캐시 필드 단순 합산. `CreditLedger.expiresAt < now()` 만료 row 를 잔액에서 제외하는 SELECT 0건. 이월 금지가 `ResetMonthlyPoolJob` cron 의 캐시 덮어쓰기 단일 의존 → cron 1회 실패만으로 풀 무한 이월 → §8-8 #2 위반 → §0 0.14× 붕괴.
+2. **HIGH-1** — `Author.plan String @default("free")` + `planExpireAt` 살아 있음(7곳 application 호출처가 읽음). `MembershipPlan.tier` 도 별개 정본. 마이그레이션 (c) 가 plan→tier 복사만, 동기 트리거·`[DEPRECATED]` 표기 없음 → 향후 `changeTier` 활성화 시 양측 불일치 위험.
+3. **HIGH-3** — CC-2b 가 선물 적립을 `CreditLedger source='gift', type='earn'` 으로 이행하면서 구 `prisma-credit.repository.getGiftRanking`(`CreditLog reason='gift_received'` groupBy)이 신 선물을 못 봄(신 선물 `CreditLog` 박제 0건). `credit.usecase.getGiftRanking`/`getLogs` 가 구 경로에 의존 → **신·구 분열**.
+
+### 결정
+
+#### CRITICAL-1 — 案 B (cron + lazy 이중 안전망)
+
+S Phase draft §8-6 원안 복원. `reset-monthly-pool.job.ts:18` 주석이 명시한 "lazy 리셋은 I Phase 후속"의 후속.
+
+- **진입점** — `MembershipPlanPort.checkAndResetExpiredPool(authorId, now)` 신설(port 추상화 — 案 (i)). `credit.usecase.getPointBalance` 가 `ledger.getBalance` 호출 직전에 lazy 훅 호출.
+- **호출 조건** — `plan.poolResetAt <= now` AND `tier !== 'free'` AND `status === 'active'`. free / 미만료 / non-active 는 no-op (`getPlan` 1 SELECT 만).
+- **동시성** — `resetMonthlyPool` 내부 `Author FOR UPDATE` 직렬화 + `monthlyPoolFor(tier)` 결정적 → 동시 2회 호출 시 두 번째는 같은 newPool 재설정(외부 관찰 동일).
+- **lazy 실패 처리** — silent log + 잔액 조회 진행 (잔액 조회 자체 실패 방지 — fallback 안전망).
+- **cron 보존** — `ResetMonthlyPoolJob` 무변경 — 1차 안전망. lazy 가 2차 백업.
+
+#### HIGH-1 — 案 A (Author.plan 정본 유지 + MembershipPlan.tier 미러 + changeTier 양측 동기)
+
+영향 범위 작음 — `Author.plan` 읽기 13곳(theme-slot/plan/generate-theme/get-theme/admin usecase) 무변경. `changeTier` 단일 진입점만 양측 동기.
+
+- `MembershipPlanPort.changeTier` 트랜잭션 안에 `tx.author.update({ data: { plan: tier, planExpireAt } })` 추가.
+- `planExpireAt` 정책 — free → `null`, pro/premium → `poolResetAt` 미러 (`nextMonthStart(now)`). CC-5 PAY-P1-4 활성화 시 구독 결제 만기와 정합 재확인.
+- 案 B (`MembershipPlan.tier` 정본화 + 읽기 13곳 이행) 는 미채택 — CC-3 sprint 비대 회피 + `changeTier` 호출처 현재 0건이라 案 A 의 위험 ZERO + 점진 이행 가능(CC-5 또는 후속 sprint 에서 案 B 로 이행 옵션 보존).
+
+#### HIGH-3 — `credit.usecase.getGiftRanking`/`getLogs` `CreditLedger` 위임
+
+- `CreditLedgerPort.getGiftRanking(limit)` 신설 → `creditLedger.groupBy(by:['authorId'], where: {source:'gift', type:'earn'}, _sum: {amount}, orderBy: {_sum: {amount: 'desc'}}, take: limit)`. 구 `prisma-credit.repository.getGiftRanking` 와 동일 반환 타입(`{authorId, totalGifted}[]`).
+- `credit.usecase.getGiftRanking` → `ledger.getGiftRanking(limit)` 위임. ledger 미주입 시 구 경로 폴백(BACKWARD COMPATIBLE).
+- `credit.usecase.getLogs` → `ledger.findByAuthor(authorId, 100)` 위임. **반환 타입 변경** — `CreditLog[]` → `CreditLedgerEntry[]`. `GET /credits/logs` HTTP 응답 형태 확장(source/type/balanceAfter/expiresAt/relatedId 추가). shared-contracts §30 + docs/api-contract.md 박제.
+
+### 기각안
+
+- **案 A (CRITICAL-1)** `getBalance` 직접 ledger 집계 — `spend` 의 `planConsumption` 입력까지 영향 → 차감 경로 전체 재검증 필요. 案 B 가 진입점 1곳만 수정해 회귀 위험 낮음.
+- **案 B (HIGH-1)** `tier` 정본화 — 읽기 13곳 + DI 5건 + spec 7건 추가 = CC-3 비대. 案 A 가 영향 1곳만이라 점진 이행 정합.
+
+### 트레이드오프
+
+- 案 A (HIGH-1) 한계 — `Author.plan` 직접 SQL UPDATE(테스트/관리자 수동)가 발생하면 양측 불일치 가능. 본 ADR 이 "수동 SQL UPDATE 금지, `changeTier` 경유 강제" 명문화. 案 B 로 이행 시 이 한계 해소.
+- 案 B (CRITICAL-1) `getPlan` 1 SELECT 가 잔액 조회 경로에 추가 — 인덱스 hit 라 비용 극소(`Author.id` + `MembershipPlan.authorId` 인덱스). pro/premium 작가의 풀 리셋 시점에만 `resetMonthlyPool` $transaction 비용.
+
+### 결과
+
+- **CRITICAL-1 해소** — cron 실패해도 잔액 조회 시점에 자동 보정. §8-8 #2 "이월 금지"가 cron 단일 의존 → 코드 강제. 4-C 원안의 "스키마가 강제" 수준 안전성을 lazy 로 확보.
+- **HIGH-1 해소** — `changeTier` 가 유일한 변경 진입점이 되어 양측 정합. CC-5 PAY-P1-4(Polar 구독) 활성화 시 자동 동기 트리거 발동 — 구현 시점에 추가 작업 0.
+- **HIGH-3 해소** — CC-2b 신 선물이 `getGiftRanking` 에 즉시 집계. `getLogs` 가 4 출처 분리 + 만료 + relatedId 까지 노출.
+- 통합 spec `credit-rollover-source-ledger-integration.spec.ts` (8 it) — CC-2b 패턴 정합:
+  - I1b — 실 `CreditUseCase` + 인메모리 `FakeMembershipPlanPort`/`FakeCreditLedger` 로 cron 미실행 상태 lazy 자동 보정 증명. 4 시나리오(만료/free/미만료/cancelled) 박제.
+  - I1c — `changeTier` 호출 시 `MembershipPlan.tier` + `Author.plan` 양측 동기 + planExpireAt 정책(free=null / pro=poolResetAt) 박제 + CC-2b 신 선물의 신 ledger 랭킹 집계 + getLogs `CreditLedgerEntry[]` 반환 박제.
+
+### 잔존 영역
+
+- **案 B (HIGH-1) 이행** — `Author.plan` 읽기 13곳 → `MembershipPlanPort.getPlan` 이행. CC-5 또는 후속 sprint (사용자 결정).
+- **`MembershipPlanPort.getPlan` HTTP 노출** — `GET /membership` 등. CC-5 PAY-P1-4 (구독 도메인 응집).
+- **`CreditLog` 테이블 폐기** — `prisma-credit.repository.adjustCredits`/`sumNegativeAmounts`/구 `getGiftRanking`/`findLogsByAuthorId` 메서드 잔존. `admin.usecase.findLogsByAuthorId` + `discovery.usecase.getMostGiftedAuthors` 호출처 잔존(같은 신·구 분열 영향) — CC-4 후속 sprint.
+- **`Author.credits` DROP** + 구 `CreditUseCase.grant/deduct/gift/getBalance` 제거 — CC-4 후속.
+- **CC-4 V Phase 마이그레이션 dev/prod apply** — CC-1/CC-2/CC-3 완결 후.
+
+---
+
 ## 참조
 
 - 트랜잭션: `src/application/payment/payment.usecase.ts`
@@ -596,3 +752,5 @@ ACCEPTED (사용자 5/15 verbatim 정합 "B + A 모두 진행" — 5/10 verbatim
 - audit retention 정책: `prisma/migrations/20260510_pay_p2_5_audit_retention_policy/migration.sql` + `src/adapter/outbound/persistence/audit-mask-helper.ts` + `src/scheduler/audit-mask.scheduler.ts` + `.claude/shared-contracts.md §26 AuditRetentionPolicy`
 - Circuit Breaker 정책: `src/domain/model/circuit-breaker-state.ts` + `src/domain/port/outbound/circuit-breaker.port.ts` + `src/adapter/outbound/circuit-breaker/in-memory-circuit-breaker.adapter.ts` + `.claude/shared-contracts.md §27 CircuitBreakerPolicy` + ADR-009
 - User Soft Delete 정책: `prisma/schema.prisma` Author.deletedAt + `prisma/migrations/20260515_user_soft_delete_policy/migration.sql` + `src/adapter/outbound/persistence/prisma-soft-delete.middleware.ts` + `src/adapter/outbound/persistence/default-user-anonymizer.adapter.ts` + `src/application/author/user-soft-delete.usecase.ts` + `src/application/author/user-hard-delete.job.ts` + `.claude/shared-contracts.md §29 UserSoftDeletePolicy` + ADR-011
+- 충전 결제 적립 트랜잭션 통합 (CC-2a): `src/domain/port/outbound/payment-repository.port.ts` `completePaymentWithPoints` + `src/adapter/outbound/persistence/prisma-payment.repository.ts` + `src/domain/policy/credit-consumption-policy.ts` `computeChargeLedgerEntries` + `src/application/payment/payment.usecase.ts` 충전 success 분기 + `src/application/payment/payment-charge-credit-integration.spec.ts` + `.claude/shared-contracts.md §30 CreditOverhaul` + ADR-013
+- 이월 금지 lazy 안전망 + Author.plan 양측 동기 + 신 ledger 선물 랭킹 (CC-3): `src/domain/port/outbound/membership-plan.port.ts` `checkAndResetExpiredPool` + `src/adapter/outbound/persistence/prisma-membership-plan.repository.ts` `checkAndResetExpiredPool`/`changeTier`(Author.plan 동기) + `src/domain/port/outbound/credit-ledger.port.ts` `getGiftRanking` + `src/adapter/outbound/persistence/prisma-credit-ledger.repository.ts` `getGiftRanking` + `src/application/credit/credit.usecase.ts` (lazy 훅 + getGiftRanking/getLogs 위임) + `src/application/credit/credit-rollover-source-ledger-integration.spec.ts` + `.claude/shared-contracts.md §30 CreditOverhaul` + ADR-014

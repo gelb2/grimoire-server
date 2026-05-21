@@ -13,12 +13,13 @@ describe('PaymentUseCase', () => {
   let mockAuthorRepo: any
   let mockAuditLog: any
 
+  // CC-2a 디노미 — credits 는 충전 총 pt (입문 패키지 25,000pt), productId 는 신 4종 id.
   const mockPayment = {
     id: 'pay-1',
     authorId: 'author-1',
-    productId: 'credit-5',
-    amount: 2000,
-    credits: 5,
+    productId: 'credit-starter',
+    amount: 3000,
+    credits: 25000,
     externalTransactionId: null,
     status: 'pending',
     createdAt: new Date(),
@@ -35,7 +36,7 @@ describe('PaymentUseCase', () => {
     eventId: 'evt_test_001',
     type: 'order.paid',
     tradeNo: 'TRADE-001',
-    amount: 2000,
+    amount: 3000,
     status: 'success',
     ...overrides,
   })
@@ -67,9 +68,21 @@ describe('PaymentUseCase', () => {
       findByExternalTransactionId: paymentMock.findUnique,
       updateExternalTransactionId: jest.fn().mockResolvedValue(undefined),
       findByAuthorId: paymentMock.findMany,
+      // CC-2a — 구 completePaymentAtomically deprecated (충전 success 미사용, 회귀 안전 mock 잔존)
       completePaymentAtomically: jest.fn().mockResolvedValue(undefined),
+      // CC-2a — 신 충전 적립 트랜잭션 메서드. 기본: 외상 0 → 전액 충전 적립 (입문 25,000pt)
+      completePaymentWithPoints: jest
+        .fn()
+        .mockResolvedValue({ settledDeficit: 0, chargedPoints: 25000 }),
       updateStatus: jest.fn().mockResolvedValue(undefined),
-      refundPaymentAtomically: jest.fn().mockResolvedValue({ actualDeducted: 0, deficitCredits: 0 }),
+      // CC-2b — 구 refundPaymentAtomically deprecated (회귀 안전 mock 잔존)
+      refundPaymentAtomically: jest.fn().mockResolvedValue({
+        actualDeducted: 0, deficitCredits: 0, proportionalCredits: 0, isPartial: false,
+      }),
+      // CC-2b — 신 환불 신 경로 (4 출처 환수 + 이중 외상 통합)
+      refundPaymentWithPoints: jest.fn().mockResolvedValue({
+        actualRefunded: 0, deficitIncurred: 0, proportionalPt: 0, isPartial: false,
+      }),
       // PAY-P1-3 — findReusablePendingPayment mock (기본: 재사용 후보 0건 → null 반환 = 신규 create 분기)
       findReusablePendingPayment: jest.fn().mockResolvedValue(null),
       findPendingPaymentsOlderThan: jest.fn().mockResolvedValue([]),
@@ -101,16 +114,21 @@ describe('PaymentUseCase', () => {
       markStatus: jest.fn().mockResolvedValue(undefined),
     }
 
-    // Sprint PAY-P1-1: refund usecase mock — 'cancel' 분기에서만 호출되어야 함
+    // CC-2b — refund usecase mock (신 시그니처 actualRefunded/deficitIncurred/proportionalPt/isPartial)
     mockRefundPaymentUseCase = {
-      execute: jest.fn().mockResolvedValue({ actualDeducted: 0, deficitCredits: 0 }),
+      execute: jest.fn().mockResolvedValue({
+        actualRefunded: 0, deficitIncurred: 0, proportionalPt: 0, isPartial: false,
+      }),
     }
 
     // Sprint PAY-P2-4 — authorRepo + auditLog mock (success 분기 잔액 조회 + audit 박제)
+    // CC-2a — 충전 success 분기는 author.pointsCharged(충전 출처 캐시) 를 beforeState 로 읽음.
     mockAuthorRepo = {
       findById: jest.fn().mockResolvedValue({
         id: 'author-1', slug: 'a', name: 'A', email: 'a@a.com',
         role: 'user', credits: 50, plan: 'free', planExpireAt: null, createdAt: new Date(),
+        pointsFree: 0, pointsSubscription: 0, pointsGift: 0, pointsCharged: 10000,
+        deficitPoints: 0,
       }),
     }
     mockAuditLog = {
@@ -129,46 +147,64 @@ describe('PaymentUseCase', () => {
   })
 
   describe('getProducts', () => {
-    it('3개의 상품을 반환한다', () => {
+    // CC-2a 디노미 4종 — ai-cost-table §2 정본
+    it('4개의 충전 패키지를 반환한다 (CC-2a 디노미 개편)', () => {
       const products = useCase.getProducts()
 
-      expect(products).toHaveLength(3)
+      expect(products).toHaveLength(4)
       expect(products[0]).toHaveProperty('id')
       expect(products[0]).toHaveProperty('name')
-      expect(products[0]).toHaveProperty('credits')
+      expect(products[0]).toHaveProperty('points')
+      expect(products[0]).toHaveProperty('bonusRate')
       expect(products[0]).toHaveProperty('price')
-      expect(products[0]).toHaveProperty('pricePerCredit')
+      expect(products[0]).toHaveProperty('pricePerPoint')
     })
 
-    it('상품 가격이 올바르다 (기획서 §8 기준, F1 2026-04-19 인상 반영)', () => {
+    it('상품 가격·포인트가 ai-cost-table §2 정본과 1:1 정합한다', () => {
       const products = useCase.getProducts()
-      const p5 = products.find((p) => p.id === 'credit-5')!
-      const p20 = products.find((p) => p.id === 'credit-20')!
-      const p50 = products.find((p) => p.id === 'credit-50')!
+      const starter = products.find((p) => p.id === 'credit-starter')!
+      const basic = products.find((p) => p.id === 'credit-basic')!
+      const popular = products.find((p) => p.id === 'credit-popular')!
+      const best = products.find((p) => p.id === 'credit-best')!
 
-      expect(p5.price).toBe(2000)
-      expect(p20.price).toBe(3000)
-      expect(p50.price).toBe(5000)
+      // 충전액 (KRW)
+      expect(starter.price).toBe(3000)
+      expect(basic.price).toBe(5000)
+      expect(popular.price).toBe(10000)
+      expect(best.price).toBe(30000)
+
+      // 총 충전 포인트 (기본 + 보너스)
+      expect(starter.points).toBe(25000)
+      expect(basic.points).toBe(41667)
+      expect(popular.points).toBe(91667)
+      expect(best.points).toBe(287500)
+
+      // 보너스율 (§8-5 안전 권고 상한)
+      expect(starter.bonusRate).toBe(0)
+      expect(basic.bonusRate).toBe(0)
+      expect(popular.bonusRate).toBe(0.1)
+      expect(best.bonusRate).toBe(0.15)
     })
   })
 
   describe('initiatePayment', () => {
     it('pending 상태 Payment를 생성하고 게이트웨이를 호출한다', async () => {
-      const result = await useCase.initiatePayment('author-1', 'credit-5', 'https://example.com/return')
+      const result = await useCase.initiatePayment('author-1', 'credit-starter', 'https://example.com/return')
 
+      // CC-2a 디노미 — 입문 패키지: 충전액 ₩3,000, credits 컬럼에 충전 총 pt 25,000 저장
       expect(mockPrisma.create).toHaveBeenCalledWith(
         expect.objectContaining({
           authorId: 'author-1',
-          productId: 'credit-5',
-          amount: 2000,
-          credits: 5,
+          productId: 'credit-starter',
+          amount: 3000,
+          credits: 25000,
         }),
       )
       expect(mockPaymentGateway.initiatePayment).toHaveBeenCalledWith(
         expect.objectContaining({
-          productId: 'credit-5',
-          productName: '5 크레딧',
-          amount: 2000,
+          productId: 'credit-starter',
+          productName: '입문 패키지',
+          amount: 3000,
         }),
       )
       expect(result.paymentUrl).toBe('https://example.com/pay/test')
@@ -176,7 +212,7 @@ describe('PaymentUseCase', () => {
     })
 
     it('externalTransactionId를 Payment 레코드에 업데이트한다', async () => {
-      await useCase.initiatePayment('author-1', 'credit-5', 'https://example.com/return')
+      await useCase.initiatePayment('author-1', 'credit-starter', 'https://example.com/return')
 
       expect(mockPrisma.updateExternalTransactionId).toHaveBeenCalledWith('pay-1', 'TRADE-001')
     })
@@ -197,7 +233,7 @@ describe('PaymentUseCase', () => {
       const reusablePayment = {
         id: 'pay-reuse-1',
         authorId: 'author-1',
-        productId: 'credit-5',
+        productId: 'credit-starter',
         amount: 2000,
         credits: 5,
         status: 'pending',
@@ -215,7 +251,7 @@ describe('PaymentUseCase', () => {
 
         const result = await useCase.initiatePayment(
           'author-1',
-          'credit-5',
+          'credit-starter',
           'https://example.com/return',
         )
 
@@ -223,7 +259,7 @@ describe('PaymentUseCase', () => {
         expect(mockPrisma.findReusablePendingPayment).toHaveBeenCalledTimes(1)
         expect(mockPrisma.findReusablePendingPayment).toHaveBeenCalledWith(
           'author-1',
-          'credit-5',
+          'credit-starter',
           expect.any(Date),
         )
 
@@ -253,21 +289,21 @@ describe('PaymentUseCase', () => {
 
         const result = await useCase.initiatePayment(
           'author-1',
-          'credit-5',
+          'credit-starter',
           'https://example.com/return',
         )
 
         // 진입 게이트 호출 1회
         expect(mockPrisma.findReusablePendingPayment).toHaveBeenCalledTimes(1)
 
-        // 신규 create 1회 (재사용 후보 없음)
+        // 신규 create 1회 (재사용 후보 없음) — CC-2a 디노미: 입문 패키지 ₩3,000 / 25,000pt
         expect(mockPrisma.create).toHaveBeenCalledTimes(1)
         expect(mockPrisma.create).toHaveBeenCalledWith(
           expect.objectContaining({
             authorId: 'author-1',
-            productId: 'credit-5',
-            amount: 2000,
-            credits: 5,
+            productId: 'credit-starter',
+            amount: 3000,
+            credits: 25000,
           }),
         )
 
@@ -282,7 +318,7 @@ describe('PaymentUseCase', () => {
         mockPrisma.findReusablePendingPayment.mockResolvedValueOnce(null)
 
         const beforeCall = Date.now()
-        await useCase.initiatePayment('author-1', 'credit-5', 'https://example.com/return')
+        await useCase.initiatePayment('author-1', 'credit-starter', 'https://example.com/return')
         const afterCall = Date.now()
 
         // 호출 인자에서 expireSince 추출 — now - 24h ± 100ms 허용
@@ -303,8 +339,8 @@ describe('PaymentUseCase', () => {
           .mockResolvedValueOnce({ tradeNo: 'TRADE-A', paymentUrl: 'url-a' })
           .mockResolvedValueOnce({ tradeNo: 'TRADE-B', paymentUrl: 'url-b' })
 
-        const r1 = await useCase.initiatePayment('author-1', 'credit-5', 'https://r')
-        const r2 = await useCase.initiatePayment('author-1', 'credit-5', 'https://r')
+        const r1 = await useCase.initiatePayment('author-1', 'credit-starter', 'https://r')
+        const r2 = await useCase.initiatePayment('author-1', 'credit-starter', 'https://r')
 
         // create는 첫 호출에서만 1회
         expect(mockPrisma.create).toHaveBeenCalledTimes(1)
@@ -383,7 +419,7 @@ describe('PaymentUseCase', () => {
       )
     })
 
-    it('성공 웹훅 시 원자적 트랜잭션으로 크레딧 부여 + 상태 변경 + webhook event를 processed로 박제한다', async () => {
+    it('성공 웹훅 시 completePaymentWithPoints 단일 트랜잭션으로 충전 적립 + 상태 변경 + webhook event를 processed로 박제한다 (CC-2a)', async () => {
       mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
@@ -392,8 +428,13 @@ describe('PaymentUseCase', () => {
       const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
       expect(result.processed).toBe(true)
-      expect(result.credits).toBe(5)
-      expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledWith('pay-1', 'author-1', 5, 'credit-5')
+      // credits 필드 = 충전 총 pt (입문 25,000pt)
+      expect(result.credits).toBe(25000)
+      // CC-2a — 충전 success 는 신 completePaymentWithPoints 사용 (구 completePaymentAtomically 0건)
+      expect(mockPrisma.completePaymentWithPoints).toHaveBeenCalledWith(
+        'pay-1', 'author-1', 25000, 'credit-starter', 'pay-1',
+      )
+      expect(mockPrisma.completePaymentAtomically).not.toHaveBeenCalled()
       expect(mockWebhookEventRepo.findByEventId).toHaveBeenCalledWith('evt_test_001')
       expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -405,8 +446,8 @@ describe('PaymentUseCase', () => {
       )
     })
 
-    // PAY-P2-4: 성공 분기에서 잔액 사전 조회 + auditLog beforeState/afterState 박제
-    it('PAY-P2-4: 성공 웹훅 시 authorRepo.findById 1회 + auditLog.log 6-arg(payment_completed) 박제', async () => {
+    // PAY-P2-4 + CC-2a: 성공 분기에서 잔액 사전 조회 + auditLog beforeState/afterState 박제
+    it('PAY-P2-4+CC-2a: 성공 웹훅 시 authorRepo.findById 1회 + auditLog.log pt 기준(payment_completed) 박제', async () => {
       mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
@@ -418,7 +459,8 @@ describe('PaymentUseCase', () => {
       expect(mockAuthorRepo.findById).toHaveBeenCalledTimes(1)
       expect(mockAuthorRepo.findById).toHaveBeenCalledWith('author-1')
 
-      // auditLog.log 정확히 1회 호출 + 7-arg (operator='system_payment', action='payment_completed')
+      // CC-2a 디노미 — beforeState/afterState 는 충전 출처 캐시(pointsCharged) pt 기준.
+      // before pointsCharged=10,000 → after = 10,000 + chargedPoints(25,000) = 35,000
       expect(mockAuditLog.log).toHaveBeenCalledTimes(1)
       expect(mockAuditLog.log).toHaveBeenCalledWith(
         'system_payment',
@@ -428,11 +470,13 @@ describe('PaymentUseCase', () => {
           reason: 'polar_webhook_order.paid',
           externalTransactionId: 'TRADE-001',
         }),
-        { credits: 50 }, // mockAuthorRepo author.credits 베이스
+        { pointsCharged: 10000 }, // mockAuthorRepo pointsCharged 베이스
         expect.objectContaining({
-          credits: 55, // 50 + 5 (payment.credits)
+          pointsCharged: 35000, // 10,000 + chargedPoints 25,000
           paymentId: 'pay-1',
-          addedCredits: 5,
+          totalPoints: 25000,
+          chargedPoints: 25000,
+          settledDeficit: 0,
         }),
       )
     })
@@ -448,8 +492,8 @@ describe('PaymentUseCase', () => {
 
       // 결제는 성공 (잔액 조회 실패가 차단하지 않음)
       expect(result.processed).toBe(true)
-      expect(result.credits).toBe(5)
-      expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledTimes(1)
+      expect(result.credits).toBe(25000)
+      expect(mockPrisma.completePaymentWithPoints).toHaveBeenCalledTimes(1)
 
       // auditLog는 박제 skip (balanceBefore null)
       expect(mockAuditLog.log).not.toHaveBeenCalled()
@@ -466,8 +510,8 @@ describe('PaymentUseCase', () => {
 
       // 결제는 성공
       expect(result.processed).toBe(true)
-      expect(result.credits).toBe(5)
-      expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledTimes(1)
+      expect(result.credits).toBe(25000)
+      expect(mockPrisma.completePaymentWithPoints).toHaveBeenCalledTimes(1)
       // auditLog 호출 1회 (실패는 catch 처리)
       expect(mockAuditLog.log).toHaveBeenCalledTimes(1)
     })
@@ -491,36 +535,39 @@ describe('PaymentUseCase', () => {
       expect(mockRefundPaymentUseCase.execute).not.toHaveBeenCalled()
     })
 
-    it('취소(cancel) 웹훅 시 refund usecase 1회 호출 + status="refunded" + deficitCredits 응답 포함 (PAY-P1-1)', async () => {
+    it('취소(cancel) 웹훅 시 refund usecase 1회 호출 + status="refunded" + deficitCredits 응답 포함 (CC-2b 신 경로)', async () => {
       mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
       })
+      // CC-2b 디노미 — payment.credits 는 충전 총 pt 25,000 → refundPt 로 그대로 전달.
       mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(
-        makeEvent({ type: 'order.refunded', status: 'cancel', amount: 2000 }),
+        makeEvent({ type: 'order.refunded', status: 'cancel', amount: 3000 }),
       )
       mockRefundPaymentUseCase.execute.mockResolvedValueOnce({
-        actualDeducted: 5,
-        deficitCredits: 0,
+        actualRefunded: 25000,
+        deficitIncurred: 0,
+        proportionalPt: 25000,
+        isPartial: false,
       })
 
       const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
-      // PAY-P1-1: refund usecase 정확히 1회 호출 + 입력 정합 검증
+      // CC-2b: refund usecase 정확히 1회 호출 + 신 시그니처(refundPt) 정합
       expect(mockRefundPaymentUseCase.execute).toHaveBeenCalledTimes(1)
       expect(mockRefundPaymentUseCase.execute).toHaveBeenCalledWith({
         paymentId: 'pay-1',
         authorId: 'author-1',
-        credits: 5,
-        refundedAmount: 2000,
+        refundPt: 25000,
+        refundedAmount: 3000,
         reason: 'polar_webhook_order.refunded',
         source: 'webhook',
       })
 
-      // updateStatus는 호출 0회 — refund usecase 내부의 $transaction이 status='refunded'를 처리
+      // updateStatus는 호출 0회 — refund usecase 내부의 $transaction이 status를 처리
       expect(mockPrisma.updateStatus).not.toHaveBeenCalled()
 
-      // 응답에 deficitCredits 포함 (정상 환수 시 0)
+      // 응답에 deficitCredits 포함 (정상 환수 시 0) — payment.usecase 가 deficitIncurred 를 매핑
       expect(result.processed).toBe(true)
       expect(result.credits).toBe(0)
       expect(result).toHaveProperty('deficitCredits', 0)
@@ -531,7 +578,7 @@ describe('PaymentUseCase', () => {
       )
     })
 
-    it('취소(cancel) 웹훅 + 잔액 부족 시 deficitCredits 양수로 응답에 박제 (PAY-P1-1 deficit 분기)', async () => {
+    it('취소(cancel) 웹훅 + 잔액 부족 시 deficitIncurred 양수로 응답에 박제 (CC-2b 이중 외상 통합)', async () => {
       mockPrisma.findByExternalTransactionId.mockResolvedValue({
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
@@ -540,8 +587,10 @@ describe('PaymentUseCase', () => {
         makeEvent({ type: 'order.refunded', status: 'cancel' }),
       )
       mockRefundPaymentUseCase.execute.mockResolvedValueOnce({
-        actualDeducted: 3,
-        deficitCredits: 2,
+        actualRefunded: 3000,
+        deficitIncurred: 2000,
+        proportionalPt: 5000,
+        isPartial: false,
       })
 
       const result = await useCase.processWebhook(dummyBody, dummyHeaders)
@@ -549,7 +598,7 @@ describe('PaymentUseCase', () => {
       expect(result).toEqual(expect.objectContaining({
         processed: true,
         credits: 0,
-        deficitCredits: 2,
+        deficitCredits: 2000,
       }))
     })
 
@@ -579,7 +628,7 @@ describe('PaymentUseCase', () => {
     // ============================================================================
 
     describe('PAY-P0-1: 동일 eventId 멱등성 게이트', () => {
-      it('동일 eventId로 webhook 두 번 호출 시 첫 호출만 completePaymentAtomically 실행한다', async () => {
+      it('동일 eventId로 webhook 두 번 호출 시 첫 호출만 completePaymentWithPoints 실행한다 (CC-2a)', async () => {
         mockPrisma.findByExternalTransactionId.mockResolvedValue({
           ...mockPayment,
           externalTransactionId: 'TRADE-001',
@@ -595,13 +644,15 @@ describe('PaymentUseCase', () => {
         const second = await useCase.processWebhook(dummyBody, dummyHeaders)
 
         expect(first.processed).toBe(true)
-        expect(first.credits).toBe(5)
+        expect(first.credits).toBe(25000)
         expect(second.processed).toBe(false)
         expect(second.reason).toBe('duplicate_event')
 
-        // 핵심: completePaymentAtomically는 단 1회만 호출되어야 한다
-        expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledTimes(1)
-        expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledWith('pay-1', 'author-1', 5, 'credit-5')
+        // 핵심: completePaymentWithPoints는 단 1회만 호출되어야 한다 (멱등성 회귀 보존)
+        expect(mockPrisma.completePaymentWithPoints).toHaveBeenCalledTimes(1)
+        expect(mockPrisma.completePaymentWithPoints).toHaveBeenCalledWith(
+          'pay-1', 'author-1', 25000, 'credit-starter', 'pay-1',
+        )
 
         // findByEventId는 두 번 모두 호출됨 (게이트 진입)
         expect(mockWebhookEventRepo.findByEventId).toHaveBeenCalledTimes(2)
@@ -623,16 +674,16 @@ describe('PaymentUseCase', () => {
 
         // race가 감지되어도 첫 worker는 정상 응답 (둘 중 하나만 처리되면 OK)
         expect(result.processed).toBe(true)
-        expect(result.credits).toBe(5)
-        expect(mockPrisma.completePaymentAtomically).toHaveBeenCalledTimes(1)
+        expect(result.credits).toBe(25000)
+        expect(mockPrisma.completePaymentWithPoints).toHaveBeenCalledTimes(1)
       })
 
-      it('completePaymentAtomically 실패 시 webhook event를 failed로 박제하고 throw한다', async () => {
+      it('completePaymentWithPoints 실패 시 webhook event를 failed로 박제하고 throw한다 (CC-2a)', async () => {
         mockPrisma.findByExternalTransactionId.mockResolvedValue({
           ...mockPayment,
           externalTransactionId: 'TRADE-001',
         })
-        mockPrisma.completePaymentAtomically.mockRejectedValueOnce(new Error('DB connection lost'))
+        mockPrisma.completePaymentWithPoints.mockRejectedValueOnce(new Error('DB connection lost'))
 
         await expect(useCase.processWebhook(dummyBody, dummyHeaders)).rejects.toThrow('DB connection lost')
 
@@ -653,7 +704,7 @@ describe('PaymentUseCase', () => {
       // AC-6 변형: 호출 흐름 게이트 우회 불가 검증 (직접 호출 + status 검증)
       // ============================================================================
       describe('PAY-P3-A: refunded/partial_refunded 사전 게이트 (구멍-A 차단)', () => {
-        it('AC-1: payment.status=refunded 시 succeeded webhook 재진입은 skip + completePaymentAtomically 호출 0건', async () => {
+        it('AC-1: payment.status=refunded 시 succeeded webhook 재진입은 skip + completePaymentWithPoints 호출 0건', async () => {
           mockPrisma.findByExternalTransactionId.mockResolvedValue({
             ...mockPayment,
             status: 'refunded',
@@ -662,8 +713,8 @@ describe('PaymentUseCase', () => {
 
           const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
-          // 사전 게이트 차단 — completePaymentAtomically 호출 0건 (재차감 0건 보장)
-          expect(mockPrisma.completePaymentAtomically).not.toHaveBeenCalled()
+          // 사전 게이트 차단 — 충전 트랜잭션(completePaymentWithPoints) 호출 0건 (재적립 0건 보장)
+          expect(mockPrisma.completePaymentWithPoints).not.toHaveBeenCalled()
           // refund usecase도 호출 0건 (succeeded webhook이므로 cancel 분기 미진입)
           expect(mockRefundPaymentUseCase.execute).not.toHaveBeenCalled()
 
@@ -696,8 +747,8 @@ describe('PaymentUseCase', () => {
 
           // 사전 게이트 차단 — refund usecase 호출 0건 (잔액 중복 차감 0건 보장)
           expect(mockRefundPaymentUseCase.execute).not.toHaveBeenCalled()
-          // completePaymentAtomically도 0건 (cancel 분기이지만 게이트가 우선 차단)
-          expect(mockPrisma.completePaymentAtomically).not.toHaveBeenCalled()
+          // completePaymentWithPoints도 0건 (cancel 분기이지만 게이트가 우선 차단)
+          expect(mockPrisma.completePaymentWithPoints).not.toHaveBeenCalled()
 
           // skipped 박제
           expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
@@ -732,9 +783,9 @@ describe('PaymentUseCase', () => {
             .mockReturnValueOnce(makeEvent({ eventId: 'evt_A', type: 'order.refunded', status: 'cancel' }))
             .mockReturnValueOnce(makeEvent({ eventId: 'evt_B', type: 'order.refunded', status: 'cancel' }))
           mockRefundPaymentUseCase.execute.mockResolvedValueOnce({
-            actualDeducted: 5,
-            deficitCredits: 0,
-            proportionalCredits: 5,
+            actualRefunded: 5,
+            deficitIncurred: 0,
+            proportionalPt: 5,
             isPartial: false,
           })
 
@@ -749,16 +800,16 @@ describe('PaymentUseCase', () => {
           expect(r2.reason).toBe('already_refunded')
         })
 
-        it('AC-6: completePaymentAtomically 트랜잭션 실패 (CAS_MISMATCH 시뮬) 시 webhook event failed 박제 + DLQ enqueue + throw', async () => {
-          // PAY-P3-A: refundPaymentAtomically CAS_MISMATCH throw → 호출자 catch → webhookEvent failed
+        it('AC-6: completePaymentWithPoints 트랜잭션 실패 (CAS_MISMATCH 시뮬) 시 webhook event failed 박제 + DLQ enqueue + throw', async () => {
+          // PAY-P3-A: 트랜잭션 CAS_MISMATCH throw → 호출자 catch → webhookEvent failed
           // 본 spec은 success 분기로 시뮬 (cancel 분기는 refund usecase 내부 catch로 동일 패턴)
           mockPrisma.findByExternalTransactionId.mockResolvedValue({
             ...mockPayment,
             status: 'pending', // 사전 게이트 통과 (success 분기 정상 진입)
             externalTransactionId: 'TRADE-001',
           })
-          // CAS_MISMATCH 시뮬 — completePaymentAtomically가 race window throw
-          mockPrisma.completePaymentAtomically.mockRejectedValueOnce(
+          // CAS_MISMATCH 시뮬 — completePaymentWithPoints가 race window throw (CC-2a)
+          mockPrisma.completePaymentWithPoints.mockRejectedValueOnce(
             new Error('CAS_MISMATCH — race condition detected on author.credits'),
           )
 
@@ -814,11 +865,11 @@ describe('PaymentUseCase', () => {
             status: 'pending',
             externalTransactionId: 'TRADE-001',
           })
-          // 4xx 시뮬 — completePaymentAtomically가 PolarError 4xx throw
+          // 4xx 시뮬 — completePaymentWithPoints가 PolarError 4xx throw (CC-2a)
           const polarBadRequest = Object.assign(new Error('Bad Request: invalid metadata'), {
             statusCode: 400,
           })
-          mockPrisma.completePaymentAtomically.mockRejectedValueOnce(polarBadRequest)
+          mockPrisma.completePaymentWithPoints.mockRejectedValueOnce(polarBadRequest)
 
           await expect(useCaseWithRetry.processWebhook(dummyBody, dummyHeaders)).rejects.toThrow(
             'Bad Request',
@@ -950,7 +1001,7 @@ describe('PaymentUseCase', () => {
             status: 'pending',
             externalTransactionId: 'TRADE-001',
           })
-          mockPrisma.completePaymentAtomically.mockRejectedValueOnce(
+          mockPrisma.completePaymentWithPoints.mockRejectedValueOnce(
             new Error('Some unexpected DB error'),
           )
 
@@ -1003,25 +1054,44 @@ describe('PaymentUseCase', () => {
     })
   })
 
-  describe('상품 가격 검증 — 크레딧 비용이 AI API 비용을 초과하는지', () => {
-    // 테마 생성 1회 ≈ 800 input + 500 output tokens (Claude Sonnet 4.6, $3/$15 per 1M, 환율 ₩1,474)
-    // = ₩14.6 (docs/ai-cost-table.md §3-1 정본)
-    const AI_COST_PER_THEME_KRW = 14.6
+  describe('충전 패키지 §0 원가 검증 (CC-2a 디노미 — ai-cost-table §2/§7-4 정본)', () => {
+    // §0 원가 철칙: 충전 pt 가 AI 원가의 3배 이상. 모든 차감 N 은
+    // ceil(스트레스 AI원가 × 3 ÷ §0최악단가)로 산출 (ai-cost-table §3 헤더).
+    // §0 최악 기준 = 입문 패키지 실효 순단가 ≈ ₩0.09856 (순수령액 ÷ 총 pt, 5자리 반올림 표기).
+    // → 차감 N 산출에 쓰이는 §0 기준이 "최저 실효 순단가" 이므로, 입문이 4종 중 최저이고
+    //   보너스(인기 +10% / 베스트 +15%)가 입문보다 단가를 낮추지 않으면 §0 PASS
+    //   (cost-accountant 승인 786b0f3).
+    const POLAR_PERCENT = 0.029
+    const POLAR_FIXED_KRW = 449.12
+    // ai-cost-table §2 표기 기준값 (5자리 반올림) — 정밀 계산값은 0.0985552
+    const FLOOR_NET_UNIT_KRW = 0.09856
 
-    it('모든 상품의 크레딧당 가격이 AI 비용의 최소 5배 이상이다', () => {
-      for (const product of CREDIT_PRODUCTS) {
-        const pricePerCredit = product.price / product.credits
-        const margin = pricePerCredit / AI_COST_PER_THEME_KRW
-        expect(margin).toBeGreaterThanOrEqual(5)
-      }
-    })
+    /** Polar 수수료 차감 후 실효 순단가 = (충전액 − 수수료) ÷ 총 pt */
+    const effectiveNetUnit = (price: number, points: number): number => {
+      const polarFee = price * POLAR_PERCENT + POLAR_FIXED_KRW
+      return (price - polarFee) / points
+    }
 
-    it('대량 구매 시에도 크레딧당 가격이 AI 비용보다 높다', () => {
-      const cheapest = CREDIT_PRODUCTS.reduce(
-        (min, p) => (p.price / p.credits < min ? p.price / p.credits : min),
+    it('입문 패키지가 §0 최악 기준이다 (4종 중 최저 실효 순단가 ≈ ₩0.09856)', () => {
+      const starter = CREDIT_PRODUCTS.find((p) => p.id === 'credit-starter')!
+      const cheapestNetUnit = CREDIT_PRODUCTS.reduce(
+        (min, p) => Math.min(min, effectiveNetUnit(p.price, p.points)),
         Infinity,
       )
-      expect(cheapest).toBeGreaterThan(AI_COST_PER_THEME_KRW)
+      // 입문이 4종 중 최저 실효 순단가 = §0 최악 기준 (ai-cost-table §2)
+      expect(effectiveNetUnit(starter.price, starter.points)).toBeCloseTo(cheapestNetUnit, 6)
+      // ai-cost-table §2 표기값 ₩0.09856 과 4자리까지 일치 (정밀값 0.0985552)
+      expect(cheapestNetUnit).toBeCloseTo(FLOOR_NET_UNIT_KRW, 4)
+    })
+
+    it('보너스 패키지(인기·베스트)가 §0 최악 기준(입문)보다 단가를 낮추지 않는다', () => {
+      const starterNetUnit = effectiveNetUnit(3000, 25000)
+      // 보너스가 §0 를 깨면 보너스 패키지 실효 순단가가 입문보다 낮아짐 — 그렇지 않음을 검증.
+      // 부동소수점 안전 — 1e-9 허용 오차로 "이상" 판정 (ai-cost-table §2 검증표 정합).
+      for (const product of CREDIT_PRODUCTS) {
+        const netUnit = effectiveNetUnit(product.price, product.points)
+        expect(netUnit).toBeGreaterThanOrEqual(starterNetUnit - 1e-9)
+      }
     })
   })
 
@@ -1048,14 +1118,14 @@ describe('PaymentUseCase', () => {
 
       mockPrisma.findReusablePendingPayment.mockResolvedValueOnce(null)
       mockPrisma.create.mockResolvedValueOnce({
-        id: 'pay-cb-1', authorId: 'author-cb', productId: 'credit-5',
+        id: 'pay-cb-1', authorId: 'author-cb', productId: 'credit-starter',
         amount: 2000, credits: 5, status: 'pending',
       })
       mockPaymentGateway.initiatePayment.mockRejectedValueOnce(circuitErr)
 
       // ServiceUnavailableException 변환 확인 (사용자 친화 503)
       await expect(
-        useCase.initiatePayment('author-cb', 'credit-5', 'https://app/return'),
+        useCase.initiatePayment('author-cb', 'credit-starter', 'https://app/return'),
       ).rejects.toThrow(ServiceUnavailableException)
 
       // PAY-P3-H 정합: updateExternalTransactionId 호출 0건 (CircuitOpenError가 SDK 호출 자체 차단)
@@ -1067,14 +1137,14 @@ describe('PaymentUseCase', () => {
 
       mockPrisma.findReusablePendingPayment.mockResolvedValueOnce(null)
       mockPrisma.create.mockResolvedValueOnce({
-        id: 'pay-normal-1', authorId: 'author-1', productId: 'credit-5',
+        id: 'pay-normal-1', authorId: 'author-1', productId: 'credit-starter',
         amount: 2000, credits: 5, status: 'pending',
       })
       mockPaymentGateway.initiatePayment.mockRejectedValueOnce(normalErr)
 
       // 기존 흐름 — 일반 Error는 그대로 throw (PAY-P3-B 정합)
       await expect(
-        useCase.initiatePayment('author-1', 'credit-5', 'https://app/return'),
+        useCase.initiatePayment('author-1', 'credit-starter', 'https://app/return'),
       ).rejects.toThrow('Polar checkout 생성 실패: timeout')
     })
   })

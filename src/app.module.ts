@@ -15,6 +15,10 @@ import { GetThemeUseCase } from '@application/theme/get-theme.usecase'
 import { BakeThemeUseCase } from '@application/theme/bake-theme.usecase'
 import { ParseManuscriptUseCase } from '@application/manuscript/parse-manuscript.usecase'
 import { CreditUseCase } from '@application/credit/credit.usecase'
+// 크레딧 개편 I Phase (2026-05-17) — 디노미네이션 + 4구간 차감 + 구독 월 풀
+import { ChargePointsUseCase } from '@application/credit/charge-points.usecase'
+import { GrantPointsUseCase } from '@application/credit/grant-points.usecase'
+import { ResetMonthlyPoolJob } from '@application/subscription/reset-monthly-pool.job'
 import { AuthorUseCase } from '@application/author/author.usecase'
 import { ContentUseCase } from '@application/content/content.usecase'
 import { AuthUseCase } from '@application/auth/auth.usecase'
@@ -64,6 +68,10 @@ import { PrismaAuthorRepository } from '@adapter/outbound/persistence/prisma-aut
 import { PrismaThemeRepository } from '@adapter/outbound/persistence/prisma-theme.repository'
 import { PrismaWorkRepository } from '@adapter/outbound/persistence/prisma-work.repository'
 import { PrismaCreditRepository } from '@adapter/outbound/persistence/prisma-credit.repository'
+// 크레딧 개편 I Phase (2026-05-17) — CreditLedger 원장 / MembershipPlan 구독 / SystemSetting 동적값
+import { PrismaCreditLedgerRepository } from '@adapter/outbound/persistence/prisma-credit-ledger.repository'
+import { PrismaMembershipPlanRepository } from '@adapter/outbound/persistence/prisma-membership-plan.repository'
+import { PrismaSystemSettingRepository } from '@adapter/outbound/persistence/prisma-system-setting.repository'
 import { PrismaReaderRepository } from '@adapter/outbound/persistence/prisma-reader.repository'
 import { PrismaSocialRepository } from '@adapter/outbound/persistence/prisma-social.repository'
 import { PrismaStatsRepository } from '@adapter/outbound/persistence/prisma-stats.repository'
@@ -130,6 +138,10 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     BakeThemeUseCase,
     ParseManuscriptUseCase,
     CreditUseCase,
+    // 크레딧 개편 I Phase (2026-05-17) — 디노미네이션 차감/적립 usecase + 월 풀 리셋 cron
+    ChargePointsUseCase,
+    GrantPointsUseCase,
+    ResetMonthlyPoolJob,
     AuthorUseCase,
     ContentUseCase,
     AuthUseCase,
@@ -165,6 +177,10 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'ThemeRepositoryPort', useClass: PrismaThemeRepository },
     { provide: 'WorkRepositoryPort', useClass: PrismaWorkRepository },
     { provide: 'CreditRepositoryPort', useClass: PrismaCreditRepository },
+    // 크레딧 개편 I Phase (2026-05-17) — CreditLedger 원장 / MembershipPlan 구독 / SystemSetting 동적값
+    { provide: 'CreditLedgerPort', useClass: PrismaCreditLedgerRepository },
+    { provide: 'MembershipPlanPort', useClass: PrismaMembershipPlanRepository },
+    { provide: 'SystemSettingRepositoryPort', useClass: PrismaSystemSettingRepository },
     { provide: 'ReaderRepositoryPort', useClass: PrismaReaderRepository },
     { provide: 'ClaudeApiPort', useClass: ClaudeThemeAdapter },
     { provide: 'SocialRepositoryPort', useClass: PrismaSocialRepository },

@@ -193,9 +193,10 @@ export class AdminController {
   @UseGuards(JwtAuthGuard, AdminGuard)
   async grantCredits(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { authorId: string; amount: number; reason: string },
+    // 크레딧 개편 CC-1 (2026-05-19) — source(출처) 운영자 명시. 미지정 시 'charged' 폴백.
+    @Body() body: { authorId: string; amount: number; reason: string; source?: string },
   ) {
-    return this.adminUseCase.grantCredits(req.user.sub, body.authorId, body.amount, body.reason)
+    return this.adminUseCase.grantCredits(req.user.sub, body.authorId, body.amount, body.reason, body.source)
   }
 
   @Throttle({ default: { ttl: 60000, limit: 5 } })

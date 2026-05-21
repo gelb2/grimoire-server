@@ -50,7 +50,7 @@ describe('PolarAdapter', () => {
       })
 
       const result = await adapter.initiatePayment({
-        productId: 'credit-5',
+        productId: 'credit-basic',
         productName: '5 크레딧',
         amount: 1000, // ₩1,000
         userId: 'author-1',
@@ -62,18 +62,18 @@ describe('PolarAdapter', () => {
         successUrl: 'https://grimoire-book.com/return',
         metadata: {
           authorId: 'author-1',
-          internalProductId: 'credit-5',
+          internalProductId: 'credit-basic',
         },
       })
       expect(result.paymentUrl).toBe('https://polar.sh/checkout/abc')
       expect(result.tradeNo).toBe('checkout-123')
     })
 
-    it('credit-20 → POLAR_PRODUCT_POPULAR 매핑', async () => {
+    it('credit-popular → POLAR_PRODUCT_POPULAR 매핑', async () => {
       mockCreate.mockResolvedValue({ id: 'c2', url: 'https://polar.sh/c2' })
 
       await adapter.initiatePayment({
-        productId: 'credit-20',
+        productId: 'credit-popular',
         productName: '20 크레딧',
         amount: 3000,
         userId: 'author-1',
@@ -85,11 +85,11 @@ describe('PolarAdapter', () => {
       )
     })
 
-    it('credit-50 → POLAR_PRODUCT_BEST 매핑', async () => {
+    it('credit-best → POLAR_PRODUCT_BEST 매핑', async () => {
       mockCreate.mockResolvedValue({ id: 'c3', url: 'https://polar.sh/c3' })
 
       await adapter.initiatePayment({
-        productId: 'credit-50',
+        productId: 'credit-best',
         productName: '50 크레딧',
         amount: 5000,
         userId: 'author-1',
@@ -119,7 +119,7 @@ describe('PolarAdapter', () => {
 
       await expect(
         badAdapter.initiatePayment({
-          productId: 'credit-5',
+          productId: 'credit-basic',
           productName: '5 크레딧',
           amount: 1000, // ₩1,000
           userId: 'author-1',
@@ -133,7 +133,7 @@ describe('PolarAdapter', () => {
 
       await expect(
         adapter.initiatePayment({
-          productId: 'credit-5',
+          productId: 'credit-basic',
           productName: '5 크레딧',
           amount: 1000, // ₩1,000
           userId: 'author-1',
@@ -157,9 +157,9 @@ describe('PolarAdapter', () => {
         data: {
           id: 'order-1',
           checkoutId: 'checkout-abc',
-          totalAmount: 199,
+          totalAmount: 499,
           status: 'paid',
-          metadata: { authorId: 'author-1', internalProductId: 'credit-5' },
+          metadata: { authorId: 'author-1', internalProductId: 'credit-basic' },
         },
       })
 
@@ -169,7 +169,7 @@ describe('PolarAdapter', () => {
         eventId: 'msg_123', // dummyHeaders['webhook-id']
         type: 'order.paid',
         tradeNo: 'checkout-abc',
-        amount: 2000, // 199센트 → ₩2,000 (credit-5 상품 매핑, F1 2026-04-19 인상, Polar 패턴 $X.99=₩X,000)
+        amount: 5000, // 499센트 → ₩5,000 (CC-2a 디노미 — credit-basic priceUsd 499 → price 5000)
         status: 'success',
         userId: 'author-1',
       })
@@ -448,7 +448,7 @@ describe('PolarAdapter', () => {
             {
               id: 'checkout-1',
               status: 'succeeded',
-              totalAmount: 199, // credit-5 매핑
+              totalAmount: 499, // CC-2a 디노미 — credit-basic priceUsd 499
               createdAt: checkoutCreatedAt,
             },
           ],
@@ -462,7 +462,7 @@ describe('PolarAdapter', () => {
       expect(result[0]).toEqual({
         externalTransactionId: 'checkout-1',
         status: 'succeeded',
-        amount: 2000, // credit-5 매핑 (priceUsd=199 → price=2000)
+        amount: 5000, // credit-basic 매핑 (priceUsd 499 → price 5000)
         createdAt: checkoutCreatedAt,
       })
     })
@@ -751,7 +751,7 @@ describe('PolarAdapter', () => {
 
         await expect(
           adapter.initiatePayment({
-            productId: 'credit-5',
+            productId: 'credit-basic',
             productName: '5 크레딧',
             amount: 1000,
             userId: 'author-1',
@@ -793,7 +793,7 @@ describe('PolarAdapter', () => {
       process.env.POLAR_PRODUCT_BASIC = 'polar-product-basic'
 
       const result = await adapter.initiatePayment({
-        productId: 'credit-5',
+        productId: 'credit-basic',
         productName: 'Basic',
         amount: 5000,
         userId: 'author-cb',
@@ -817,7 +817,7 @@ describe('PolarAdapter', () => {
       process.env.POLAR_PRODUCT_BASIC = 'polar-product-basic'
 
       await adapterWithCb.initiatePayment({
-        productId: 'credit-5',
+        productId: 'credit-basic',
         productName: 'Basic',
         amount: 5000,
         userId: 'author-1',
@@ -868,7 +868,7 @@ describe('PolarAdapter', () => {
       // CircuitOpenError 그대로 throw — SDK 호출 0건 (execute가 fn 호출 자체 차단)
       await expect(
         adapterWithCb.initiatePayment({
-          productId: 'credit-5',
+          productId: 'credit-basic',
           productName: 'Basic',
           amount: 5000,
           userId: 'author-1',

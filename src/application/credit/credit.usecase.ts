@@ -1,13 +1,37 @@
-import { Injectable, Inject, BadRequestException } from '@nestjs/common'
+import { Injectable, Inject, Optional, BadRequestException, Logger } from '@nestjs/common'
 import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
+import {
+  CreditLedgerPort,
+  CreditBalance,
+  CreditLedgerEntry,
+} from '@domain/port/outbound/credit-ledger.port'
+import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
 import { CreditLog } from '@domain/model/credit'
 
 @Injectable()
 export class CreditUseCase {
+  private readonly logger = new Logger(CreditUseCase.name)
+
   constructor(
     @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
+    /**
+     * 크레딧 개편 I Phase (2026-05-17) — CreditLedger 4 출처 회계 원장.
+     * Optional — 주입 시 `getPointBalance` 가 4 출처 잔액(CreditBalance)을 반환,
+     * 미주입 시 구 정수 `credits` 만 가용(BACKWARD COMPATIBLE — novel-analysis.usecase 패턴 차용).
+     */
+    @Optional()
+    @Inject('CreditLedgerPort')
+    private readonly ledger: CreditLedgerPort | null = null,
+    /**
+     * CC-3 (CRITICAL-1 案 B) — lazy 안전망. 잔액 조회 진입점에서 plan 만료 시 즉시 리셋.
+     * Optional — 미주입 시 lazy 미적용(BACKWARD COMPATIBLE, cron 단일 안전망).
+     * 정본: ADR-014.
+     */
+    @Optional()
+    @Inject('MembershipPlanPort')
+    private readonly membershipRepo: MembershipPlanPort | null = null,
   ) {}
 
   async deduct(authorId: string, amount: number, reason: string): Promise<{ credits: number; log: CreditLog }> {
@@ -41,43 +65,132 @@ export class CreditUseCase {
     return author.credits
   }
 
-  /** 크레딧 선물 (독자 → 작가, 트랜잭션) */
-  async gift(senderId: string, receiverId: string, amount: number): Promise<{ senderCredits: number; receiverCredits: number }> {
-    if (amount <= 0) {
-      throw new BadRequestException('선물 금액은 양수여야 합니다')
+  /**
+   * 크레딧 개편 I Phase (2026-05-17) — 4 출처 포인트 잔액 조회.
+   *
+   * `/credits/balance` HTTP 노출용. CreditLedgerPort(원장)가 주입되면 출처별
+   * 잔액(무료 적립 / 구독 풀 / 응원 선물 / 충전) + deficit(외상) + 총합 + 가용량을
+   * 반환한다. 정본: shared-contracts §30 CreditBalance.
+   *
+   * CC-3 (CRITICAL-1 案 B) — lazy 안전망 진입점.
+   * `MembershipPlanPort` 가 주입되면 `getBalance` 직전에 `checkAndResetExpiredPool` 호출:
+   *   - plan 만료(poolResetAt < now) 시 즉시 `resetMonthlyPool` 실행 → 캐시 갱신.
+   *   - cron 실패해도 작가가 잔액 보는 순간 자동 보정 → 이월 금지 코드 강제.
+   * lazy 실패는 silent log + 잔액 조회 진행 (잔액 조회 자체 실패 방지 — fallback 안전망).
+   *
+   * @throws BadRequestException 작가 미존재
+   */
+  async getPointBalance(authorId: string): Promise<CreditBalance> {
+    const author = await this.authorRepo.findById(authorId)
+    if (!author) {
+      throw new BadRequestException('작가를 찾을 수 없습니다')
+    }
+    if (!this.ledger) {
+      throw new BadRequestException('포인트 원장이 구성되지 않았습니다')
+    }
+
+    // CC-3 lazy 안전망 — membershipRepo 주입 시 plan 만료 자동 보정.
+    if (this.membershipRepo) {
+      try {
+        await this.membershipRepo.checkAndResetExpiredPool(authorId, new Date())
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        // lazy 실패는 잔액 조회 자체를 막지 않음 — silent log + 진행
+        this.logger.warn(
+          `lazy checkAndResetExpiredPool 실패 (잔액 조회 진행) — authorId=${authorId} msg=${msg}`,
+        )
+      }
+    }
+
+    return this.ledger.getBalance(authorId)
+  }
+
+  /**
+   * 응원 선물 (독자 → 작가) — CC-2b 案 G1 신 경로.
+   *
+   * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §1-B
+   *       .claude/state/sprint-cc2b-gift-refund-wiring-plan-draft.md §3
+   *
+   * `CreditLedgerPort.transfer` 단일 `$transaction` 메서드가 양측 작가 이동을 원자 처리.
+   * 구 `creditRepo.giftTransfer`(`Author.credits` Int + `CreditLog`) 경로는 제거.
+   * sender 잔액 검증·자기 선물 차단은 `transfer` 내부에서 수행 — 본 메서드는 사전 검증만 보존.
+   *
+   * @param amount pt 단위 (메인 §6 결정 — 1,000/3,000/5,000pt, `GIFT_POINT_OPTIONS` 정본).
+   * @returns 양측 작가 갱신 결과 — `senderSpentBySource`(4 출처 차감액) / `receiverGiftBalance`(받는 작가 pointsGift)
+   */
+  async gift(
+    senderId: string,
+    receiverId: string,
+    amount: number,
+  ): Promise<{
+    senderSpentBySource: Record<'free' | 'subscription' | 'gift' | 'charged', number>
+    receiverGiftBalance: number
+  }> {
+    if (!Number.isInteger(amount) || amount <= 0) {
+      throw new BadRequestException('선물 금액은 양의 정수여야 합니다')
     }
     if (senderId === receiverId) {
       throw new BadRequestException('자기 자신에게 선물할 수 없습니다')
     }
+    if (!this.ledger) {
+      // CC-2b 신 경로 — CreditLedgerPort 가 정본. ledger 없으면 응답 불가.
+      throw new BadRequestException('포인트 원장이 구성되지 않았습니다')
+    }
 
+    // sender·receiver 미존재 검증은 transfer 내부 FOR UPDATE 가 throw 로 처리하지만,
+    // controller 친화적 400 응답을 위해 사전 검증 보존.
     const sender = await this.authorRepo.findById(senderId)
     if (!sender) {
       throw new BadRequestException('보내는 유저를 찾을 수 없습니다')
     }
-    if (sender.credits < amount) {
-      throw new BadRequestException('크레딧이 부족합니다')
-    }
-
     const receiver = await this.authorRepo.findById(receiverId)
     if (!receiver) {
       throw new BadRequestException('받는 유저를 찾을 수 없습니다')
     }
 
-    return this.creditRepo.giftTransfer(
-      senderId,
-      receiverId,
-      amount,
-      `gift_sent:${receiverId}`,
-      `gift_received:${senderId}`,
-    )
+    try {
+      // 단일 $transaction — sender 차감(planConsumption) + receiver gift earn
+      return await this.ledger.transfer(senderId, receiverId, amount, undefined)
+    } catch (e: unknown) {
+      // 잔액 부족(외상 선물 불가)을 4xx 로 정리 — 그 외 throw 위임
+      const message = e instanceof Error ? e.message : String(e)
+      if (message.includes('포인트가 부족') || message.includes('크레딧이 부족')) {
+        throw new BadRequestException('포인트가 부족합니다')
+      }
+      throw e
+    }
   }
 
-  /** 응원받는 작가 랭킹 */
+  /**
+   * 응원받는 작가 랭킹 — CC-3 (HIGH-3) `CreditLedger` 위임.
+   *
+   * CC-2b 가 선물 적립을 `CreditLedger source='gift', type='earn'` 으로 이행하면서
+   * 구 `creditRepo.getGiftRanking`(`CreditLog reason='gift_received'` groupBy)이 신 선물을
+   * 못 보는 **신·구 분열** 발생. CC-3 가 신 ledger 기반 집계로 재작성.
+   *
+   * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §5-B / ADR-014.
+   * 미주입(ledger null) 시 구 경로 폴백(BACKWARD COMPATIBLE).
+   */
   async getGiftRanking(limit: number = 10): Promise<{ authorId: string; totalGifted: number }[]> {
+    if (this.ledger) {
+      return this.ledger.getGiftRanking(limit)
+    }
     return this.creditRepo.getGiftRanking(limit)
   }
 
-  async getLogs(authorId: string): Promise<CreditLog[]> {
+  /**
+   * 작가 크레딧 이력 조회 — CC-3 (HIGH-3) `CreditLedger` 위임.
+   *
+   * 반환 타입 변경: `CreditLog[]` → `CreditLedgerEntry[]`.
+   * `GET /credits/logs` 응답 형태가 신 4 출처 모델(source/type/balanceAfter/expiresAt/relatedId)로 확장.
+   * shared-contracts §30 + docs/api-contract.md 변경 이력 박제.
+   *
+   * 미주입(ledger null) 시 구 `CreditLog[]` 반환(BACKWARD COMPATIBLE) — 통합 모드 결정 필요 시 controller 분기.
+   */
+  async getLogs(authorId: string): Promise<CreditLedgerEntry[] | CreditLog[]> {
+    if (this.ledger) {
+      return this.ledger.findByAuthor(authorId, 100)
+    }
     return this.creditRepo.findLogsByAuthorId(authorId)
   }
 }

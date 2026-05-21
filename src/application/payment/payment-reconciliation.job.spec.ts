@@ -37,9 +37,17 @@ describe('PaymentReconciliationJob', () => {
       updateExternalTransactionId: jest.fn(),
       findByAuthorId: jest.fn(),
       completePaymentAtomically: jest.fn(),
+      // CC-2a — webhook 누락 보정도 신 충전 적립 트랜잭션 사용
+      completePaymentWithPoints: jest
+        .fn()
+        .mockResolvedValue({ settledDeficit: 0, chargedPoints: 25000 }),
+      // CC-2b — 환불 신 경로 mock (reconciliation 미사용이나 PaymentRepositoryPort 완전성)
+      refundPaymentWithPoints: jest.fn(),
+      refundPaymentAtomically: jest.fn(),
       updateStatus: jest.fn(),
       findPendingPaymentsOlderThan: jest.fn(),
       expirePayment: jest.fn(),
+      findReusablePendingPayment: jest.fn(),
     } as unknown as jest.Mocked<PaymentRepositoryPort>
 
     mockCheckpointRepo = {
@@ -89,22 +97,23 @@ describe('PaymentReconciliationJob', () => {
   // ============================================================================
   // (a) S1 boost
   // ============================================================================
-  it('S1 boost: PG=succeeded + DB=pending → completePaymentAtomically 1회 + AuditLog reconciliation_boost', async () => {
+  it('S1 boost: PG=succeeded + DB=pending → completePaymentWithPoints 1회 + AuditLog reconciliation_boost (CC-2a)', async () => {
     const checkoutDate = new Date('2026-05-03T12:00:00Z')
     mockPaymentGateway.listRecentCheckouts.mockResolvedValue([
       {
         externalTransactionId: 'checkout-1',
         status: 'succeeded',
-        amount: 2000,
+        amount: 3000,
         createdAt: checkoutDate,
       },
     ])
+    // CC-2a 디노미 — credits 는 충전 총 pt (입문 패키지 25,000pt)
     mockPaymentRepo.findByExternalTransactionId.mockResolvedValue({
       id: 'payment-1',
       authorId: 'author-1',
-      productId: 'credit-5',
-      amount: 2000,
-      credits: 5,
+      productId: 'credit-starter',
+      amount: 3000,
+      credits: 25000,
       status: 'pending',
       externalTransactionId: 'checkout-1',
       createdAt: new Date('2026-05-03T11:00:00Z'),
@@ -113,13 +122,16 @@ describe('PaymentReconciliationJob', () => {
 
     await job.run()
 
-    expect(mockPaymentRepo.completePaymentAtomically).toHaveBeenCalledTimes(1)
-    expect(mockPaymentRepo.completePaymentAtomically).toHaveBeenCalledWith(
+    // CC-2a — webhook 누락 보정도 신 completePaymentWithPoints 사용 (구 경로 0건)
+    expect(mockPaymentRepo.completePaymentWithPoints).toHaveBeenCalledTimes(1)
+    expect(mockPaymentRepo.completePaymentWithPoints).toHaveBeenCalledWith(
       'payment-1',
       'author-1',
-      5,
-      'credit-5',
+      25000,
+      'credit-starter',
+      'payment-1',
     )
+    expect(mockPaymentRepo.completePaymentAtomically).not.toHaveBeenCalled()
     expect(mockAuditLog.log).toHaveBeenCalledWith(
       'system_reconciliation',
       'reconciliation_boost',
@@ -128,7 +140,9 @@ describe('PaymentReconciliationJob', () => {
         reason: 'webhook_missed',
         polarStatus: 'succeeded',
         dbStatus: 'pending',
-        credits: 5,
+        totalPoints: 25000,
+        chargedPoints: 25000,
+        settledDeficit: 0,
       }),
     )
     // expire/mismatch는 호출 안 됨
@@ -159,9 +173,9 @@ describe('PaymentReconciliationJob', () => {
     mockPaymentRepo.findByExternalTransactionId.mockResolvedValue({
       id: 'payment-2',
       authorId: 'author-2',
-      productId: 'credit-5',
+      productId: 'credit-starter',
       amount: 2000,
-      credits: 5,
+      credits: 25000,
       status: 'completed',
       externalTransactionId: 'checkout-2',
       createdAt: new Date('2026-05-03T10:00:00Z'),
@@ -170,6 +184,7 @@ describe('PaymentReconciliationJob', () => {
 
     await job.run()
 
+    expect(mockPaymentRepo.completePaymentWithPoints).not.toHaveBeenCalled()
     expect(mockPaymentRepo.completePaymentAtomically).not.toHaveBeenCalled()
     expect(mockPaymentRepo.expirePayment).not.toHaveBeenCalled()
     expect(mockAuditLog.log).toHaveBeenCalledTimes(1)
@@ -202,9 +217,9 @@ describe('PaymentReconciliationJob', () => {
       {
         id: 'payment-3',
         authorId: 'author-3',
-        productId: 'credit-5',
+        productId: 'credit-starter',
         amount: 2000,
-        credits: 5,
+        credits: 25000,
         status: 'pending',
         externalTransactionId: 'checkout-3',
         createdAt: new Date('2026-05-02T00:00:00Z'),
@@ -216,6 +231,7 @@ describe('PaymentReconciliationJob', () => {
 
     expect(mockPaymentRepo.expirePayment).toHaveBeenCalledTimes(1)
     expect(mockPaymentRepo.expirePayment).toHaveBeenCalledWith('payment-3')
+    expect(mockPaymentRepo.completePaymentWithPoints).not.toHaveBeenCalled()
     expect(mockPaymentRepo.completePaymentAtomically).not.toHaveBeenCalled()
     expect(mockAuditLog.log).toHaveBeenCalledWith(
       'system_reconciliation',
@@ -252,9 +268,9 @@ describe('PaymentReconciliationJob', () => {
     mockPaymentRepo.findByExternalTransactionId.mockResolvedValue({
       id: 'payment-4',
       authorId: 'author-4',
-      productId: 'credit-5',
+      productId: 'credit-starter',
       amount: 2000,
-      credits: 5,
+      credits: 25000,
       status: 'completed', // 정합
       externalTransactionId: 'checkout-4',
       createdAt: new Date('2026-05-03T11:00:00Z'),
@@ -263,6 +279,7 @@ describe('PaymentReconciliationJob', () => {
 
     await job.run()
 
+    expect(mockPaymentRepo.completePaymentWithPoints).not.toHaveBeenCalled()
     expect(mockPaymentRepo.completePaymentAtomically).not.toHaveBeenCalled()
     expect(mockPaymentRepo.expirePayment).not.toHaveBeenCalled()
     expect(mockAuditLog.log).not.toHaveBeenCalled()
@@ -354,6 +371,7 @@ describe('PaymentReconciliationJob', () => {
     // 기본 setup: listRecentCheckouts=[] + findPendingPaymentsOlderThan=[]
     await job.run()
 
+    expect(mockPaymentRepo.completePaymentWithPoints).not.toHaveBeenCalled()
     expect(mockPaymentRepo.completePaymentAtomically).not.toHaveBeenCalled()
     expect(mockPaymentRepo.expirePayment).not.toHaveBeenCalled()
     expect(mockAuditLog.log).not.toHaveBeenCalled()

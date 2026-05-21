@@ -2,8 +2,7 @@ import { Injectable, Inject, BadRequestException, NotFoundException, ForbiddenEx
 import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
 import { ThemeRepositoryPort } from '@domain/port/outbound/theme-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
-import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
-import { CreditReason } from '@domain/model/credit'
+import { ChargePointsUseCase } from '@application/credit/charge-points.usecase'
 import { Theme } from '@domain/model/theme'
 import { isPlanExpired } from '@domain/model/plan'
 import { DAILY_FREE_LIMITS } from '@domain/model/config'
@@ -15,7 +14,9 @@ export class GenerateThemeUseCase {
     @Inject('ClaudeApiPort') private readonly claudeApi: ClaudeApiPort,
     @Inject('ThemeRepositoryPort') private readonly themeRepo: ThemeRepositoryPort,
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
-    @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
+    // 크레딧 개편 CC-1 (2026-05-19) — 테마 차감을 신 포인트 원장(CreditLedger)으로 이행.
+    // 구 creditRepo.adjustCredits(Author.credits -1) → ChargePointsUseCase.chargeTheme 교체.
+    private readonly chargePoints: ChargePointsUseCase,
   ) {}
 
   /** AI 테마 생성 — 슬롯 체크 없음 (생성은 자유, 활성화가 슬롯 제한) */
@@ -38,22 +39,19 @@ export class GenerateThemeUseCase {
     const dailyLimit = DAILY_FREE_LIMITS[author.plan] ?? DAILY_FREE_LIMITS.free
     const isFree = todayCount < dailyLimit
 
-    // 무료 한도 초과 시 크레딧 차감
+    // 무료 한도 초과 시 신 포인트 원장에서 590pt 사전 차감.
+    // chargeTheme 가 자체 잔액 검증 → 부족 시 BadRequestException throw (구 catch 래핑 불요).
     if (!isFree) {
-      try {
-        await this.creditRepo.adjustCredits(authorId, -1, CreditReason.THEME_GENERATE)
-      } catch {
-        throw new BadRequestException(`오늘 무료 생성 한도(${dailyLimit}회)를 초과했습니다. 크레딧이 부족합니다.`)
-      }
+      await this.chargePoints.chargeTheme(authorId)
     }
 
-    // Claude API로 테마 생성 — 실패 시 크레딧 환불 (유료 생성인 경우만)
+    // Claude API로 테마 생성 — 실패 시 포인트 환불 (유료 생성인 경우만)
     let themeData: any
     try {
       themeData = await this.claudeApi.generateTheme(description)
     } catch (error) {
       if (!isFree) {
-        await this.creditRepo.adjustCredits(authorId, 1, 'theme_generate_refund')
+        await this.chargePoints.refundTheme(authorId)
       }
       throw error
     }

@@ -3,6 +3,10 @@ import { Controller, Get, Post, Body, UseGuards, Req, Query } from '@nestjs/comm
 import { Throttle } from '@nestjs/throttler'
 import { CreditUseCase } from '@application/credit/credit.usecase'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
+import {
+  CreditBalanceResponseDto,
+  toCreditBalanceResponse,
+} from '@adapter/inbound/http/dto/credit.dto'
 
 @Controller('credits')
 export class CreditController {
@@ -22,11 +26,11 @@ export class CreditController {
     return this.creditUseCase.getGiftRanking(limit ? parseInt(limit, 10) : 10)
   }
 
-  /** 크레딧 잔액 조회 */
+  /** 크레딧 잔액 조회 — 크레딧 개편 I Phase: 4 출처 포인트 잔액 (free/subscription/gift/charged + deficit) */
   @UseGuards(JwtAuthGuard)
   @Get('balance')
-  async getBalance(@Req() req: AuthenticatedRequest) {
-    return { credits: await this.creditUseCase.getBalance(req.user.sub) }
+  async getBalance(@Req() req: AuthenticatedRequest): Promise<CreditBalanceResponseDto> {
+    return toCreditBalanceResponse(await this.creditUseCase.getPointBalance(req.user.sub))
   }
 
   /** 크레딧 로그 조회 */

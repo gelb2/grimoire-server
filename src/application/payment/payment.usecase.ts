@@ -154,11 +154,22 @@ export class PaymentUseCase {
     return polarError
   }
 
-  /** 상품 목록 조회 */
+  /**
+   * 충전 패키지 목록 조회 (CC-2a — 디노미 4종).
+   *
+   * 응답: `points`(총 충전 pt) + `bonusRate`(보너스율) + `pricePerPoint`(pt 당 충전 단가).
+   * 구 `credits`/`pricePerCredit` → `points`/`pricePerPoint` 로 디노미 환산.
+   * web 충전 패키지 UI 가 4종을 받게 됨 (shared-contracts §30 — web 핸드오프).
+   */
   getProducts() {
     return CREDIT_PRODUCTS.map((p) => ({
-      id: p.id, name: p.name, credits: p.credits, price: p.price,
-      pricePerCredit: Math.round(p.price / p.credits),
+      id: p.id,
+      name: p.name,
+      points: p.points,
+      bonusRate: p.bonusRate,
+      price: p.price,
+      // pt 당 충전 단가 (원화) — 표면 단가. 보너스 포함 총 pt 기준.
+      pricePerPoint: Number((p.price / p.points).toFixed(5)),
     }))
   }
 
@@ -185,8 +196,11 @@ export class PaymentUseCase {
 
     let payment = reusable
     if (!payment) {
+      // MEDIUM-4 (CC-2a) — Payment.credits Int 에 충전 총 pt 를 저장 (의미 재해석:
+      // "패키지 수량"→"pt"). 컬럼 물리 rename(credits→points)은 마이그레이션 동반이므로
+      // CC-2a 범위 외 — 컬럼명은 그대로 두고 담는 값만 pt 로 통일 (계획 §5 C5d).
       payment = await this.paymentRepo.create({
-        authorId, productId: product.id, amount: product.price, credits: product.credits,
+        authorId, productId: product.id, amount: product.price, credits: product.points,
       })
     } else {
       this.logger.log(
@@ -230,7 +244,7 @@ export class PaymentUseCase {
    * 1. verifyAndParseWebhook → eventId 포함된 NormalizedWebhookEvent 반환
    * 2. eventId 멱등성 게이트: webhookEventRepo.findByEventId — 이미 박제 시 즉시 skip
    * 3. tradeNo로 Payment 조회 + 약식 게이트(already_completed)
-   * 4. completePaymentAtomically (성공) / updateStatus (실패/취소)
+   * 4. completePaymentWithPoints (성공 — CC-2a 충전 포인트 적립) / refund (취소) / updateStatus (실패)
    * 5. webhookEventRepo.createIfAbsent — race 차단 (P2002 → null로 안전 skip)
    */
   async processWebhook(
@@ -259,7 +273,7 @@ export class PaymentUseCase {
     deficitCredits?: number
     reason?: string
   }> {
-    // 1차 게이트: eventId 멱등성 — DB에 이미 박제된 event는 즉시 skip (completePaymentAtomically 0회)
+    // 1차 게이트: eventId 멱등성 — DB에 이미 박제된 event는 즉시 skip (completePaymentWithPoints 0회)
     const existing = await this.webhookEventRepo.findByEventId(event.eventId)
     if (existing && existing.status === 'processed') {
       this.logger.warn(`중복 webhook 감지 (eventId=${event.eventId}, status=processed) — skip`)
@@ -314,11 +328,12 @@ export class PaymentUseCase {
     if (event.status === NORMALIZED_WEBHOOK_STATUS.SUCCESS) {
       // PAY-P2-4: 트랜잭션 진입 직전 잔액 조회 (beforeState 박제용)
       // authorRepo Optional — 미주입 시 박제 skip (회귀 보존)
+      // CC-2a: 충전 적립이 신 포인트 원장으로 이행 — beforeState 는 충전 출처 캐시(pointsCharged).
       let balanceBefore: number | null = null
       if (this.authorRepo) {
         try {
           const author = await this.authorRepo.findById(payment.authorId)
-          balanceBefore = author?.credits ?? null
+          balanceBefore = author?.pointsCharged ?? null
         } catch (e: unknown) {
           // 잔액 조회 실패는 트랜잭션 진행을 막지 않음 — auditLog 박제만 skip
           this.logger.warn(
@@ -329,9 +344,20 @@ export class PaymentUseCase {
         }
       }
 
+      // CC-2a (T3 충전 연동 — 진단 §1-A / §6-2) — 충전 success 경로를 신 포인트 원장으로 재배선.
+      // completePaymentWithPoints 단일 $transaction 이 (Payment 완료 + deficit 우선 상계
+      // + 충전 적립)을 원자 처리한다. settleDeficit 가 처음으로 실 충전 경로에 연결되어
+      // C-6(충전해도 deficit 미상계 → 채팅 영구 차단) 해소.
+      // payment.credits 는 MEDIUM-4 의미 재해석으로 충전 총 pt (initiatePayment 에서 product.points 저장).
+      let chargeResult: { settledDeficit: number; chargedPoints: number }
       try {
-        // 원자 처리: payment 상태 + 크레딧 증가 + 로그 기록 (단일 트랜잭션)
-        await this.paymentRepo.completePaymentAtomically(payment.id, payment.authorId, payment.credits, payment.productId)
+        chargeResult = await this.paymentRepo.completePaymentWithPoints(
+          payment.id,
+          payment.authorId,
+          payment.credits,
+          payment.productId,
+          payment.id,
+        )
       } catch (e: unknown) {
         // PAY-P3-B 구멍-C 차단: SDK exception 분류 후 분기 처리
         // 정본: shared-contracts §24 PolarSDKTimeoutPolicy
@@ -356,9 +382,13 @@ export class PaymentUseCase {
 
       // PAY-P2-4: payment_completed audit log 박제 (트랜잭션 외 후행)
       // 실패 시 logger.warn만, throw 0 — 결제 트랜잭션은 이미 commit됨.
+      // CC-2a: 디노미 정합 — beforeState/afterState 는 충전 출처 캐시(pointsCharged) pt 기준.
+      // chargedPoints(실제 적립분) = 충전 총 pt − 외상 상계분이므로 afterState 는
+      // balanceBefore + chargeResult.chargedPoints (상계분은 charged 캐시로 적립되지 않음).
+      // settledDeficit/chargedPoints 를 메타에 박제해 외상 상계 회계를 감사 추적.
       if (this.auditLog && balanceBefore !== null) {
         try {
-          const balanceAfter = balanceBefore + payment.credits
+          const chargedAfter = balanceBefore + chargeResult.chargedPoints
           await this.auditLog.log(
             'system_payment',
             'payment_completed',
@@ -367,8 +397,14 @@ export class PaymentUseCase {
               reason: `polar_webhook_${event.type}`,
               externalTransactionId: payment.externalTransactionId ?? event.tradeNo,
             },
-            { credits: balanceBefore },
-            { credits: balanceAfter, paymentId: payment.id, addedCredits: payment.credits },
+            { pointsCharged: balanceBefore },
+            {
+              pointsCharged: chargedAfter,
+              paymentId: payment.id,
+              totalPoints: payment.credits,
+              chargedPoints: chargeResult.chargedPoints,
+              settledDeficit: chargeResult.settledDeficit,
+            },
           )
         } catch (e: unknown) {
           this.logger.warn(
@@ -389,24 +425,28 @@ export class PaymentUseCase {
       })
       if (!created) {
         this.logger.warn(
-          `webhook event race detected (eventId=${event.eventId}) — completePaymentAtomically already executed`,
+          `webhook event race detected (eventId=${event.eventId}) — completePaymentWithPoints already executed`,
         )
       }
+      // credits 필드 = 충전 총 pt (CC-2a 디노미 — payment.credits 는 product.points 저장값)
       return { processed: true, credits: payment.credits }
     } else if (event.status === NORMALIZED_WEBHOOK_STATUS.CANCEL) {
-      // 환불 처리 (Sprint PAY-P1-1) — 크레딧 환수 트랜잭션 + RefundLog + AuditLog(operator='system_refund')
-      // refund-payment.usecase가 paymentRepo.refundPaymentAtomically $transaction 호출 (정본: shared-contracts §13)
-      let deficitCredits = 0
+      // CC-2b (2026-05-20, 진단 §1-C) — 환불 신 경로 + 이중 외상 통합.
+      // refund-payment.usecase 가 paymentRepo.refundPaymentWithPoints $transaction 호출.
+      // 4 출처 환수(charged→gift→subscription→free 우선) + 부족분 Author.deficitPoints 가산
+      // → 외상 정본 단일화 + CC-2a `completePaymentWithPoints` 가 다음 충전 시 자동 회수.
+      // payment.credits = MEDIUM-4 의미 재해석 후 충전 총 pt → refundPt 로 그대로 전달
+      let deficitIncurred = 0
       try {
         const result = await this.refundPaymentUseCase.execute({
           paymentId: payment.id,
           authorId: payment.authorId,
-          credits: payment.credits,
+          refundPt: payment.credits,
           refundedAmount: event.amount,
           reason: `polar_webhook_${event.type}`,
           source: 'webhook',
         })
-        deficitCredits = result.deficitCredits
+        deficitIncurred = result.deficitIncurred
       } catch (e: unknown) {
         // PAY-P3-B 구멍-C 차단: SDK exception 분류 후 분기 처리 (cancel 분기)
         // 정본: shared-contracts §24 PolarSDKTimeoutPolicy
@@ -436,7 +476,7 @@ export class PaymentUseCase {
         payload: event as unknown as object,
         status: 'processed',
       })
-      return { processed: true, credits: 0, deficitCredits }
+      return { processed: true, credits: 0, deficitCredits: deficitIncurred }
     } else {
       // event.status === 'fail' — 결제 실패 (크레딧 환수 대상 아님 — pending → failed만)
       await this.paymentRepo.updateStatus(payment.id, 'failed')

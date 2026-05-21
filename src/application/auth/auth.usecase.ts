@@ -4,7 +4,7 @@ import * as bcrypt from 'bcryptjs'
 import * as crypto from 'crypto'
 import { OAuth2Client } from 'google-auth-library'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
-import { CreditUseCase } from '@application/credit/credit.usecase'
+import { GrantPointsUseCase } from '@application/credit/grant-points.usecase'
 import { AuthTokenRepositoryPort } from '@domain/port/outbound/auth-token-repository.port'
 import { SignupHistoryRepositoryPort } from '@domain/port/outbound/signup-history-repository.port'
 
@@ -15,7 +15,9 @@ export class AuthUseCase {
   constructor(
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
     private readonly jwtService: JwtService,
-    private readonly creditUseCase: CreditUseCase,
+    // 크레딧 개편 CC-1 (2026-05-19) — 가입 보너스를 신 포인트 원장(CreditLedger)으로 적립.
+    // 구 CreditUseCase.grant(Author.credits Int) → GrantPointsUseCase.grantSignupBonus 교체.
+    private readonly grantPoints: GrantPointsUseCase,
     @Inject('AuthTokenRepositoryPort') private readonly authTokenRepo: AuthTokenRepositoryPort,
     @Inject('SignupHistoryRepositoryPort') private readonly signupHistoryRepo: SignupHistoryRepositoryPort,
   ) {}
@@ -51,8 +53,8 @@ export class AuthUseCase {
       passwordHash,
     })
 
-    // 가입 보너스 크레딧 (DB 기본값 0 + grant 3 = 총 3)
-    await this.creditUseCase.grant(author.id, 3, 'signup_bonus')
+    // 가입 보너스 — 신 포인트 원장에 3,000pt 적립 (source='free' — CAC)
+    await this.grantPoints.grantSignupBonus(author.id)
 
     // 가입 이력 기록 (재가입 방지용)
     await this.signupHistoryRepo.upsert(input.email)
@@ -146,7 +148,8 @@ export class AuthUseCase {
           name: payload.name || payload.email.split('@')[0],
           slug,
         })
-        await this.creditUseCase.grant(author.id, 3, 'signup_bonus')
+        // 가입 보너스 — 신 포인트 원장에 3,000pt 적립 (source='free' — CAC)
+        await this.grantPoints.grantSignupBonus(author.id)
 
         // 가입 이력 기록
         await this.signupHistoryRepo.upsert(payload.sub!)

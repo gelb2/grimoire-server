@@ -3,10 +3,11 @@ import * as bcrypt from 'bcryptjs'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
+import { CreditLedgerPort, CreditBalance } from '@domain/port/outbound/credit-ledger.port'
+import { CreditSource, isCreditSource } from '@domain/model/credit-source'
 import { AdminRepositoryPort } from '@domain/port/outbound/admin-repository.port'
-import { CreditUseCase } from '@application/credit/credit.usecase'
+import { GrantPointsUseCase } from '@application/credit/grant-points.usecase'
 import { AuditLogService } from './audit-log.service'
-import { CreditLog } from '@domain/model/credit'
 import { Author } from '@domain/model/author'
 import { EpisodeStatus } from '@domain/model/work'
 
@@ -17,7 +18,10 @@ export class AdminUseCase {
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
     @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
     @Inject('AdminRepositoryPort') private readonly adminRepo: AdminRepositoryPort,
-    private readonly creditUseCase: CreditUseCase,
+    // 크레딧 개편 CC-1 (2026-05-19) — 관리자 수동 지급·차감을 신 포인트 원장으로 이행.
+    // 지급 = GrantPointsUseCase.grantManual, 차감 = CreditLedgerPort.spend (사전 잔액 검증).
+    private readonly grantPoints: GrantPointsUseCase,
+    @Inject('CreditLedgerPort') private readonly ledger: CreditLedgerPort,
     private readonly auditLog: AuditLogService,
   ) {}
 
@@ -99,43 +103,74 @@ export class AdminUseCase {
 
   // ─── 크레딧 관리 ───
 
-  async grantCredits(adminId: string, authorId: string, amount: number, reason: string): Promise<{ credits: number; log: CreditLog }> {
-    // PAY-P2-4: 잔액 사전 조회 → auditLog beforeState/afterState 박제
-    // 단순 패턴 (race condition은 §12 위험 영역 5번 별도 sprint로 분리)
+  /**
+   * 운영자 수동 포인트 지급 (T5 — 크레딧 개편 CC-1).
+   *
+   * 구 CreditUseCase.grant(Author.credits Int) → GrantPointsUseCase.grantManual 교체.
+   * source(출처)는 운영자가 명시 — 보통 'charged'(보상성) 또는 'free'(프로모션). 기본 'charged'.
+   * AuditLog beforeState/afterState 박제 유지 (PAY-P2-4 정합) — 신 원장 4 출처 합 잔액 기준.
+   *
+   * @param source 적립 출처 ('free'|'subscription'|'gift'|'charged') — 미지정/유효하지 않으면 'charged'
+   */
+  async grantCredits(adminId: string, authorId: string, amount: number, reason: string, source?: string): Promise<{ balance: CreditBalance }> {
+    // PAY-P2-4 정합 — auditLog beforeState/afterState 박제 (잔액 사전/사후 조회)
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
-    const balanceBefore = author.credits
+    // 출처 정규화 — 운영자 입력이 유효한 CreditSource 가 아니면 'charged' 폴백
+    const resolvedSource: CreditSource = source && isCreditSource(source) ? source : 'charged'
+    const beforeState = await this.ledger.getBalance(authorId)
 
-    const result = await this.creditUseCase.grant(authorId, amount, `admin_grant:${reason}`)
+    await this.grantPoints.grantManual(authorId, resolvedSource, amount, adminId)
 
+    const afterState = await this.ledger.getBalance(authorId)
     await this.auditLog.log(
       adminId,
       'credit_grant',
       authorId,
-      { amount, reason },
-      { credits: balanceBefore },
-      { credits: result.credits },
+      { amount, reason, source: resolvedSource },
+      { points: beforeState.total },
+      { points: afterState.total },
     )
-    return result
+    return { balance: afterState }
   }
 
-  async deductCredits(adminId: string, authorId: string, amount: number, reason: string): Promise<{ credits: number; log: CreditLog }> {
-    // PAY-P2-4: 잔액 사전 조회 → auditLog beforeState/afterState 박제
+  /**
+   * 운영자 수동 포인트 차감 (T6 — 크레딧 개편 CC-1).
+   *
+   * 구 CreditUseCase.deduct(Author.credits Int) → CreditLedgerPort.spend 교체.
+   * **deficit 불가 모드** — 관리자 차감은 외상 금지. 사전 잔액 검증으로 가용 잔액
+   * 부족 시 BadRequestException throw (진단 §1 T6 + MEDIUM-2 "deficit 불가 모드").
+   * spend 자체는 deficit 발생 모드이나 사전 검증을 통과하면 정상 시 deficit 미발생.
+   */
+  async deductCredits(adminId: string, authorId: string, amount: number, reason: string): Promise<{ balance: CreditBalance }> {
+    // PAY-P2-4 정합 — auditLog beforeState/afterState 박제. deficit 불가 모드(외상 금지).
+    if (amount <= 0) throw new BadRequestException('차감 포인트는 양수여야 합니다')
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
-    const balanceBefore = author.credits
+    // 가용 잔액 부족 시 차감 거부
+    const beforeState = await this.ledger.getBalance(authorId)
+    if (beforeState.available < amount) {
+      throw new BadRequestException(
+        '가용 포인트가 부족합니다. 관리자 차감은 외상이 불가합니다.',
+      )
+    }
 
-    const result = await this.creditUseCase.deduct(authorId, amount, `admin_deduct:${reason}`)
+    await this.ledger.spend({
+      authorId,
+      amount,
+      reason: `admin_deduct:${reason}`,
+    })
 
+    const afterState = await this.ledger.getBalance(authorId)
     await this.auditLog.log(
       adminId,
       'credit_deduct',
       authorId,
       { amount, reason },
-      { credits: balanceBefore },
-      { credits: result.credits },
+      { points: beforeState.total },
+      { points: afterState.total },
     )
-    return result
+    return { balance: afterState }
   }
 
   async getAllCreditLogs(authorId?: string) {

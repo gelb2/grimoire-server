@@ -1,5 +1,118 @@
 # Changelog — grimoire-server
 
+## [0.37.0] - 2026-05-20
+
+### Fix — 크레딧 개편 CC-2a: 충전 결제 적립 신 포인트 원장 연동 (CRITICAL-2 충전분 + C-6 해소)
+
+> 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §1-A·§6·§8 + `.claude/state/sprint-cc2a-charge-wiring-plan-draft.md`.
+> CC-1(비결제 적립)에 이어 충전 결제 적립(T3)을 신 `CreditLedger` 원장으로 이행. 충전 success
+> 경로가 구 `completePaymentAtomically`(`Author.credits` Int)만 호출해 `settleDeficit`(외상 상계)가
+> 실 충전 경로에 한 번도 연결되지 않던 결함(CRITICAL-2 충전분 + C-6)을 해소. 선물(T4)·환불(T7)은 CC-2b.
+
+#### Added — 충전 적립 단일 트랜잭션 통합 (案 1 — ADR-013)
+- `PaymentRepositoryPort.completePaymentWithPoints(paymentId, authorId, totalPoints, productId, relatedId?)` 신설 — 단일 `$transaction` 으로 Payment 완료 + deficit 우선 상계(`CreditLedger` type='deficit_settle' + `Author.deficitPoints`) + 남은 충전액 적립(`CreditLedger` source='charged' type='earn' + `Author.pointsCharged`). 헥사고날 DIP 보존 (案 2 `CreditLedgerPort` tx 오버로드는 ORM 결합이라 미채택).
+- `computeChargeLedgerEntries` 도메인 순수 함수 (`credit-consumption-policy.ts`) — `settleDeficitOnCharge` 재사용. `PaymentRepository` 가 충전 적립 ledger 계획(상계분/적립분/캐시 델타) 계산에 사용 — 案 1 로직 중복 0건.
+- 통합 spec `payment-charge-credit-integration.spec.ts` — 실 `PaymentUseCase` + `FakePaymentRepository`(도메인 헬퍼 실호출)로 충전 webhook → `CreditLedger` charged earn + deficit 상계 사슬 검증. C7b RED 재현 실증 (구 경로로 되돌리면 8건 FAIL).
+
+#### Changed — 충전 success 경로 재배선 + 디노미 4종
+- `payment.usecase` 충전 success 분기 — 구 `completePaymentAtomically` → `completePaymentWithPoints`. **C-6 해소**: `settleDeficit` 가 실 충전 경로에 처음 연결돼, deficit 상한(10,000pt) 도달로 채팅 차단된 작가가 충전하면 외상 상계 → `isChatBlocked=false`.
+- `CREDIT_PRODUCTS` 디노미 4종 개편 — 구 3종(credit-5/20/50, `credits` Int=패키지 수량) → 신 4종(입문 ₩3,000/25,000pt · 기본 ₩5,000/41,667pt · 인기 ₩10,000/91,667pt+10% · 베스트 ₩30,000/287,500pt+15%, `points` Int=총 pt + `bonusRate`). ai-cost-table §2 정본 1:1 정합.
+- `getProducts()` — `credits`/`pricePerCredit` → `points`/`bonusRate`/`pricePerPoint`. `GET /payments/products` 응답 3종→4종.
+- `Payment.credits` Int 의미 재해석 (MEDIUM-4) — "패키지 수량" → "충전 총 pt". 컬럼 물리 rename 은 마이그레이션 동반 → CC-2b/CC-4 위임.
+- `Author` 도메인 모델에 `pointsFree`/`pointsSubscription`/`pointsGift`/`pointsCharged`/`deficitPoints` 5필드 추가 (I Phase schema 추가분 도메인 인터페이스 반영).
+- 충전 success auditLog 박제 — `credits` 베이스 → `pointsCharged` 베이스 + `settledDeficit`/`chargedPoints` 메타.
+
+#### Deprecated
+- `PaymentRepository.completePaymentAtomically` (`Author.credits` Int + `CreditLog`) — 충전 success 미사용. CC-2b(선물·환불) 회귀 안전 확보 후 일괄 제거.
+
+#### Test
+- jest 1006 → 1012 PASS (+6 it 순증 — 통합 spec 9 신설 + `completePaymentWithPoints` 단위 5 + `getProducts`/§0 검증 재작성, payment.usecase.spec/polar.adapter.spec 디노미 정합 포함). 커버리지 60.37%.
+- cost-accountant 재검증 불요 — `786b0f3` 기존 승인 소비 (CC-2a 는 신규 AI 기능 0건, 디노미 환산).
+
+## [0.36.0] - 2026-05-19
+
+### Fix — 크레딧 개편 CC-1: 적립 비결제 경로 신 포인트 원장 연동 (CRITICAL-2 해소)
+
+> 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §1·§2-2·§5-D·§8 + `.claude/state/sprint-cc1-pay-s1-plan-draft.md` §2.
+> I Phase 는 차감(spend) 경로만 chat/analysis 에 연동됐고, 적립(earn) 경로 전체와 테마 차감이
+> 런타임에 한 번도 작동하지 않았다(CRITICAL-2). CC-1 은 **비결제 적립 5경로**를 신 `CreditLedger`
+> 원장으로 이행한다. 충전(T3)/선물(T4)/환불(T7) 적립은 CC-2 범위.
+
+#### Changed — 적립·차감 경로 신 시스템 재배선
+- `auth.usecase.ts` — 가입 보너스(email + Google 2 호출처): 구 `CreditUseCase.grant(3, 'signup_bonus')` → `GrantPointsUseCase.grantSignupBonus` (source='free', 3,000pt)
+- `work-management.usecase.ts` — 첫 작품 보너스: 구 `grant(2, FIRST_WORK_BONUS)` → `GrantPointsUseCase.grantFirstWorkBonus` (source='free', 2,000pt). `hasPublished` 멱등 가드 보존
+- `admin.usecase.ts` — 관리자 수동 지급(T5): 구 `grant` → `GrantPointsUseCase.grantManual` + 출처 파라미터 명시(미지정 시 'charged' 폴백). 차감(T6): 구 `deduct` → `CreditLedgerPort.spend`, **deficit 불가 모드** — 가용 잔액 부족 시 `BadRequestException`(외상 금지). AuditLog beforeState/afterState 박제는 신 원장 total 기준으로 유지
+- `generate-theme.usecase.ts` — 테마 차감: 구 `creditRepo.adjustCredits(Author.credits -1)` → `ChargePointsUseCase.chargeTheme` (590pt). 구 차감/환불 경로 제거 — 이중 차감 방지
+
+#### Added
+- `ChargePointsUseCase.refundTheme` — 테마 생성 실패 환불 (구 `theme_generate_refund` 동작 보존, `refundAnalysis` 동일 패턴)
+- `credit-grant-integration.spec.ts` — **통합 테스트 신설**. 실 `GrantPointsUseCase`/`ChargePointsUseCase` + 인메모리 `CreditLedgerPort` fake 로 auth/work/admin/theme usecase 의 적립·차감 호출 사슬 전체 검증. CRITICAL-2 가 unit mock 에 가려진 근본 원인 해결 (RED 재현 실증)
+
+#### Changed — 인터페이스 (§5-D 출처 회계 정합 — `shared-contracts.md` §30)
+- `ChargePointsUseCase.chargeAnalysis` 반환 `void` → `SpendResult` (환불 시 출처별 복원 입력)
+- `ChargePointsUseCase.refundAnalysis(authorId, relatedId?, spentBySource?)` — 3번째 인자 추가. 차감 출처별 정확 복원 (구: 전액 charged 복원 → 무료적립/구독풀이 충전으로 둔갑하는 회계 왜곡). 미전달 시 charged 폴백
+- `AdminUseCase.grantCredits`/`deductCredits` 반환 `{credits, log}` → `{balance: CreditBalance}`
+- `POST /api/admin/credits/grant` body `source?` 추가 / `/credits/deduct` 응답 모델 변경 (`docs/api-contract.md`)
+
+#### Test
+- jest 971 → 991 PASS (+20 it). 커버리지 60.18%
+
+## [0.35.0] - 2026-05-17
+
+### Feat — 크레딧·구독·채팅 과금 개편 I Phase: 디노미네이션 1:1,000 + 포인트 출처 4종 분리 회계 + 채팅 4구간 사후 차감 (sprint-credit-overhaul, ADR-012)
+
+> 정본: `research/CREDIT_PRICING_OVERHAUL_PLAN.md` §8 (v6) + `.claude/state/sprint-credit-overhaul-s-phase-draft.md`. cost-accountant `ai-cost-table.md` 개정 승인 `786b0f3` (§0 전 항목 ≥3× PASS). §17 진입 게이트 6/6 충족.
+
+#### Added — 도메인 모델 (`domain/model/`)
+- `credit-point.ts` — 디노미네이션 상수 `CREDIT_TO_POINT=1000` + `Point` 값 객체 (음수/비정수 차단) + `creditsToPoints`/`pointsToCredits`
+- `credit-source.ts` — `CreditSource` 4종 (free/subscription/gift/charged) + `CreditLedgerType` 5종 + `CREDIT_CONSUMPTION_ORDER` 소진 우선순위 + CAC/COGS 회계 분리
+- `chat-charge-tier.ts` — 채팅 4구간 `CHAT_CHARGE_TIERS` (short 190 / normal 810 / long 3,390 / xlong 5,520 pt) + `resolveChatChargeTier` off-by-one 판정 + `ANALYSIS_POINT_COST=2440` / `THEME_POINT_COST=590` (§8-8 #1 — 차감 N 재산출 0건)
+- `membership-tier.ts` — `MembershipTier` 3종 + `MEMBERSHIP_MONTHLY_POOL` (free 0 / pro 93,000 / premium 191,500)
+- `credit-system-setting.ts` — SystemSetting 동적 경계값/차감 N 로드 (`loadChatChargeTiers` / `loadDeficitLimit`, §8 기본값 폴백)
+- `credit-migration.ts` — 디노미네이션 마이그레이션 정합 검증 헬퍼 (`expectMigratedAuthor` / `migrationIntegrityCriteria`)
+
+#### Added — 도메인 정책 + 포트 (`domain/`)
+- `domain/policy/credit-consumption-policy.ts` — 소진 우선순위(`planConsumption`) + deficit 상계(`settleDeficitOnCharge`) + 외상 차단(`isChatBlockedByDeficit`) 순수 정책
+- `domain/port/outbound/credit-ledger.port.ts` — `CreditLedgerPort` (earn/spend/getBalance/settleDeficit/findByAuthor)
+- `domain/port/outbound/membership-plan.port.ts` — `MembershipPlanPort` (getPlan/resetMonthlyPool/findPlansToReset/changeTier)
+- `domain/port/outbound/system-setting-repository.port.ts` — `SystemSettingRepositoryPort` (findByPrefix)
+
+#### Added — 어댑터 (`adapter/outbound/persistence/`)
+- `prisma-credit-ledger.repository.ts` — `$transaction` (FOR UPDATE + 소진 우선순위 + deficit_incur ledger + 캐시 4 필드 동기) — RefundLog 3중 박제 패턴 차용
+- `prisma-membership-plan.repository.ts` — 월간 리셋 `$transaction` (잔여 풀 expire ledger + 신규 풀 earn ledger + 풀 재설정, 이월 금지)
+- `prisma-system-setting.repository.ts` — SystemSetting key prefix 조회
+
+#### Added — UseCase + Job (`application/`)
+- `application/credit/charge-points.usecase.ts` — 채팅 4구간 사후 차감(`chargeChatTurn`) + 외상 사전 차단(`isChatBlocked`) + 분석/테마 사전 차감(`chargeAnalysis`/`chargeTheme`) + 환불(`refundAnalysis`)
+- `application/credit/grant-points.usecase.ts` — 적립 4출처 (가입/첫작품/충전/응원선물) + 충전 시 deficit 우선 상계(`grantCharge`)
+- `application/subscription/reset-monthly-pool.job.ts` — `@Cron('0 0 4 * * *')` 월간 풀 리셋 cron (이월 금지 — §8-8 #2, `MONTHLY_POOL_RESET_DISABLED` 게이트)
+
+#### Changed
+- `prisma/schema.prisma` — `CreditLedger`/`MembershipPlan` 모델 신설 (FK `authorId` Restrict — ADR-007 정합) + `Author` 5 필드 추가 (`pointsFree`/`pointsSubscription`/`pointsGift`/`pointsCharged`/`deficitPoints`, `credits` `[DEPRECATED]` 표기 — 즉시 DROP 안 함) + `ChatMessage` 5 필드 추가 (`inputTokens`/`outputTokens`/`model`/`chargedPoints`/`chargeTier`, 전부 nullable) + `AnalysisReport.creditsCharged` default 3→2440 디노미 정정
+- `prisma/migrations/20260517_credit_overhaul_i_phase/migration.sql` — 스키마 변경 + 데이터 마이그레이션 SQL (credits×1000 → points_charged, CreditLedger/MembershipPlan 초기 row) **작성만 — 어떤 DB에도 apply 0건** (dev/prod apply 는 §7 단계6/9 사용자 키워드 게이트)
+- `src/lib/claude.ts` — `askClaudeWithUsage` + `ClaudeResponse`(토큰 usage 포함) 추가 — 기존 `askClaude` 는 래퍼로 유지
+- `domain/port/outbound/claude-api.port.ts` — `askWithUsage` 시그니처 추가 (`ClaudeAskResult`)
+- `adapter/outbound/ai/claude-theme.adapter.ts` — `askWithUsage` 구현
+- `domain/port/outbound/chat-repository.port.ts` + `adapter/outbound/persistence/prisma-chat.repository.ts` — `addMessage` 에 `ChatMessageTokenMeta` 옵션 + `updateMessageCharge` 추가
+- `application/chat/chat.usecase.ts` — 채팅 4구간 사후 차감 연동 (`askWithUsage` + `chargeChatTurn` + 외상 상한 사전 차단). `ChargePointsUseCase` Optional 주입 (BACKWARD COMPATIBLE)
+- `application/analysis/novel-analysis.usecase.ts` — 디노미 차감(`chargeAnalysis`/`refundAnalysis`) 연동. `ChargePointsUseCase` 주입 시 디노미(2,440pt), 미주입 시 구 정수 크레딧(4) 경로 — BACKWARD COMPATIBLE
+- `app.module.ts` — `ChargePointsUseCase`/`GrantPointsUseCase`/`ResetMonthlyPoolJob` providers + `CreditLedgerPort`/`MembershipPlanPort`/`SystemSettingRepositoryPort` 포트 바인딩
+- `ADR.md` — ADR-012 신설 (게이트 6건 결정 + §0 정합 + §8-8 CRITICAL 5건 준수)
+- `docs/data-model.md` + `SCHEMA.md` — `authors`/`chat_messages` 갱신 + `credit_ledgers`/`membership_plans` 신규 테이블 박제
+
+#### Test
+- jest 805 → **967 PASS** (+162 it, 69 suites, 회귀 0건). 신규 spec 13 파일 — 도메인 7 (credit-point/chat-charge-tier/credit-source/membership-tier/credit-system-setting/credit-consumption-policy/credit-migration) + application 3 (charge-points/grant-points/reset-monthly-pool) + adapter 2 (prisma-credit-ledger/prisma-membership-plan) + 확장 2 (chat.usecase +6 / novel-analysis +4)
+- `npm run build` 성공 / `docker build` 성공
+
+#### §8-8 CRITICAL 5건 준수
+- ① 차감 N 비스트레스 산출 0건 (cost-accountant v3 스트레스 원가 입력만) ② 구독 풀 이월 차단 (`CreditLedger.expiresAt`) ③ `ChatMessage` 토큰 실측 필드 선행 ④ 채팅 4구간 (`xlong` 분리 — 3구간 금지) ⑤ 재산정 sensor (`sensor-credit-overhaul-recalc.sh`)
+
+#### 잔존 (본 sprint 범위 밖)
+- 마이그레이션 dev apply — `크레딧개편 dev migration 진행` 키워드 게이트 (§7 단계6)
+- 마이그레이션 prod apply — `크레딧개편 prod migration 진행` 키워드 게이트 (§7 단계9)
+- web UI (잔액 표시 4출처 + 채팅 차감 안내 + 구독 플랜 + 충전 패키지) — grimoire-web Generator
+- `credits` 컬럼 DROP — 1 sprint 유예 후 별도 sprint
+
 ## [0.34.0] - 2026-05-04
 
 ### Feat — 결제 실패 retry 정책 + pending 24h 재사용 + cleanup cron (PAY-P1-3, sprint-pay-p1-3-retry-policy)

@@ -6,8 +6,7 @@ import { Work, Episode, EpisodeStatus } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 import { normalizeTitle } from '@domain/model/title-normalizer'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
-import { CreditUseCase } from '@application/credit/credit.usecase'
-import { CreditReason } from '@domain/model/credit'
+import { GrantPointsUseCase } from '@application/credit/grant-points.usecase'
 
 @Injectable()
 export class WorkManagementUseCase {
@@ -15,7 +14,9 @@ export class WorkManagementUseCase {
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
     @Inject('BlobStoragePort') private readonly blobStorage: BlobStoragePort,
     private readonly novelAnalysis: NovelAnalysisUseCase,
-    private readonly creditUseCase: CreditUseCase,
+    // 크레딧 개편 CC-1 (2026-05-19) — 첫 작품 보너스를 신 포인트 원장(CreditLedger)으로 적립.
+    // 구 CreditUseCase.grant(Author.credits Int) → GrantPointsUseCase.grantFirstWorkBonus 교체.
+    private readonly grantPoints: GrantPointsUseCase,
   ) {}
 
   /** 작품 생성 */
@@ -205,12 +206,13 @@ export class WorkManagementUseCase {
     // shared 상태로 직접 변경 불가 — createShareLink 사용
     if (status === 'shared') throw new BadRequestException('공유 링크 생성은 별도 API를 사용하세요')
 
-    // 첫 퍼블리시 보너스 — upload→public 최초 전환 시 2크레딧
+    // 첫 퍼블리시 보너스 — upload→public 최초 전환 시 신 포인트 원장에 2,000pt 적립
+    // (source='free' — CAC). hasPublished 가드로 최초 1회만 (재전환 시 미적립 — 멱등).
     if (episode.status === 'upload' && status === 'public') {
       const allEpisodes = await this.workRepo.findEpisodesFiltered(work.id, [])
       const hasPublished = allEpisodes.some(ep => ep.status === 'public')
       if (!hasPublished) {
-        await this.creditUseCase.grant(authorId, 2, CreditReason.FIRST_WORK_BONUS)
+        await this.grantPoints.grantFirstWorkBonus(authorId)
       }
     }
 

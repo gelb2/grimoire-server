@@ -542,4 +542,98 @@ describe('NovelAnalysisUseCase', () => {
       expect(result).toEqual({ chunkCount: 0, isIndexed: false })
     })
   })
+
+  // 크레딧 개편 I Phase — 디노미네이션 분석 차감 (chargePoints 주입 경로)
+  describe('analyzeEpisode — 디노미 차감 (ChargePointsUseCase 주입)', () => {
+    let mockChargePoints: {
+      chargeAnalysis: jest.Mock
+      refundAnalysis: jest.Mock
+    }
+    let dinomiUseCase: NovelAnalysisUseCase
+
+    beforeEach(() => {
+      // CC-1 §5-D — chargeAnalysis 는 이제 SpendResult 를 반환 (출처별 환불 복원 입력)
+      mockChargePoints = {
+        chargeAnalysis: jest.fn().mockResolvedValue({
+          spentBySource: { free: 2440, subscription: 0, gift: 0, charged: 0 },
+          deficitIncurred: 0,
+          balanceAfter: 0,
+        }),
+        refundAnalysis: jest.fn().mockResolvedValue(undefined),
+      }
+      // chargePoints 를 7번째 인자로 주입 — 디노미 차감 경로 활성화
+      dinomiUseCase = new NovelAnalysisUseCase(
+        mockVectorStore as any,
+        mockEmbedding as any,
+        mockClaude as any,
+        mockWorkRepo as any,
+        mockCreditRepo as any,
+        mockReportRepo as any,
+        mockChargePoints as any,
+      )
+      // checkXxx 가 정상 결과를 반환하도록 (rag mock)
+      const rag = jest.requireMock('@lib/rag')
+      rag.checkConsistency.mockResolvedValue({
+        type: 'consistency',
+        score: 90,
+        summary: 'ok',
+        issues: [],
+        suggestions: [],
+      })
+      rag.checkTone.mockResolvedValue({
+        type: 'tone',
+        score: 90,
+        summary: 'ok',
+        issues: [],
+        suggestions: [],
+      })
+      rag.checkCharacter.mockResolvedValue({
+        type: 'character',
+        score: 90,
+        summary: 'ok',
+        issues: [],
+        suggestions: [],
+      })
+      mockVectorStore.searchSimilar.mockResolvedValue([
+        { episodeId: 'other-ep', chunkIndex: 0, chunkText: '비교 청크', distance: 0.1 },
+      ])
+    })
+
+    it('chargePoints 주입 시 디노미 차감(chargeAnalysis)을 호출한다 — 구 adjustCredits 미사용', async () => {
+      await dinomiUseCase.analyzeEpisode('author-1', 'ep-1', ['consistency'])
+      expect(mockChargePoints.chargeAnalysis).toHaveBeenCalledWith('author-1')
+      // 구 정수 크레딧 차감 경로는 호출되지 않음
+      expect(mockCreditRepo.adjustCredits).not.toHaveBeenCalled()
+    })
+
+    it('분석 실패 시 디노미 환불(refundAnalysis)을 출처별로 호출한다 (CC-1 §5-D)', async () => {
+      const rag = jest.requireMock('@lib/rag')
+      rag.checkConsistency.mockRejectedValue(new Error('AI 호출 실패'))
+      await expect(
+        dinomiUseCase.analyzeEpisode('author-1', 'ep-1', ['consistency']),
+      ).rejects.toThrow()
+      // CC-1 §5-D — chargeAnalysis 의 spentBySource 를 환불에 전달 (출처 오귀속 방지)
+      expect(mockChargePoints.refundAnalysis).toHaveBeenCalledWith(
+        'author-1',
+        undefined,
+        { free: 2440, subscription: 0, gift: 0, charged: 0 },
+      )
+    })
+
+    it('잔액 부족 시 chargeAnalysis 가 throw 하면 분석을 진행하지 않는다', async () => {
+      mockChargePoints.chargeAnalysis.mockRejectedValue(
+        new Error('포인트가 부족합니다'),
+      )
+      await expect(
+        dinomiUseCase.analyzeEpisode('author-1', 'ep-1', ['consistency']),
+      ).rejects.toThrow('부족')
+    })
+
+    it('성공 시 리포트의 creditsCharged 가 디노미 pt(2,440)로 저장된다', async () => {
+      await dinomiUseCase.analyzeEpisode('author-1', 'ep-1', ['consistency'])
+      expect(mockReportRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ creditsCharged: 2440 }),
+      )
+    })
+  })
 })

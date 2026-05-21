@@ -15,8 +15,8 @@ describe('AuthUseCase', () => {
   let authUseCase: AuthUseCase
   let mockAuthorRepo: any
   let mockJwtService: any
-  let mockCreditUseCase: any
-  let mockPrisma: any
+  // 크레딧 개편 CC-1 (2026-05-19) — 구 mockCreditUseCase.grant → mockGrantPoints.grantSignupBonus
+  let mockGrantPoints: any
 
   beforeEach(() => {
     mockAuthorRepo = {
@@ -28,8 +28,9 @@ describe('AuthUseCase', () => {
     mockJwtService = {
       sign: jest.fn().mockReturnValue('test-token'),
     }
-    mockCreditUseCase = {
-      grant: jest.fn().mockResolvedValue({ credits: 3, log: {} }),
+    // 신 포인트 원장 적립 UseCase mock — grantSignupBonus 호출 검증용
+    mockGrantPoints = {
+      grantSignupBonus: jest.fn().mockResolvedValue(undefined),
     }
     const mockAuthTokenRepo = {
       create: jest.fn().mockResolvedValue(undefined),
@@ -42,7 +43,7 @@ describe('AuthUseCase', () => {
       findByProviderId: jest.fn().mockResolvedValue(null),
       upsert: jest.fn().mockResolvedValue(undefined),
     }
-    authUseCase = new AuthUseCase(mockAuthorRepo, mockJwtService, mockCreditUseCase, mockAuthTokenRepo, mockSignupHistoryRepo)
+    authUseCase = new AuthUseCase(mockAuthorRepo, mockJwtService, mockGrantPoints, mockAuthTokenRepo, mockSignupHistoryRepo)
   })
 
   describe('register', () => {
@@ -70,6 +71,9 @@ describe('AuthUseCase', () => {
       expect(mockAuthorRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ email: 'test@test.com', name: '테스트', slug: 'test' }),
       )
+      // 크레딧 개편 CC-1 — 가입 보너스를 신 포인트 원장으로 적립 (생성된 작가 id)
+      expect(mockGrantPoints.grantSignupBonus).toHaveBeenCalledWith('test-id')
+      expect(mockGrantPoints.grantSignupBonus).toHaveBeenCalledTimes(1)
     })
 
     it('중복 이메일이면 예외를 던진다', async () => {
@@ -306,6 +310,37 @@ describe('AuthUseCase', () => {
 
       expect(result.author).toMatchObject({ id: 'a2' })
       expect(mockAuthorRepo.findBySocialAccount).toHaveBeenCalled()
+      // 기존 소셜 연결 — 신규 가입이 아니므로 가입 보너스 미적립
+      expect(mockGrantPoints.grantSignupBonus).not.toHaveBeenCalled()
+    })
+
+    // 크레딧 개편 CC-1 (2026-05-19) — Google 신규 가입 시 가입 보너스 신 원장 적립
+    it('Google 신규 가입 시 grantSignupBonus 호출 — 신 포인트 원장 적립', async () => {
+      mockVerifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          email: 'newcomer@example.com',
+          email_verified: true,
+          sub: 'google-sub-new',
+          name: '신규작가',
+        }),
+      })
+      // 소셜 연결·이메일 기존 계정 모두 없음 → 신규 가입 경로
+      mockAuthorRepo.findBySocialAccount.mockResolvedValue(null)
+      mockAuthorRepo.findByEmail.mockResolvedValue(null)
+      mockAuthorRepo.findBySlug.mockResolvedValue(null)
+      mockAuthorRepo.create.mockResolvedValue({
+        id: 'new-author-id',
+        slug: 'newcomer',
+        email: 'newcomer@example.com',
+        name: '신규작가',
+      })
+
+      const result = await authUseCase.googleLogin('newcomer-token')
+
+      expect(result.author).toMatchObject({ id: 'new-author-id' })
+      // 신규 가입 작가 id 로 가입 보너스 적립
+      expect(mockGrantPoints.grantSignupBonus).toHaveBeenCalledWith('new-author-id')
+      expect(mockGrantPoints.grantSignupBonus).toHaveBeenCalledTimes(1)
     })
   })
 })
