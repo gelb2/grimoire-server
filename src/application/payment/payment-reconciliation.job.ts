@@ -198,12 +198,12 @@ export class PaymentReconciliationJob {
    */
   private async handleBoost(payment: PaymentRecord): Promise<void> {
     try {
-      // payment.credits 는 MEDIUM-4 의미 재해석으로 충전 총 pt
+      // [CC-4 Phase 2 rename] payment.points = 충전 총 pt (구 컬럼명 credits)
       const { settledDeficit, chargedPoints } =
         await this.paymentRepo.completePaymentWithPoints(
           payment.id,
           payment.authorId,
-          payment.credits,
+          payment.points,
           payment.productId,
           payment.id,
         )
@@ -215,14 +215,14 @@ export class PaymentReconciliationJob {
           reason: 'webhook_missed',
           polarStatus: 'succeeded',
           dbStatus: 'pending',
-          totalPoints: payment.credits,
+          totalPoints: payment.points,
           chargedPoints,
           settledDeficit,
           authorId: payment.authorId,
         },
       )
       this.logger.log(
-        `[boost] paymentId=${payment.id} totalPoints=${payment.credits} ` +
+        `[boost] paymentId=${payment.id} totalPoints=${payment.points} ` +
           `charged=${chargedPoints} settledDeficit=${settledDeficit} authorId=${payment.authorId}`,
       )
     } catch (e: unknown) {
@@ -252,7 +252,8 @@ export class PaymentReconciliationJob {
         dbStatus: 'completed',
         requiresManualRefund: true,
         authorId: payment.authorId,
-        credits: payment.credits,
+        // [CC-4 Phase 2 rename] audit meta 키도 points 로 통일 (운영 모니터링 정합)
+        points: payment.points,
       },
     )
   }

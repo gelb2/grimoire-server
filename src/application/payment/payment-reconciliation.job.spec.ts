@@ -105,13 +105,13 @@ describe('PaymentReconciliationJob', () => {
         createdAt: checkoutDate,
       },
     ])
-    // CC-2a 디노미 — credits 는 충전 총 pt (입문 패키지 25,000pt)
+    // CC-2a 디노미 — points 는 충전 총 pt (입문 패키지 25,000pt). [CC-4 Phase 2 rename]
     mockPaymentRepo.findByExternalTransactionId.mockResolvedValue({
       id: 'payment-1',
       authorId: 'author-1',
       productId: 'credit-starter',
       amount: 3000,
-      credits: 25000,
+      points: 25000,
       status: 'pending',
       externalTransactionId: 'checkout-1',
       createdAt: new Date('2026-05-03T11:00:00Z'),
@@ -172,7 +172,7 @@ describe('PaymentReconciliationJob', () => {
       authorId: 'author-2',
       productId: 'credit-starter',
       amount: 2000,
-      credits: 25000,
+      points: 25000,
       status: 'completed',
       externalTransactionId: 'checkout-2',
       createdAt: new Date('2026-05-03T10:00:00Z'),
@@ -215,7 +215,7 @@ describe('PaymentReconciliationJob', () => {
         authorId: 'author-3',
         productId: 'credit-starter',
         amount: 2000,
-        credits: 25000,
+        points: 25000,
         status: 'pending',
         externalTransactionId: 'checkout-3',
         createdAt: new Date('2026-05-02T00:00:00Z'),
@@ -265,7 +265,7 @@ describe('PaymentReconciliationJob', () => {
       authorId: 'author-4',
       productId: 'credit-starter',
       amount: 2000,
-      credits: 25000,
+      points: 25000,
       status: 'completed', // 정합
       externalTransactionId: 'checkout-4',
       createdAt: new Date('2026-05-03T11:00:00Z'),

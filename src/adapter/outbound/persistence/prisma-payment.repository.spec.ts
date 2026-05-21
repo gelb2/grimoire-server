@@ -23,7 +23,7 @@ describe('PrismaPaymentRepository.findReusablePendingPayment', () => {
     authorId: 'author-1',
     productId: 'credit-starter',
     amount: 3000,
-    credits: 25000,
+    points: 25000,
     status: 'pending',
     externalTransactionId: 'TRADE-old',
     createdAt: new Date(NOW.getTime() - 5 * 60 * 1000), // 5분 전
@@ -362,7 +362,7 @@ describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 
       payment: {
         findUnique: jest.fn().mockResolvedValue({
           amount: 3000,
-          credits: 25000,
+          points: 25000,
           status: 'completed',
         }),
         update: jest.fn().mockResolvedValue(undefined),
@@ -511,7 +511,7 @@ describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 
 
   it('refundedAmount > payment.amount 시 throw (validation)', async () => {
     txMock.payment.findUnique.mockResolvedValueOnce({
-      amount: 1000, credits: 25000, status: 'completed',
+      amount: 1000, points: 25000, status: 'completed',
     })
     await expect(
       repo.refundPaymentWithPoints({ ...baseInput, refundedAmount: 2000 }),
@@ -520,7 +520,7 @@ describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 
 
   it('payment.amount === 0 (free 결제) throw', async () => {
     txMock.payment.findUnique.mockResolvedValueOnce({
-      amount: 0, credits: 0, status: 'completed',
+      amount: 0, points: 0, status: 'completed',
     })
     await expect(repo.refundPaymentWithPoints(baseInput)).rejects.toThrow(
       /환불 불가/,

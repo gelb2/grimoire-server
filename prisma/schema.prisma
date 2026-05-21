@@ -257,13 +257,19 @@ model Comment {
   @@map("comments")
 }
 
+/// Payment — 충전 결제 기록 (CC-2a 디노미 1:1,000 pt 단위).
+/// - amount: KRW 결제 금액
+/// - points: 충전 총 pt (기본 + 보너스). CC-2a `completePaymentWithPoints` 의 `totalPoints` 입력값
+///   = product.points (CREDIT_PRODUCTS). 환불 시 `refundPaymentWithPoints` 의 `refundPt` 입력값.
+/// - [CC-4 Phase 2] `credits Int` → `points Int` 물리 rename (2026-05-21). 의미는 CC-2a 박제 그대로,
+///   컬럼명 정합 종결. 마이그레이션: `20260521_payment_credits_rename_phase2`.
 model Payment {
   id                    String      @id @default(uuid())
   authorId              String      @map("author_id")
   author                Author      @relation(fields: [authorId], references: [id], onDelete: Restrict)
   productId             String      @map("product_id")
   amount                Int
-  credits               Int
+  points                Int
   externalTransactionId String?     @unique @map("external_transaction_id")
   status                String      @default("pending")
   createdAt             DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -520,20 +526,24 @@ model ReconciliationCheckpoint {
   @@map("reconciliation_checkpoints")
 }
 
-/// 환불 정밀 처리 박제 (Sprint PAY-P1-1, 2026-05-03)
+/// 환불 정밀 처리 박제 (Sprint PAY-P1-1, 2026-05-03 / CC-2b 재해석 2026-05-20 / CC-4 Phase 2 보존 2026-05-21)
 /// - paymentId: 환불 대상 Payment FK (1:N — 향후 부분 환불 호환 위해 unique 미부여)
 /// - amount: PG 환불 금액 (KRW)
-/// - credits: 요청 환수 크레딧 (Author.credits 잔액 충분 시 = 실제 차감, 부족 시 actualDeducted = 잔액)
-/// - deficitCredits: 잔액 부족분 (양수 = 외상, 0 = 정상 환수). 운영자 회수 정책 결정 입력.
+/// - credits: [CC-2b 재해석 / CC-4 Phase 2 보존] 실 환수 pt(actualRefunded).
+///   단위 = 디노미 1:1,000 pt (Payment.points 와 단위 일관). 컬럼명 보존 사유 = 案 Y
+///   (명명 충돌 회피 + 회귀 범위 최소화 — admin/audit 전용, HTTP 미노출).
+/// - deficitCredits: [CC-2b 재해석 / CC-4 Phase 2 보존] 이 환불 1건이 유발한 외상 pt 기여분
+///   (감사 추적용). **외상 잔액 정본은 Author.deficitPoints** — RefundLog.deficitCredits 는
+///   누계가 아닌 단건 기여분이므로 이름 충돌 회피 위해 보존.
 /// - source: 'webhook' (Polar 자동) / 'manual' (운영자 수동, P2)
-/// 정본: `.claude/shared-contracts.md` §13 RefundPaymentAtomically
+/// 정본: `.claude/shared-contracts.md` §13 RefundPaymentAtomically + §30 CreditOverhaul
 model RefundLog {
   id             String   @id @default(uuid())
   paymentId      String   @map("payment_id")
   payment        Payment  @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   amount         Int // PG 환불 금액 (KRW)
-  credits        Int // 실제 환수 크레딧 (actualDeducted)
-  deficitCredits Int      @default(0) @map("deficit_credits") // 잔액 부족분 (외상)
+  credits        Int // [CC-2b 재해석 / CC-4 Phase 2 보존] 실 환수 pt (actualRefunded). Payment.points 와 단위 일관.
+  deficitCredits Int      @default(0) @map("deficit_credits") // [CC-2b 재해석 / CC-4 Phase 2 보존] 이 환불 1건이 유발한 외상 pt 기여분 (감사 추적용 — Author.deficitPoints 와 의미 다름).
   reason         String
   processedAt    DateTime @default(now()) @map("processed_at") @db.Timestamptz(3)
   source         String // 'webhook' | 'manual'

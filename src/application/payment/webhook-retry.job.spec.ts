@@ -53,13 +53,13 @@ describe('WebhookRetryJob (PAY-P2-2)', () => {
     ...overrides,
   })
 
-  /** PAY-P3-C — payment 조회 결과 픽션 빌더 */
+  /** PAY-P3-C — payment 조회 결과 픽션 빌더 ([CC-4 Phase 2 rename] points) */
   const samplePayment = (status: string, overrides: Partial<{ id: string }> = {}) => ({
     id: overrides.id ?? 'pay-1',
     authorId: 'author-1',
     productId: 'product-1',
     amount: 5000,
-    credits: 50,
+    points: 50,
     status,
     externalTransactionId: 'tr-1',
     createdAt: new Date('2026-05-05T00:00:00Z'),

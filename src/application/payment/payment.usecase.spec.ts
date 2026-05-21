@@ -13,13 +13,13 @@ describe('PaymentUseCase', () => {
   let mockAuthorRepo: any
   let mockAuditLog: any
 
-  // CC-2a 디노미 — credits 는 충전 총 pt (입문 패키지 25,000pt), productId 는 신 4종 id.
+  // [CC-4 Phase 2 rename] points 는 충전 총 pt (입문 패키지 25,000pt). 구 컬럼명 credits.
   const mockPayment = {
     id: 'pay-1',
     authorId: 'author-1',
     productId: 'credit-starter',
     amount: 3000,
-    credits: 25000,
+    points: 25000,
     externalTransactionId: null,
     status: 'pending',
     createdAt: new Date(),
@@ -187,13 +187,13 @@ describe('PaymentUseCase', () => {
     it('pending 상태 Payment를 생성하고 게이트웨이를 호출한다', async () => {
       const result = await useCase.initiatePayment('author-1', 'credit-starter', 'https://example.com/return')
 
-      // CC-2a 디노미 — 입문 패키지: 충전액 ₩3,000, credits 컬럼에 충전 총 pt 25,000 저장
+      // [CC-4 Phase 2 rename] 입문 패키지: 충전액 ₩3,000, points 컬럼에 충전 총 pt 25,000 저장
       expect(mockPrisma.create).toHaveBeenCalledWith(
         expect.objectContaining({
           authorId: 'author-1',
           productId: 'credit-starter',
           amount: 3000,
-          credits: 25000,
+          points: 25000,
         }),
       )
       expect(mockPaymentGateway.initiatePayment).toHaveBeenCalledWith(
@@ -231,7 +231,7 @@ describe('PaymentUseCase', () => {
         authorId: 'author-1',
         productId: 'credit-starter',
         amount: 2000,
-        credits: 5,
+        points: 5,
         status: 'pending',
         externalTransactionId: 'TRADE-OLD',
         createdAt: new Date(Date.now() - 5 * 60 * 1000), // 5분 전
@@ -292,14 +292,14 @@ describe('PaymentUseCase', () => {
         // 진입 게이트 호출 1회
         expect(mockPrisma.findReusablePendingPayment).toHaveBeenCalledTimes(1)
 
-        // 신규 create 1회 (재사용 후보 없음) — CC-2a 디노미: 입문 패키지 ₩3,000 / 25,000pt
+        // 신규 create 1회 (재사용 후보 없음) — [CC-4 Phase 2 rename] 입문 패키지 ₩3,000 / points 25,000pt
         expect(mockPrisma.create).toHaveBeenCalledTimes(1)
         expect(mockPrisma.create).toHaveBeenCalledWith(
           expect.objectContaining({
             authorId: 'author-1',
             productId: 'credit-starter',
             amount: 3000,
-            credits: 25000,
+            points: 25000,
           }),
         )
 
@@ -536,7 +536,7 @@ describe('PaymentUseCase', () => {
         ...mockPayment,
         externalTransactionId: 'TRADE-001',
       })
-      // CC-2b 디노미 — payment.credits 는 충전 총 pt 25,000 → refundPt 로 그대로 전달.
+      // CC-2b 디노미 — [CC-4 Phase 2 rename] payment.points 는 충전 총 pt 25,000 → refundPt 로 그대로 전달.
       mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(
         makeEvent({ type: 'order.refunded', status: 'cancel', amount: 3000 }),
       )
@@ -1115,7 +1115,7 @@ describe('PaymentUseCase', () => {
       mockPrisma.findReusablePendingPayment.mockResolvedValueOnce(null)
       mockPrisma.create.mockResolvedValueOnce({
         id: 'pay-cb-1', authorId: 'author-cb', productId: 'credit-starter',
-        amount: 2000, credits: 5, status: 'pending',
+        amount: 2000, points: 5, status: 'pending',
       })
       mockPaymentGateway.initiatePayment.mockRejectedValueOnce(circuitErr)
 
@@ -1134,7 +1134,7 @@ describe('PaymentUseCase', () => {
       mockPrisma.findReusablePendingPayment.mockResolvedValueOnce(null)
       mockPrisma.create.mockResolvedValueOnce({
         id: 'pay-normal-1', authorId: 'author-1', productId: 'credit-starter',
-        amount: 2000, credits: 5, status: 'pending',
+        amount: 2000, points: 5, status: 'pending',
       })
       mockPaymentGateway.initiatePayment.mockRejectedValueOnce(normalErr)
 
