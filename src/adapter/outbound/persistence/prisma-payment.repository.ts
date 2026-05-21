@@ -12,7 +12,7 @@ import { CreditSource } from '@domain/model/credit-source'
 export class PrismaPaymentRepository implements PaymentRepositoryPort {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: { authorId: string; productId: string; amount: number; credits: number }): Promise<PaymentRecord> {
+  async create(data: { authorId: string; productId: string; amount: number; points: number }): Promise<PaymentRecord> {
     return this.prisma.payment.create({ data: { ...data, status: 'pending' } }) as unknown as PaymentRecord
   }
 
@@ -220,7 +220,7 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
    *   6. **이중 외상 통합** — 부족분 `Author.deficitPoints += deficitIncurred`
    *      + `CreditLedger type='deficit_incur'` row(reason=`refund_deficit:..`).
    *      외상 잔액 정본 = `Author.deficitPoints` (단일). 다음 충전 시 CC-2a 가 자동 회수.
-   *   7. `RefundLog` 박제 — `credits` = 실 환수 pt, `deficitCredits` = 외상 발생 pt
+   *   7. `RefundLog` 박제 — `credits` = 실 환수 pt(보존 컬럼명, 案 Y), `deficitCredits` = 외상 발생 pt
    *      (MEDIUM-4 — 의미 재해석. 컬럼 물리 rename 은 CC-4 위임).
    */
   async refundPaymentWithPoints(input: {
@@ -264,7 +264,7 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
       // 2. Payment 조회 + validation + 비례 계산 (PAY-P2-1)
       const payment = await tx.payment.findUnique({
         where: { id: paymentId },
-        select: { amount: true, credits: true, status: true },
+        select: { amount: true, points: true, status: true },
       })
       if (!payment) {
         throw new Error(`Payment not found: ${paymentId}`)
@@ -282,9 +282,9 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
 
       const ratio = refundedAmount / payment.amount
       const isPartial = ratio < 1.0
-      // payment.credits = MEDIUM-4 의미 재해석 후 충전 총 pt (CC-2a)
-      // 비례 환수 pt = refundPt 입력값(refund-payment.usecase 가 payment.credits × ratio 또는 입력 그대로)
-      // 본 메서드 내부에선 입력 refundPt 를 비례 계산에 사용 (호출자가 payment.credits 전달 시 비례 적용)
+      // payment.points = [CC-2a 박제 + CC-4 Phase 2 rename] 충전 총 pt (구 컬럼명 credits).
+      // 비례 환수 pt = refundPt 입력값(refund-payment.usecase 가 payment.points × ratio 또는 입력 그대로).
+      // 본 메서드 내부에선 입력 refundPt 를 비례 계산에 사용 (호출자가 payment.points 전달 시 비례 적용).
       const proportionalPt = isPartial ? Math.floor(refundPt * ratio) : refundPt
 
       // 3. Payment status — 전액 'refunded' / 부분 'partial_refunded'
@@ -365,9 +365,10 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
         })
       }
 
-      // 7. RefundLog 박제 — MEDIUM-4 의미 재해석
+      // 7. RefundLog 박제 — [CC-2b 재해석 / CC-4 Phase 2 案 Y 컬럼 보존]
       //    credits = 실 환수 pt(totalRecovered) / deficitCredits = 외상 발생 pt(deficitIncurred)
-      //    (컬럼 물리 rename 은 CC-4 위임, 본 sprint 는 코드·문서 의미 재해석만)
+      //    Payment.credits → points 는 rename(CC-4 Phase 2)했지만 RefundLog는 보존
+      //    (Author.deficitPoints 와 명명 충돌 회피 + 회귀 범위 최소화 — admin/audit 전용).
       await tx.refundLog.create({
         data: {
           paymentId,

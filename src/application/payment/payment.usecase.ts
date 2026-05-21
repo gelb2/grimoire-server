@@ -196,11 +196,10 @@ export class PaymentUseCase {
 
     let payment = reusable
     if (!payment) {
-      // MEDIUM-4 (CC-2a) — Payment.credits Int 에 충전 총 pt 를 저장 (의미 재해석:
-      // "패키지 수량"→"pt"). 컬럼 물리 rename(credits→points)은 마이그레이션 동반이므로
-      // CC-2a 범위 외 — 컬럼명은 그대로 두고 담는 값만 pt 로 통일 (계획 §5 C5d).
+      // [CC-2a 박제 + CC-4 Phase 2 rename] Payment.points Int 에 충전 총 pt 를 저장.
+      // 구 컬럼명 `credits` → `points` 물리 rename 완료 (마이그레이션 20260521_payment_credits_rename_phase2).
       payment = await this.paymentRepo.create({
-        authorId, productId: product.id, amount: product.price, credits: product.points,
+        authorId, productId: product.id, amount: product.price, points: product.points,
       })
     } else {
       this.logger.log(
@@ -348,13 +347,13 @@ export class PaymentUseCase {
       // completePaymentWithPoints 단일 $transaction 이 (Payment 완료 + deficit 우선 상계
       // + 충전 적립)을 원자 처리한다. settleDeficit 가 처음으로 실 충전 경로에 연결되어
       // C-6(충전해도 deficit 미상계 → 채팅 영구 차단) 해소.
-      // payment.credits 는 MEDIUM-4 의미 재해석으로 충전 총 pt (initiatePayment 에서 product.points 저장).
+      // [CC-4 Phase 2 rename] payment.points = 충전 총 pt (initiatePayment 에서 product.points 저장, 구 credits 컬럼).
       let chargeResult: { settledDeficit: number; chargedPoints: number }
       try {
         chargeResult = await this.paymentRepo.completePaymentWithPoints(
           payment.id,
           payment.authorId,
-          payment.credits,
+          payment.points,
           payment.productId,
           payment.id,
         )
@@ -401,7 +400,7 @@ export class PaymentUseCase {
             {
               pointsCharged: chargedAfter,
               paymentId: payment.id,
-              totalPoints: payment.credits,
+              totalPoints: payment.points,
               chargedPoints: chargeResult.chargedPoints,
               settledDeficit: chargeResult.settledDeficit,
             },
@@ -428,20 +427,20 @@ export class PaymentUseCase {
           `webhook event race detected (eventId=${event.eventId}) — completePaymentWithPoints already executed`,
         )
       }
-      // credits 필드 = 충전 총 pt (CC-2a 디노미 — payment.credits 는 product.points 저장값)
-      return { processed: true, credits: payment.credits }
+      // 응답 키 `credits` 보존 (외부 호환성, webhook 응답 schema 안정). 내부 컬럼은 payment.points.
+      return { processed: true, credits: payment.points }
     } else if (event.status === NORMALIZED_WEBHOOK_STATUS.CANCEL) {
       // CC-2b (2026-05-20, 진단 §1-C) — 환불 신 경로 + 이중 외상 통합.
       // refund-payment.usecase 가 paymentRepo.refundPaymentWithPoints $transaction 호출.
       // 4 출처 환수(charged→gift→subscription→free 우선) + 부족분 Author.deficitPoints 가산
       // → 외상 정본 단일화 + CC-2a `completePaymentWithPoints` 가 다음 충전 시 자동 회수.
-      // payment.credits = MEDIUM-4 의미 재해석 후 충전 총 pt → refundPt 로 그대로 전달
+      // [CC-4 Phase 2 rename] payment.points = 충전 총 pt → refundPt 로 그대로 전달
       let deficitIncurred = 0
       try {
         const result = await this.refundPaymentUseCase.execute({
           paymentId: payment.id,
           authorId: payment.authorId,
-          refundPt: payment.credits,
+          refundPt: payment.points,
           refundedAmount: event.amount,
           reason: `polar_webhook_${event.type}`,
           source: 'webhook',

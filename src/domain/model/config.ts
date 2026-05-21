@@ -37,9 +37,9 @@ export const ANALYSIS_CREDIT_COST = 4
  * → 신 4종(입문/기본/인기/베스트, `points` Int=총 충전 포인트 pt).
  *
  * 필드:
- * - `points`: 총 충전 포인트 (기본 + 보너스, pt 단위). `Payment.credits` 컬럼에 그대로 저장
- *   (MEDIUM-4 — `Payment.credits` Int 의미를 "패키지 수량"→"pt"로 재해석. 컬럼 물리 rename 은
- *   마이그레이션 동반 → CC-2a 범위 외, 계획 §5 C5d). `completePaymentWithPoints`에 넘기는 값.
+ * - `points`: 총 충전 포인트 (기본 + 보너스, pt 단위). `Payment.points` 컬럼에 그대로 저장
+ *   (CC-4 Phase 2 — 구 `Payment.credits` Int → `points` Int 물리 rename 완료, 2026-05-21).
+ *   `completePaymentWithPoints`에 넘기는 값.
  * - `bonusRate`: 보너스 비율 (입문·기본 0 / 인기 0.10 / 베스트 0.15 — §8-5 안전 권고 상한).
  * - `price`: 충전액 (원화 KRW) — ai-cost-table §2 정본.
  * - `priceUsd`: Polar 결제용 USD 센트 — Polar Product 실 결제 금액. 기존 Polar 패턴

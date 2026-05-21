@@ -3,7 +3,8 @@ export interface PaymentRecord {
   authorId: string
   productId: string
   amount: number
-  credits: number
+  /** [CC-4 Phase 2] 충전 총 pt (구 `credits` 컬럼 rename, 2026-05-21). 의미 = CC-2a 박제 그대로. */
+  points: number
   status: string
   externalTransactionId: string | null
   createdAt: Date
@@ -11,7 +12,7 @@ export interface PaymentRecord {
 }
 
 export interface PaymentRepositoryPort {
-  create(data: { authorId: string; productId: string; amount: number; credits: number }): Promise<PaymentRecord>
+  create(data: { authorId: string; productId: string; amount: number; points: number }): Promise<PaymentRecord>
   findByExternalTransactionId(tradeNo: string): Promise<PaymentRecord | null>
   updateExternalTransactionId(paymentId: string, tradeNo: string): Promise<void>
   findByAuthorId(authorId: string): Promise<PaymentRecord[]>

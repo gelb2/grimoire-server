@@ -194,7 +194,7 @@
 | authorId | author_id | String | - | 결제 작가 ID |
 | productId | product_id | String | - | 상품 ID |
 | amount | amount | Int | - | 결제 금액 (원) |
-| credits | credits | Int | - | **[CC-2a 의미 재해석]** 충전 총 포인트(pt) — 구 "패키지 수량" → 디노미 후 "충전 pt"(`CREDIT_PRODUCTS.points`). 컬럼명 물리 rename(`credits`→`points`)은 마이그레이션 동반 → CC-2b/CC-4 위임 |
+| points | points | Int | - | **[CC-4 Phase 2 rename, 2026-05-21]** 충전 총 포인트(pt) — 구 컬럼명 `credits`(CC-2a 의미 재해석 "패키지 수량"→"pt") → `points` 물리 rename 완료. 마이그레이션: `20260521_payment_credits_rename_phase2`. 값 = `CREDIT_PRODUCTS.points` |
 | externalTransactionId | external_transaction_id | String? | unique | 외부 결제 거래 번호 |
 | status | status | String | default("pending") | 결제 상태 (pending/completed/failed) |
 | createdAt | created_at | DateTime | default(now()) | 결제 요청일 |
@@ -238,13 +238,14 @@ PG↔DB 정합성 검증 cron의 단일 row checkpoint — `id` default `'single
 - update는 항상 upsert (where id='singleton')
 - cron 주기: `@Cron('0 */10 * * * *')` 10분 (cost-accountant 권고)
 
-### refund_logs (Sprint PAY-P1-1, 2026-05-03; CC-2b 의미 재해석 2026-05-20)
+### refund_logs (Sprint PAY-P1-1, 2026-05-03; CC-2b 의미 재해석 2026-05-20; CC-4 Phase 2 보존 2026-05-21)
 
 Polar 환불 webhook 시 크레딧 환수 트랜잭션의 영구 박제. CC-2b 이후 RefundPaymentUseCase 가 `paymentRepo.refundPaymentWithPoints` `$transaction` 내부에서 박제 (4 출처 환수 + 이중 외상 통합). 정본: `.claude/shared-contracts.md` §13 + §30.
 
-**CC-2b 컬럼 의미 재해석** (물리 변경 0건 — 코드 주석 + 본 문서만 갱신, rename 은 CC-4 위임):
-- `credits` Int — **실 환수 pt** (`actualRefunded`, 4 출처 합)
-- `deficit_credits` Int — **이 환불 1건이 유발한 외상 pt 기여분** (감사 추적용, 외상 잔액 정본은 `Author.deficitPoints` 단일)
+**CC-4 Phase 2 컬럼 처리 — 案 Y (보존 + 의미 박제 강화)**: `Payment.credits → Payment.points` 물리 rename 시 RefundLog의 `credits`·`deficit_credits` 컬럼은 **rename하지 않고 보존** (DDL 변경 0건). 사유: (a) 명명 충돌 회피 (`Author.deficitPoints` 외상 잔액 정본) (b) 회귀 범위 최소화 (admin/audit 전용, HTTP 미노출) (c) CC-2b 의미는 schema 주석 강화로 박제.
+
+- `credits` Int — **[CC-2b 재해석 / CC-4 Phase 2 보존]** 실 환수 pt (`actualRefunded`, 4 출처 합). 단위 = `Payment.points`와 일관.
+- `deficit_credits` Int — **[CC-2b 재해석 / CC-4 Phase 2 보존]** 이 환불 1건이 유발한 외상 pt 기여분 (감사 추적용). **외상 잔액 정본은 `Author.deficitPoints` 단일화**.
 
 | Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
 |-------------|---------|------|------|------|

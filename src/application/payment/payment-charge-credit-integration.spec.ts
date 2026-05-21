@@ -228,14 +228,14 @@ describe('CC-2a 충전 결제 적립 연동 통합 테스트 (CreditLedger 충�
     status: 'success',
   })
 
-  /** Payment 시드 — 입문 패키지 (credits 컬럼에 충전 총 pt 저장 — MEDIUM-4) */
+  /** Payment 시드 — 입문 패키지 (points 컬럼에 충전 총 pt 저장 — CC-4 Phase 2 rename) */
   const seedPayment = (id: string, authorId: string, tradeNo: string): void => {
     paymentRepo.seedPayment({
       id,
       authorId,
       productId: 'credit-starter',
       amount: 3000,
-      credits: STARTER_POINTS,
+      points: STARTER_POINTS,
       externalTransactionId: tradeNo,
       status: 'pending',
       createdAt: new Date(),
