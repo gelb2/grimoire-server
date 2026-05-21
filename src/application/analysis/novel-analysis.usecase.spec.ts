@@ -53,6 +53,15 @@ const makeWork = (overrides: Partial<{ id: string; authorId: string; title: stri
   ...overrides,
 })
 
+/**
+ * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — novel-analysis spec 정리.
+ *
+ * 변경 사항:
+ *   - 생성자 시그니처 변경 — `creditRepo` 인자 제거(CC-4 P1h). chargePoints 가 production
+ *     단위로 항상 주입되어 구 폴백 경로 제거.
+ *   - 구 mockCreditRepo / mockCreditRepo.adjustCredits 검증 제거 (구 경로 자체 폐기).
+ *   - 모든 it 블록을 chargePoints(디노미 차감) 경로 단일화 — 신 경로 회귀 안전망.
+ */
 describe('NovelAnalysisUseCase', () => {
   let useCase: NovelAnalysisUseCase
   let mockVectorStore: {
@@ -72,14 +81,11 @@ describe('NovelAnalysisUseCase', () => {
     findEpisodes: jest.Mock
     findEpisodeById: jest.Mock
   }
-  let mockCreditRepo: {
-    adjustCredits: jest.Mock
-    findLogsByAuthorId: jest.Mock
-    giftTransfer: jest.Mock
-    getGiftRanking: jest.Mock
-    sumNegativeAmounts: jest.Mock
-  }
   let mockReportRepo: { create: jest.Mock; findByAuthor: jest.Mock; findById: jest.Mock }
+  let mockChargePoints: {
+    chargeAnalysis: jest.Mock
+    refundAnalysis: jest.Mock
+  }
 
   beforeEach(() => {
     jest.clearAllMocks()
@@ -104,27 +110,29 @@ describe('NovelAnalysisUseCase', () => {
       findEpisodes: jest.fn().mockResolvedValue([]),
       findEpisodeById: jest.fn().mockResolvedValue(makeEpisode()),
     }
-    mockCreditRepo = {
-      adjustCredits: jest.fn().mockResolvedValue({ credits: 10, log: {} }),
-      findLogsByAuthorId: jest.fn().mockResolvedValue([]),
-      giftTransfer: jest.fn(),
-      getGiftRanking: jest.fn().mockResolvedValue([]),
-      sumNegativeAmounts: jest.fn().mockResolvedValue(0),
-    }
-
     mockReportRepo = {
       create: jest.fn().mockResolvedValue({}),
       findByAuthor: jest.fn().mockResolvedValue([]),
       findById: jest.fn().mockResolvedValue(null),
     }
+    // CC-1 §5-D — chargeAnalysis 는 SpendResult 를 반환 (출처별 환불 복원 입력)
+    mockChargePoints = {
+      chargeAnalysis: jest.fn().mockResolvedValue({
+        spentBySource: { free: 2440, subscription: 0, gift: 0, charged: 0 },
+        deficitIncurred: 0,
+        balanceAfter: 0,
+      }),
+      refundAnalysis: jest.fn().mockResolvedValue(undefined),
+    }
 
+    // 5번째 인자 = reportRepo, 6번째 인자 = chargePoints (CC-4 Phase 1 시그니처)
     useCase = new NovelAnalysisUseCase(
       mockVectorStore as any,
       mockEmbedding as any,
       mockClaude as any,
       mockWorkRepo as any,
-      mockCreditRepo as any,
       mockReportRepo as any,
+      mockChargePoints as any,
     )
   })
 
@@ -323,7 +331,7 @@ describe('NovelAnalysisUseCase', () => {
         mockWorkRepo.findEpisodeById.mockResolvedValue(null)
 
         await expect(useCase.analyzeEpisode('author-1', 'no-such-ep')).rejects.toThrow('에피소드를 찾을 수 없습니다')
-        expect(mockCreditRepo.adjustCredits).not.toHaveBeenCalled()
+        expect(mockChargePoints.chargeAnalysis).not.toHaveBeenCalled()
       })
 
       it('Work가 없으면 BadRequest', async () => {
@@ -331,7 +339,7 @@ describe('NovelAnalysisUseCase', () => {
         mockWorkRepo.findById.mockResolvedValue(null)
 
         await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('작품을 찾을 수 없습니다')
-        expect(mockCreditRepo.adjustCredits).not.toHaveBeenCalled()
+        expect(mockChargePoints.chargeAnalysis).not.toHaveBeenCalled()
       })
 
       it('타인 작품 에피소드는 분석 거부 (크레딧 차감 전)', async () => {
@@ -339,41 +347,58 @@ describe('NovelAnalysisUseCase', () => {
         mockWorkRepo.findById.mockResolvedValue(makeWork({ authorId: 'OTHER_AUTHOR' }))
 
         await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('본인 작품의 에피소드만')
-        expect(mockCreditRepo.adjustCredits).not.toHaveBeenCalled()
+        expect(mockChargePoints.chargeAnalysis).not.toHaveBeenCalled()
       })
 
       it('rawMd가 너무 짧으면 BadRequest (크레딧 차감 전)', async () => {
         mockWorkRepo.findEpisodeById.mockResolvedValue(makeEpisode({ rawMd: '짧음' }))
 
         await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('너무 짧')
-        expect(mockCreditRepo.adjustCredits).not.toHaveBeenCalled()
+        expect(mockChargePoints.chargeAnalysis).not.toHaveBeenCalled()
       })
     })
 
-    // F2 2026-04-19: AI 분석 3 크레딧 차감 → 2026-04-27: 4 크레딧 인상 (cost-accountant 시뮬, FAIL 약점 해소)
-    describe('크레딧 차감 (F2 2026-04-19 → 4 크레딧 인상 2026-04-27)', () => {
-      it('소유권 검증 통과 후 4 크레딧을 차감한다', async () => {
+    // 크레딧 개편 CC-4 Phase 1 — chargePoints 디노미 차감 단일화 (구 정수 차감 제거)
+    describe('크레딧 차감 (CC-4 Phase 1 — 디노미 단일 경로)', () => {
+      it('소유권 검증 통과 후 chargeAnalysis(디노미 차감) 1회 호출', async () => {
         mockVectorStore.searchSimilar.mockResolvedValue([])
         await useCase.analyzeEpisode('author-1', 'ep-1')
 
-        expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -4, 'novel_analysis')
+        expect(mockChargePoints.chargeAnalysis).toHaveBeenCalledWith('author-1')
       })
 
-      it('크레딧 부족 시 BadRequest를 던지고 분석을 수행하지 않는다', async () => {
-        mockCreditRepo.adjustCredits.mockRejectedValueOnce(new Error('크레딧이 부족합니다'))
+      it('chargeAnalysis 가 잔액 부족으로 throw 하면 분석을 진행하지 않는다', async () => {
+        mockChargePoints.chargeAnalysis.mockRejectedValueOnce(new Error('포인트가 부족합니다'))
 
-        await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('AI 분석은 4 크레딧이 필요합니다')
+        await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('부족')
         expect(mockVectorStore.searchSimilar).not.toHaveBeenCalled()
         expect(mockCheckConsistency).not.toHaveBeenCalled()
       })
 
-      it('분석 중 예외가 나면 전액(4) 환불한다', async () => {
+      it('분석 중 예외가 나면 refundAnalysis 호출 (출처별 복원)', async () => {
         mockVectorStore.searchSimilar.mockRejectedValue(new Error('벡터 DB 장애'))
 
         await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('벡터 DB 장애')
 
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -4, 'novel_analysis')
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 4, 'novel_analysis_refund')
+        expect(mockChargePoints.chargeAnalysis).toHaveBeenCalledWith('author-1')
+        expect(mockChargePoints.refundAnalysis).toHaveBeenCalledWith(
+          'author-1',
+          undefined,
+          { free: 2440, subscription: 0, gift: 0, charged: 0 },
+        )
+      })
+
+      it('chargePoints 미주입 시 BadRequest (production DI 누락 안전 fail)', async () => {
+        const ucNoCharge = new NovelAnalysisUseCase(
+          mockVectorStore as any,
+          mockEmbedding as any,
+          mockClaude as any,
+          mockWorkRepo as any,
+          mockReportRepo as any,
+        )
+        await expect(ucNoCharge.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow(
+          'chargePoints 미주입',
+        )
       })
     })
 
@@ -387,8 +412,8 @@ describe('NovelAnalysisUseCase', () => {
           useCase.analyzeEpisode('author-1', 'ep-1', undefined, controller.signal),
         ).rejects.toThrow(/중단/)
 
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -4, 'novel_analysis')
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 4, 'novel_analysis_refund')
+        expect(mockChargePoints.chargeAnalysis).toHaveBeenCalledWith('author-1')
+        expect(mockChargePoints.refundAnalysis).toHaveBeenCalled()
         expect(mockVectorStore.searchSimilar).not.toHaveBeenCalled()
         expect(mockCheckConsistency).not.toHaveBeenCalled()
       })
@@ -411,8 +436,8 @@ describe('NovelAnalysisUseCase', () => {
 
         await expect(promise).rejects.toThrow(/중단/)
 
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(1, 'author-1', -4, 'novel_analysis')
-        expect(mockCreditRepo.adjustCredits).toHaveBeenNthCalledWith(2, 'author-1', 4, 'novel_analysis_refund')
+        expect(mockChargePoints.chargeAnalysis).toHaveBeenCalledWith('author-1')
+        expect(mockChargePoints.refundAnalysis).toHaveBeenCalled()
       })
 
       it('signal 미지정이면 기존 동작 유지 (정상 경로)', async () => {
@@ -426,8 +451,8 @@ describe('NovelAnalysisUseCase', () => {
         const results = await useCase.analyzeEpisode('author-1', 'ep-1', ['consistency'], undefined)
 
         expect(results).toHaveLength(1)
-        expect(mockCreditRepo.adjustCredits).toHaveBeenCalledTimes(1)
-        expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -4, 'novel_analysis')
+        expect(mockChargePoints.chargeAnalysis).toHaveBeenCalledTimes(1)
+        expect(mockChargePoints.refundAnalysis).not.toHaveBeenCalled()
       })
     })
   })
@@ -455,7 +480,8 @@ describe('NovelAnalysisUseCase', () => {
         episodeId: 'ep-1',
         workTitle: '사슴악마',
         types: ['consistency'],
-        creditsCharged: 4,
+        // CC-4 Phase 1: chargePoints 항상 주입 → ANALYSIS_POINT_COST(2,440 pt) 저장
+        creditsCharged: 2440,
       })
       expect(arg.results).toHaveLength(1)
       expect(arg.results[0].score).toBe(90)
@@ -540,100 +566,6 @@ describe('NovelAnalysisUseCase', () => {
       const result = await useCase.getIndexStatus('work-1')
 
       expect(result).toEqual({ chunkCount: 0, isIndexed: false })
-    })
-  })
-
-  // 크레딧 개편 I Phase — 디노미네이션 분석 차감 (chargePoints 주입 경로)
-  describe('analyzeEpisode — 디노미 차감 (ChargePointsUseCase 주입)', () => {
-    let mockChargePoints: {
-      chargeAnalysis: jest.Mock
-      refundAnalysis: jest.Mock
-    }
-    let dinomiUseCase: NovelAnalysisUseCase
-
-    beforeEach(() => {
-      // CC-1 §5-D — chargeAnalysis 는 이제 SpendResult 를 반환 (출처별 환불 복원 입력)
-      mockChargePoints = {
-        chargeAnalysis: jest.fn().mockResolvedValue({
-          spentBySource: { free: 2440, subscription: 0, gift: 0, charged: 0 },
-          deficitIncurred: 0,
-          balanceAfter: 0,
-        }),
-        refundAnalysis: jest.fn().mockResolvedValue(undefined),
-      }
-      // chargePoints 를 7번째 인자로 주입 — 디노미 차감 경로 활성화
-      dinomiUseCase = new NovelAnalysisUseCase(
-        mockVectorStore as any,
-        mockEmbedding as any,
-        mockClaude as any,
-        mockWorkRepo as any,
-        mockCreditRepo as any,
-        mockReportRepo as any,
-        mockChargePoints as any,
-      )
-      // checkXxx 가 정상 결과를 반환하도록 (rag mock)
-      const rag = jest.requireMock('@lib/rag')
-      rag.checkConsistency.mockResolvedValue({
-        type: 'consistency',
-        score: 90,
-        summary: 'ok',
-        issues: [],
-        suggestions: [],
-      })
-      rag.checkTone.mockResolvedValue({
-        type: 'tone',
-        score: 90,
-        summary: 'ok',
-        issues: [],
-        suggestions: [],
-      })
-      rag.checkCharacter.mockResolvedValue({
-        type: 'character',
-        score: 90,
-        summary: 'ok',
-        issues: [],
-        suggestions: [],
-      })
-      mockVectorStore.searchSimilar.mockResolvedValue([
-        { episodeId: 'other-ep', chunkIndex: 0, chunkText: '비교 청크', distance: 0.1 },
-      ])
-    })
-
-    it('chargePoints 주입 시 디노미 차감(chargeAnalysis)을 호출한다 — 구 adjustCredits 미사용', async () => {
-      await dinomiUseCase.analyzeEpisode('author-1', 'ep-1', ['consistency'])
-      expect(mockChargePoints.chargeAnalysis).toHaveBeenCalledWith('author-1')
-      // 구 정수 크레딧 차감 경로는 호출되지 않음
-      expect(mockCreditRepo.adjustCredits).not.toHaveBeenCalled()
-    })
-
-    it('분석 실패 시 디노미 환불(refundAnalysis)을 출처별로 호출한다 (CC-1 §5-D)', async () => {
-      const rag = jest.requireMock('@lib/rag')
-      rag.checkConsistency.mockRejectedValue(new Error('AI 호출 실패'))
-      await expect(
-        dinomiUseCase.analyzeEpisode('author-1', 'ep-1', ['consistency']),
-      ).rejects.toThrow()
-      // CC-1 §5-D — chargeAnalysis 의 spentBySource 를 환불에 전달 (출처 오귀속 방지)
-      expect(mockChargePoints.refundAnalysis).toHaveBeenCalledWith(
-        'author-1',
-        undefined,
-        { free: 2440, subscription: 0, gift: 0, charged: 0 },
-      )
-    })
-
-    it('잔액 부족 시 chargeAnalysis 가 throw 하면 분석을 진행하지 않는다', async () => {
-      mockChargePoints.chargeAnalysis.mockRejectedValue(
-        new Error('포인트가 부족합니다'),
-      )
-      await expect(
-        dinomiUseCase.analyzeEpisode('author-1', 'ep-1', ['consistency']),
-      ).rejects.toThrow('부족')
-    })
-
-    it('성공 시 리포트의 creditsCharged 가 디노미 pt(2,440)로 저장된다', async () => {
-      await dinomiUseCase.analyzeEpisode('author-1', 'ep-1', ['consistency'])
-      expect(mockReportRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ creditsCharged: 2440 }),
-      )
     })
   })
 })

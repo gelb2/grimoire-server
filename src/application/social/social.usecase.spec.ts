@@ -57,9 +57,9 @@ describe('SocialUseCase', () => {
       getTotalLikesForAuthor: jest.fn().mockResolvedValue(15),
     }
 
-    const mockCreditRepo = { adjustCredits: jest.fn(), findLogsByAuthorId: jest.fn(), giftTransfer: jest.fn(), getGiftRanking: jest.fn() }
+    // CC-4 Phase 1 — SocialUseCase 생성자에서 creditRepo 제거.
     const mockAuthorRepo = { findById: jest.fn(), findBySlug: jest.fn(), findByEmail: jest.fn(), create: jest.fn(), updateCredits: jest.fn() }
-    useCase = new SocialUseCase(mockSocialRepo as any, mockCreditRepo as any, mockAuthorRepo as any)
+    useCase = new SocialUseCase(mockSocialRepo as any, mockAuthorRepo as any)
   })
 
   // ── 좋아요 ──
@@ -358,23 +358,22 @@ describe('SocialUseCase', () => {
         create: jest.fn(),
         updateCredits: jest.fn(),
       }
-      const mockCreditRepo2 = { adjustCredits: jest.fn(), findLogsByAuthorId: jest.fn(), giftTransfer: jest.fn(), getGiftRanking: jest.fn() }
+      // CC-4 Phase 1 — SocialUseCase 생성자에서 creditRepo 제거.
       const uc = new SocialUseCase(
         mockSocialRepo as any,
-        mockCreditRepo2 as any,
         mockAuthorRepo2 as any,
         mockLedger as any,
       )
-      return { uc, mockLedger, mockAuthorRepo2, mockCreditRepo2 }
+      return { uc, mockLedger, mockAuthorRepo2 }
     }
 
-    it('GIFT_POINT_OPTIONS [1000,3000,5000] 중 1000pt 선물 시 ledger.transfer 호출 + 구 giftTransfer 0건', async () => {
-      const { uc, mockLedger, mockCreditRepo2 } = setupCC2b()
+    it('GIFT_POINT_OPTIONS [1000,3000,5000] 중 1000pt 선물 시 ledger.transfer 호출 (구 경로 0건)', async () => {
+      const { uc, mockLedger } = setupCC2b()
 
       const result = await uc.giftCredits('reader-1', 'receiver', 1000)
 
       expect(mockLedger.transfer).toHaveBeenCalledWith('reader-1', 'author-r', 1000, undefined)
-      expect(mockCreditRepo2.giftTransfer).not.toHaveBeenCalled()
+      // CC-4 Phase 1: 구 creditRepo.giftTransfer port 시그니처 제거됨 → 호출 0건 자명
       expect(result.receiverGiftBalance).toBe(1000)
     })
 

@@ -118,14 +118,8 @@ class FakePaymentRepository {
   async findReusablePendingPayment(): Promise<PaymentRecord | null> {
     return null
   }
-  async refundPaymentAtomically(): Promise<{
-    actualDeducted: number
-    deficitCredits: number
-    proportionalCredits: number
-    isPartial: boolean
-  }> {
-    throw new Error('CC-2b: 환불은 refundPaymentWithPoints 를 써야 한다 (구 경로 호출 = 미연동)')
-  }
+  // CC-4 Phase 1 — refundPaymentAtomically / completePaymentAtomically port 시그니처 제거.
+  // Fake repository 도 제거 (구 경로 호출 자체 불가).
 
   /** CC-2b — 환불 신 경로. 본 CC-2a 통합 spec 에선 미사용(환불 케이스는 CC-2b 통합 spec). */
   async refundPaymentWithPoints(): Promise<{
@@ -135,11 +129,6 @@ class FakePaymentRepository {
     isPartial: boolean
   }> {
     throw new Error('환불은 CC-2b 통합 spec 영역 — payment-charge-credit-integration 미사용')
-  }
-
-  /** @deprecated CC-2a — 구 경로. 통합 spec 에서 호출되면 안 됨 (RED 재현 감지용). */
-  async completePaymentAtomically(): Promise<void> {
-    throw new Error('CC-2a: 충전 success 는 completePaymentWithPoints 를 써야 한다 (구 경로 호출 = 미연동)')
   }
 
   /**
@@ -337,10 +326,10 @@ describe('CC-2a 충전 결제 적립 연동 통합 테스트 (CreditLedger 충�
       expect(store.balanceOf('author-1').charged).toBe(35000)
     })
 
-    it('구 completePaymentAtomically 경로는 호출되지 않는다 (CRITICAL-2 충전 미연동 회귀 방어)', async () => {
+    it('CC-4 P1 — 구 completePaymentAtomically port 시그니처 자체 제거됨 (회귀 차단 완결)', async () => {
+      // 본 it 는 CC-2a 미연동 회귀 방어용이었으나, CC-4 Phase 1 에서 구 메서드 port + 본문 + Fake
+      // 모두 제거되어 컴파일러가 호출을 차단함. 정상 충전 동작만 회귀 확인.
       seedPayment('pay-1', 'author-1', 'TRADE-1')
-      // FakePaymentRepository.completePaymentAtomically 는 호출 시 throw —
-      // 정상 처리되면 구 경로 미호출 (신 경로만 탔다는 증명)
       await expect(
         useCase.processNormalizedWebhook(successEvent('TRADE-1')),
       ).resolves.toMatchObject({ processed: true })

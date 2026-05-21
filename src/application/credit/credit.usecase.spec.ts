@@ -1,9 +1,25 @@
 import { CreditUseCase } from './credit.usecase'
-import { BadRequestException } from '@nestjs/common'
 
+/**
+ * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — 구 메서드 spec 제거.
+ *
+ * 폐기 spec (호출처 0건 확인 후 제거):
+ *   - describe('deduct') — `Author.credits` Int 차감 (구 경로)
+ *   - describe('grant') — `Author.credits` Int 적립 (구 경로)
+ *   - describe('getBalance') — `Author.credits` Int 단일 잔액 (구 경로)
+ *
+ * 잔존 spec 4 메서드는 전부 신 시스템 위임 검증:
+ *   - getPointBalance (CreditLedgerPort.getBalance + lazy 안전망)
+ *   - gift (CreditLedgerPort.transfer)
+ *   - getGiftRanking (CC-3 ledger 위임 + 폴백)
+ *   - getLogs (CC-3 ledger 위임 + 폴백)
+ *
+ * mockCreditRepo 잔존 항목: `findLogsByAuthorId`/`getGiftRanking` — getLogs/getGiftRanking 폴백 검증용
+ * (구 `giftTransfer`/`adjustCredits` 는 제거 — P1c/P1h 에서 port 시그니처 제거 정합).
+ */
 describe('CreditUseCase', () => {
   let useCase: CreditUseCase
-  let mockCreditRepo: { adjustCredits: jest.Mock; findLogsByAuthorId: jest.Mock; giftTransfer: jest.Mock; getGiftRanking: jest.Mock }
+  let mockCreditRepo: { findLogsByAuthorId: jest.Mock; getGiftRanking: jest.Mock }
   let mockAuthorRepo: { findById: jest.Mock; findBySlug: jest.Mock; findByEmail: jest.Mock; create: jest.Mock; updateCredits: jest.Mock }
 
   const mockAuthor = { id: 'author-1', slug: 'test', name: '테스트', email: 'test@test.com', credits: 3, createdAt: new Date() }
@@ -11,9 +27,7 @@ describe('CreditUseCase', () => {
 
   beforeEach(() => {
     mockCreditRepo = {
-      adjustCredits: jest.fn().mockResolvedValue({ credits: 2, log: mockLog }),
       findLogsByAuthorId: jest.fn().mockResolvedValue([mockLog]),
-      giftTransfer: jest.fn().mockResolvedValue({ senderCredits: 2, receiverCredits: 4 }),
       getGiftRanking: jest.fn().mockResolvedValue([{ authorId: 'author-2', totalGifted: 10 }]),
     }
     mockAuthorRepo = {
@@ -22,54 +36,6 @@ describe('CreditUseCase', () => {
     }
 
     useCase = new CreditUseCase(mockCreditRepo as any, mockAuthorRepo as any)
-  })
-
-  describe('deduct', () => {
-    it('크레딧을 차감하고 로그를 반환한다', async () => {
-      const result = await useCase.deduct('author-1', 1, 'theme_generate')
-
-      expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', -1, 'theme_generate')
-      expect(result.credits).toBe(2)
-    })
-
-    it('차감 금액이 0 이하이면 에러를 던진다', async () => {
-      await expect(useCase.deduct('author-1', 0, 'test')).rejects.toThrow(BadRequestException)
-      await expect(useCase.deduct('author-1', -1, 'test')).rejects.toThrow(BadRequestException)
-    })
-
-    it('크레딧이 부족하면 에러를 던진다', async () => {
-      mockAuthorRepo.findById.mockResolvedValue({ ...mockAuthor, credits: 0 })
-
-      await expect(useCase.deduct('author-1', 1, 'test')).rejects.toThrow('크레딧이 부족합니다')
-    })
-
-    it('작가가 없으면 에러를 던진다', async () => {
-      mockAuthorRepo.findById.mockResolvedValue(null)
-
-      await expect(useCase.deduct('no-author', 1, 'test')).rejects.toThrow('작가를 찾을 수 없습니다')
-    })
-  })
-
-  describe('grant', () => {
-    it('크레딧을 적립하고 로그를 반환한다', async () => {
-      mockCreditRepo.adjustCredits.mockResolvedValue({ credits: 4, log: { ...mockLog, amount: 1 } })
-
-      const result = await useCase.grant('author-1', 1, 'signup_bonus')
-
-      expect(mockCreditRepo.adjustCredits).toHaveBeenCalledWith('author-1', 1, 'signup_bonus')
-      expect(result.credits).toBe(4)
-    })
-
-    it('적립 금액이 0 이하이면 에러를 던진다', async () => {
-      await expect(useCase.grant('author-1', 0, 'test')).rejects.toThrow(BadRequestException)
-    })
-  })
-
-  describe('getBalance', () => {
-    it('작가의 크레딧 잔액을 반환한다', async () => {
-      const balance = await useCase.getBalance('author-1')
-      expect(balance).toBe(3)
-    })
   })
 
   describe('getPointBalance', () => {
@@ -217,8 +183,7 @@ describe('CreditUseCase', () => {
       expect(mockLedger.transfer).toHaveBeenCalledWith('author-1', 'author-2', 1000, undefined)
       expect(result.receiverGiftBalance).toBe(1000)
       expect(result.senderSpentBySource.charged).toBe(1000)
-      // 구 giftTransfer 는 호출되지 않음
-      expect(mockCreditRepo.giftTransfer).not.toHaveBeenCalled()
+      // CC-4 Phase 1: 구 giftTransfer port 시그니처 자체가 제거됨 → mock 검증 불가, 호출 0건 자명
     })
 
     it('자기 자신에게 선물하면 BadRequest', async () => {

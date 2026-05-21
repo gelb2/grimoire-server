@@ -1,21 +1,23 @@
 import { Injectable, Inject, BadRequestException, NotFoundException, Optional } from '@nestjs/common'
 import { SocialRepositoryPort } from '@domain/port/outbound/social-repository.port'
-import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { CreditLedgerPort } from '@domain/port/outbound/credit-ledger.port'
 import { Subscription, Comment, AnonymousCommentInput } from '@domain/model/social'
 import { GIFT_POINT_OPTIONS, isGiftPointOption } from '@domain/model/gift-points'
 
+/**
+ * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — `creditRepo` DI 제거.
+ * 응원 선물은 `CreditLedgerPort.transfer` 단일 경로 (구 `creditRepo.giftTransfer` 폴백 제거).
+ * 운영 app.module 에서 CreditLedgerPort 가 항상 주입 — ledger null 진입 시 명시적 BadRequest.
+ */
 @Injectable()
 export class SocialUseCase {
   constructor(
     @Inject('SocialRepositoryPort') private readonly socialRepo: SocialRepositoryPort,
-    @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
     /**
      * CC-2b — 응원 선물 신 경로 (CreditLedgerPort.transfer).
-     * Optional — 미주입 시 구 `creditRepo.giftTransfer` 폴백(BACKWARD COMPATIBLE,
-     * 단 운영 app.module 에서는 항상 주입 — CC-3 후 폴백 제거).
+     * Optional — spec mock 미주입 모드 진입 시 명시적 BadRequest. 운영에선 항상 주입.
      */
     @Optional()
     @Inject('CreditLedgerPort')
@@ -119,7 +121,7 @@ export class SocialUseCase {
    *
    * body `amount` 단위 = **pt** (1,000/3,000/5,000pt 3단계 — `GIFT_POINT_OPTIONS` 정본,
    * 메인 §6 결정 박제). `CreditLedgerPort.transfer` 가 양측 작가 1 트랜잭션 이동.
-   * 구 `creditRepo.giftTransfer` 폴백은 `ledger` 미주입 시(테스트용)만.
+   * CC-4 Phase 1: 구 `creditRepo.giftTransfer` 폴백 완전 제거 — ledger 미주입 시 BadRequest.
    */
   async giftCredits(
     senderId: string,

@@ -3,13 +3,11 @@ import { VectorStorePort } from '@domain/port/outbound/vector-store.port'
 import { EmbeddingPort } from '@domain/port/outbound/embedding.port'
 import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
-import { CreditRepositoryPort } from '@domain/port/outbound/credit-repository.port'
 import {
   AnalysisReportRepositoryPort,
   AnalysisReport,
   AnalysisReportSummary,
 } from '@domain/port/outbound/analysis-report-repository.port'
-import { CreditReason } from '@domain/model/credit'
 import { CreditSource } from '@domain/model/credit-source'
 import { ANALYSIS_CREDIT_COST } from '@domain/model/config'
 import { ANALYSIS_POINT_COST } from '@domain/model/chat-charge-tier'
@@ -26,12 +24,11 @@ export class NovelAnalysisUseCase {
     @Inject('EmbeddingPort') private readonly embedding: EmbeddingPort,
     @Inject('ClaudeApiPort') private readonly claude: ClaudeApiPort,
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
-    @Inject('CreditRepositoryPort') private readonly creditRepo: CreditRepositoryPort,
     @Inject('AnalysisReportRepositoryPort')
     private readonly reportRepo: AnalysisReportRepositoryPort,
     /**
-     * 크레딧 개편 I Phase (2026-05-17) — 디노미네이션 분석 차감 (2,440pt).
-     * Optional — 주입 시 디노미 차감(ANALYSIS_POINT_COST) 우선, 미주입 시 구 정수 크레딧 차감(BACKWARD COMPATIBLE).
+     * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — production 시점 항상 주입 (app.module providers).
+     * Optional 유지 — spec mock 미주입 모드(`null`) 진입 시 명시적 BadRequest 로 안전 fail.
      */
     @Optional()
     private readonly chargePoints: ChargePointsUseCase | null = null,
@@ -120,22 +117,16 @@ export class NovelAnalysisUseCase {
     }
 
     // 분석 차감 (PLANNING §14, ai-cost-table §3-2).
-    // 크레딧 개편 I Phase — chargePoints 주입 시 디노미 차감(2,440pt), 미주입 시 구 정수 크레딧 차감.
+    // 크레딧 개편 CC-4 Phase 1 — chargePoints 가 app.module 단위로 항상 주입됨
+    // (NestJS DI 자동 — production 시점 폴백 미발생). 구 `creditRepo.adjustCredits` 폴백 제거.
     // CC-1 §5-D — 차감 SpendResult.spentBySource 를 보유했다가 실패 환불 시 출처별 복원에 사용.
-    let spentBySource: Record<string, number> | undefined
-    if (this.chargePoints) {
-      // 디노미 차감 — charge-points.usecase 가 잔액 부족 시 BadRequest throw
-      const spendResult = await this.chargePoints.chargeAnalysis(authorId)
-      spentBySource = spendResult.spentBySource
-    } else {
-      try {
-        await this.creditRepo.adjustCredits(authorId, -ANALYSIS_CREDIT_COST, CreditReason.NOVEL_ANALYSIS)
-      } catch {
-        throw new BadRequestException(
-          `AI 분석은 ${ANALYSIS_CREDIT_COST} 크레딧이 필요합니다. 크레딧이 부족합니다.`,
-        )
-      }
+    if (!this.chargePoints) {
+      throw new BadRequestException(
+        'AI 분석 차감 어댑터가 구성되지 않았습니다 (chargePoints 미주입)',
+      )
     }
+    const spendResult = await this.chargePoints.chargeAnalysis(authorId)
+    const spentBySource = spendResult.spentBySource
 
     let results: AnalysisResult[]
     try {
@@ -143,15 +134,9 @@ export class NovelAnalysisUseCase {
       results = await this.runAnalysis(episode.workId, episode.rawMd, analysisTypes, episodeId, abortSignal)
     } catch (error) {
       // 실패(AbortedError 포함) 시 환불 — CC-1 §5-D: 차감 출처별로 정확히 복원
-      if (this.chargePoints) {
-        await this.chargePoints
-          .refundAnalysis(authorId, undefined, spentBySource as Record<CreditSource, number> | undefined)
-          .catch((e) => this.logger.error(`환불 실패: ${String(e)}`))
-      } else {
-        await this.creditRepo
-          .adjustCredits(authorId, ANALYSIS_CREDIT_COST, CreditReason.NOVEL_ANALYSIS_REFUND)
-          .catch((e) => this.logger.error(`환불 실패: ${String(e)}`))
-      }
+      await this.chargePoints
+        .refundAnalysis(authorId, undefined, spentBySource as Record<CreditSource, number> | undefined)
+        .catch((e) => this.logger.error(`환불 실패: ${String(e)}`))
       throw error
     }
 

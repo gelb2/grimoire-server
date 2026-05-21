@@ -26,12 +26,10 @@ describe('PaymentCleanupJob', () => {
       findByExternalTransactionId: jest.fn(),
       updateExternalTransactionId: jest.fn(),
       findByAuthorId: jest.fn(),
-      completePaymentAtomically: jest.fn(),
       updateStatus: jest.fn(),
       findPendingPaymentsOlderThan: jest.fn().mockResolvedValue([]),
       expirePayment: jest.fn().mockResolvedValue(undefined),
-      refundPaymentAtomically: jest.fn(),
-      // CC-2b — 환불 신 경로 mock (cleanup job 미사용이나 PaymentRepositoryPort 완전성)
+      // CC-2b/CC-4 P1 — 환불·충전 신 경로 mock (cleanup job 미사용이나 PaymentRepositoryPort 완전성)
       refundPaymentWithPoints: jest.fn(),
       completePaymentWithPoints: jest.fn(),
       findReusablePendingPayment: jest.fn(),
