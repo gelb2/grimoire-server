@@ -331,6 +331,12 @@ describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 
   let refundLogs: any[]
   let createdLedgers: any[]
   let executedUpdates: string[]
+  /**
+   * PAY-S2 — `tx.refundLog.aggregate` 가 반환할 기존 환불 누적 합계.
+   * 기본 0 (해당 paymentId 에 박제된 RefundLog 0건 — 1회차 환불).
+   * 누적 한도 케이스에서 it 별로 덮어쓴다.
+   */
+  let priorRefundedSum: number | null
 
   const baseInput = {
     paymentId: 'pay-r1',
@@ -352,6 +358,7 @@ describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 
     refundLogs = []
     createdLedgers = []
     executedUpdates = []
+    priorRefundedSum = 0
     txMock = {
       $queryRawUnsafe: jest.fn().mockImplementation(async () => [lockedRow]),
       // $executeRawUnsafe — CAS UPDATE (출처별 환수). 기본 1 row 갱신
@@ -381,6 +388,11 @@ describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 
           refundLogs.push(args.data)
           return args.data
         }),
+        // PAY-S2 — 기존 환불 누적 합계 조회 ($transaction 내부 누적 한도 검증).
+        // _sum.amount 는 priorRefundedSum (null = RefundLog 0건 → Prisma 의미상 null).
+        aggregate: jest.fn().mockImplementation(async () => ({
+          _sum: { amount: priorRefundedSum },
+        })),
       },
     }
     mockPrisma = {
@@ -510,12 +522,16 @@ describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 
   })
 
   it('refundedAmount > payment.amount 시 throw (validation)', async () => {
+    // PAY-S2 — 구 단건 검사(`환불 금액 초과`)는 누적 검증으로 흡수됨.
+    // 기존 RefundLog 0건 + 단건 2,000 > payment.amount 1,000 → 누적 검증식이
+    // `0 + 2000 > 1000` 으로 동일하게 throw (메시지만 누적 검증 어휘로 통합).
+    priorRefundedSum = 0
     txMock.payment.findUnique.mockResolvedValueOnce({
       amount: 1000, points: 25000, status: 'completed',
     })
     await expect(
       repo.refundPaymentWithPoints({ ...baseInput, refundedAmount: 2000 }),
-    ).rejects.toThrow('환불 금액')
+    ).rejects.toThrow('환불 누적 한도 초과')
   })
 
   it('payment.amount === 0 (free 결제) throw', async () => {
@@ -546,5 +562,71 @@ describe('PrismaPaymentRepository.refundPaymentWithPoints — 환불 신 경로 
     await expect(repo.refundPaymentWithPoints(baseInput)).rejects.toThrow(
       '작가를 찾을 수 없습니다',
     )
+  })
+
+  // ==========================================================================
+  // PAY-S2 (HIGH-1) — 다중 부분환불 누적 한도 검증 (depth-in-defense)
+  // 정본: shared-contracts §17 PartialRefund / §22 PaymentRaceCondition
+  // payment.amount=10,000 시나리오 — 1차 부분환불 후 2차가 누적 초과면 throw.
+  // ==========================================================================
+  describe('PAY-S2 — 누적 환불 한도 검증', () => {
+    /** payment.amount=10,000 으로 고정 (시나리오 정합 — refundPt 도 10,000 비례 기준) */
+    const capInput = {
+      ...baseInput,
+      refundPt: 10000,
+    }
+    beforeEach(() => {
+      // payment.amount=10,000 / charged 잔액 충분 (환수 자체는 통과 가능)
+      txMock.payment.findUnique.mockResolvedValue({
+        amount: 10000,
+        points: 10000,
+        status: 'completed',
+      })
+      lockedRow.points_charged = 100000
+    })
+
+    it('① 1차 부분환불 6,000 후 2차 6,000 — 누적 12,000 > 10,000 이므로 throw (적자 차단)', async () => {
+      // 기존 RefundLog 누적 6,000 박제된 상태(1차 부분환불 완료) → 2차 6,000 요청
+      priorRefundedSum = 6000
+
+      await expect(
+        repo.refundPaymentWithPoints({ ...capInput, refundedAmount: 6000 }),
+      ).rejects.toThrow('환불 누적 한도 초과')
+
+      // aggregate 가 paymentId WHERE + _sum.amount 로 호출됨 (누적 합산 정합 박제)
+      expect(txMock.refundLog.aggregate).toHaveBeenCalledWith({
+        where: { paymentId: 'pay-r1' },
+        _sum: { amount: true },
+      })
+      // 한도 초과 — RefundLog 박제 0건 + CAS UPDATE 0건 (트랜잭션 rollback 위임)
+      expect(refundLogs).toHaveLength(0)
+      expect(executedUpdates).toHaveLength(0)
+    })
+
+    it('② 1차 부분환불 6,000 후 2차 4,000 — 누적 10,000 = 10,000 이므로 통과 (한도 내 다회 환불)', async () => {
+      // 案 A 검증 — repository 메서드 직접 호출. 누적이 정확히 한도와 같으면 통과.
+      priorRefundedSum = 6000
+
+      const result = await repo.refundPaymentWithPoints({
+        ...capInput,
+        refundedAmount: 4000,
+      })
+
+      // 누적 10,000 ≤ 10,000 — 정상 환수 진행
+      expect(result.isPartial).toBe(true)
+      expect(refundLogs).toHaveLength(1)
+      expect(refundLogs[0].amount).toBe(4000)
+    })
+
+    it('③ 누적 0 (1회차)에서 단건 초과 — refundedAmount 12,000 > payment.amount 10,000 throw (단건 흡수)', async () => {
+      // 기존 RefundLog 0건 — 단건 검사를 누적 검증이 흡수했는지 확인
+      priorRefundedSum = null // Prisma aggregate 가 row 0건일 때 반환하는 값
+
+      await expect(
+        repo.refundPaymentWithPoints({ ...capInput, refundedAmount: 12000 }),
+      ).rejects.toThrow('환불 누적 한도 초과')
+
+      expect(refundLogs).toHaveLength(0)
+    })
   })
 })
