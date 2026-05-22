@@ -740,6 +740,70 @@ S Phase draft §8-6 원안 복원. `reset-monthly-pool.job.ts:18` 주석이 명�
 
 ---
 
+## ADR-015: Polar 구독 정기결제 연동 + HIGH-1 案 B 전환 + 정기결제↔cron 정합 (크레딧 개편 CC-5, 2026-05-22)
+
+### 상태
+승인 — 구현 완료 (CC-5 sprint, 코드 구현만 — Polar 구독 상품 실등록 / priceUsd cost-accountant 게이트 = 메인 후속)
+
+### 맥락
+
+진단 `reports/CREDIT_CORE_DIAGNOSIS.md` §7 — **PAY-P1-4 미착수 확정**: Polar webhook 이 `subscription.*` 이벤트를 명시적으로 무시(`polar.adapter.spec.ts:328` "subscription.created 등은 null 반환" 테스트), `MembershipPlanPort.changeTier` 호출처 0건, `MembershipPlan.polarSubscriptionId` 사용처 0건. I Phase 가 `MembershipPlan` 스키마 + 월 풀 cron 만 만들었고 "사용자가 Pro 구독 결제 → tier 갱신" 연동은 전무 — 누구도 구독을 시작/변경/해지할 수 없다.
+
+ADR-014 가 HIGH-1 을 **案 A**(`Author.plan` 정본 + `MembershipPlan.tier` 미러)로 박제하면서 "案 B 는 CC-5 또는 후속 sprint 옵션"으로 명시 유보. CC-5 의 `changeTier` 가 구독 webhook 으로 활성화되면 案 B 가 자연 정합 — `tier` 가 매월 결제·해지로 살아 움직이는데 `Author.plan` 을 정본으로 두면 "정본인데 미러가 더 자주 바뀐다"는 역전.
+
+### 결정
+
+#### 1. HIGH-1 案 A → 案 B 전환 (`MembershipPlan.tier` 정본화)
+
+- `MembershipPlan.tier` 가 **tier 정본**. `Author.plan`/`planExpireAt` 은 `[DEPRECATED]` — `changeTier` 案 A 미러로 동기 갱신(컬럼 물리 DROP 전까지 stale 방지용).
+- application 레이어의 `Author.plan` 직접 읽기 0건 — `MembershipPlanPort.getPlan` + `resolveTierOrFree`/`isMembershipExpired` 도메인 헬퍼 경유. theme 11곳(`generate-theme`/`theme-slot`/`get-theme`) + `plan.usecase` + `admin.usecase` 이행.
+- 등급 변경 단일 진입점 = `changeTier`. `plan.usecase.activatePlan`/`admin.usecase.createAuthor`·`changePlan` 의 직접 `authorRepo.updatePlan` SQL 제거.
+- 컬럼 물리 DROP(`Author.plan`/`planExpireAt`)은 별도 후속 sprint (CC-4 `Author.credits` deprecated→DROP 패턴 정합).
+
+#### 2. Polar 구독 webhook — 타입 분리 + 4 이벤트 + changeTier 연동
+
+- `NormalizedSubscriptionEvent` 신 타입 분리 — 충전 `NormalizedWebhookEvent`(status 3값 success/fail/cancel)는 구독 생명주기(created/updated/canceled/revoked) 표현 불가. `verifyAndParseWebhook` 반환 = union, `isSubscriptionEvent` 가드로 라우팅.
+- `polar.adapter` webhook 화이트리스트에 `subscription.*` 4 case + `tierForSubscriptionProductId`(productId 역매핑) + metadata 폴백.
+- `ProcessSubscriptionWebhookUseCase` — created/updated → `changeTier(tier)` + `polarSubscriptionId` 매핑, canceled/revoked → `changeTier('free')` 다운그레이드. `WebhookEvent` 멱등성 게이트 재사용.
+
+#### 3. 정기결제 갱신 ↔ `resetMonthlyPool` cron 정합 — 案 A (분리)
+
+- 풀 리셋은 `resetMonthlyPool` cron 의 달력 1일 기준 그대로 — 구독 webhook 은 풀을 건드리지 않는다.
+- `changeTier` 는 등급 변경 전용(가입 `created` / 등급 변경 `updated` 중 tier 변경 / 해지 `canceled`·`revoked`). 단순 정기결제 갱신(`order.paid` 재발행, tier 불변)은 충전 webhook 경로 — 풀 미차감·미리셋.
+- 작가 체감: "풀은 매월 1일 리셋, 구독료는 매월 가입일 청구" — 풀 리셋 책임을 cron 하나로 단일화(CC-3 가 막은 이중 리셋 리스크 재현 방지).
+
+#### 4. graceful 설계 — env 미설정 시 구독 checkout 만 비활성
+
+- env(`POLAR_PRODUCT_SUBSCRIPTION_PRO/_PREMIUM`) Optional. 미설정 시 `resolveSubscriptionProductId` null → `POST /subscriptions/checkout` 만 `503`. webhook 수신·`GET /membership`·기존 충전·테마·분석 전부 정상.
+- 코드는 Polar 구독 상품 등록과 독립 — 사용자가 나중에 등록 + env 입력 → checkout 즉시 활성(재배포 불요, env reload).
+
+### 기각안
+
+- **案 ① 분리** (CC-5 / 案 B 별도 sprint) — 案 B 단독은 효용 절반. `Author.plan` deprecated 가 의미를 가지려면 `tier` 를 갱신하는 활성 진입점(`changeTier`)이 실제 호출돼야 함 — CC-5 없이 案 B 만 하면 `changeTier` 호출처가 여전히 cron 뿐. 案 ② 단일 sprint·3 Phase 채택.
+- **NormalizedWebhookEvent 확장** (status 에 구독 lifecycle 추가) — 충전/구독 의미가 한 타입에 섞여 호출자 분기 모호. 별도 타입 분리 채택.
+- **정기결제 갱신 案 B** (가입일 기준 풀 리셋) — cron `nextMonthStart` 로직 전면 재작성 + 작가별 리셋일 분산 → 복잡. CC-3 가 이미 달력 기준 ADR 박제.
+
+### 트레이드오프
+
+- 案 B — `Author.plan` 미러를 DROP 전까지 유지해야 함(`changeTier` 案 A 미러 코드 잔존). DROP 시점에 미러 제거.
+- 구독 webhook 라우팅이 `payment.usecase.processWebhook` 에 분기 추가 — `isSubscriptionEvent` 가드 1줄로 명시적 분리, 충전 흐름 회귀 0건(통합 spec 검증).
+
+### 결과
+
+- **PAY-P1-4 종결** — 구독 webhook 4 이벤트 → `changeTier` 연동 + `POST /subscriptions/checkout`·`GET /membership`. 작가가 Pro/Premium 구독 시작/변경/해지 가능.
+- **HIGH-1 案 B 해소** — `MembershipPlan.tier` 단일 정본. `Author.plan` 읽기 13곳 → `getPlan` 경유.
+- graceful — Polar 구독 상품 미등록/env 미설정 시 구독 checkout 만 비활성, 운영 무사고.
+- 통합 spec `subscription-webhook-integration.spec.ts` (7 it) — webhook→changeTier→MembershipPlan→getMembership 사슬 + 案 B theme-slot 정합 + graceful 503 + 멱등성 + 정기결제↔cron 분리.
+
+### 잔존 영역
+
+- **Polar 구독 상품 dev/prod 등록 + env 입력** — 메인 후속(코드와 병렬, graceful 로 미등록 시에도 무사고).
+- **멤버십 priceUsd cost-accountant 게이트** — 충전 패키지 패턴($9.99/$19.99 추정) cost-accountant §0 재확인 후 `ai-cost-table.md` 반영 — 메인 후속.
+- **web 구독 페이지 실연결** — `POST /subscriptions/checkout`·`GET /membership` 연결 + VCK 검수 — 별도 web sprint.
+- **`Author.plan`/`planExpireAt` 컬럼 물리 DROP** — 案 B deprecated 후 별도 후속 sprint.
+
+---
+
 ## 참조
 
 - 트랜잭션: `src/application/payment/payment.usecase.ts`

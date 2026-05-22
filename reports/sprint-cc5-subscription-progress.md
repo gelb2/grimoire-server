@@ -72,8 +72,39 @@
 
 **Phase C 게이트 — PASS**.
 
-## 마무리
+## 마무리 — 완료
 
 - Gate 1 (`npm run build`): ✅ 무에러
 - Gate 2 (`npm test`): ✅ 1094 passed (77 suites). 커버리지 61.92% stmts / 63.45% lines — ≥60% 게이트 충족
-- Gate 3 (문서/sensor): 진행 중 — shared-contracts §30 + TECH_STATUS + api-contract + environments + ADR + SECURITY + data-model
+- Gate 3 (문서/sensor): ✅
+  - `shared-contracts.md` §30 — MembershipPlanPort/NormalizedSubscriptionEvent/엔드포인트/env + 변경 이력 1줄
+  - `TECH_STATUS.md` — CC-5 행 + 노트 / `docs/api-contract.md` — Subscription 섹션 신설 (엔드포인트 2개)
+  - `docs/environments.md` — `POLAR_PRODUCT_SUBSCRIPTION_*` Optional env / `docs/data-model.md` + `SCHEMA.md` — Author.plan deprecated + MembershipPlan CC-5 노트
+  - `ADR.md` — ADR-015 신설 / `SECURITY.md` §4 — CC-5 엔드포인트 보안 체크 / `CHANGELOG.md` 0.38.0 / 루트 `SYNC_STATUS.md` 갱신
+  - 정본 docs 3종(api-contract/data-model/environments) server → web 복사 완료
+  - sensor — `sensor-shared-contracts` PASS / `sensor-docs-sync` PASS / `sensor-subscription-pool-no-rollover` PASS(9/0) / `sensor-agent-priority-labels` PASS / `sensor-instruction-degradation` PASS
+
+## 완료 게이트 — 종합
+
+- **PAY-P1-4 해소 증명**: `grep "subscription.created" src/adapter/outbound/payment/polar.adapter.ts` ≥1건(화이트리스트 확장) + `changeTier` 호출처 `process-subscription-webhook.usecase.ts` 1건 + 통합 spec ① PASS = "Polar 구독 정기결제 → MembershipPlan 연동 완료"
+- **HIGH-1 案 B 해소 증명**: `grep "author\.plan\b" src/application/theme src/application/plan`(직접 읽기) 0건(getPlan 경유) + `Author.plan` `[DEPRECATED]` 박제(schema.prisma) + 통합 spec ④ PASS = "`MembershipPlan.tier` 정본화 완료"
+- **graceful 증명**: 통합 spec ⑤ PASS = "env 미설정 시 구독 checkout 만 503, webhook 수신·`GET /membership` 정상"
+- **마이그레이션**: 0건 (案 B = deprecated 주석만, `MembershipPlan.polarSubscriptionId` 필드 I Phase 부터 존재)
+
+## Polar 구독 상품 등록 시 필요한 env (메인 후속 작업 입력)
+
+| env 키 | 값 | 용도 |
+|---|---|---|
+| `POLAR_PRODUCT_SUBSCRIPTION_PRO` | Polar recurring product UUID (Pro ₩9,900/월) | Pro 구독 checkout product 매핑 |
+| `POLAR_PRODUCT_SUBSCRIPTION_PREMIUM` | Polar recurring product UUID (Premium ₩19,900/월) | Premium 구독 checkout product 매핑 |
+
+- Polar Dashboard 또는 `POST /v1/products/`(recurring, `recurring_interval: "month"`, price `type: recurring`)로 구독 상품 2종 등록 → product UUID 를 위 env 에 입력 (dev/prod 각각).
+- env 입력 후 컨테이너 재시작 1회 → `POST /subscriptions/checkout` 즉시 활성 (코드 재배포 불요).
+- priceUsd — Polar 는 USD 기준 MoR. 멤버십 priceUsd 정본 미존재 → cost-accountant §0 재확인 후 결정 (메인 후속, 본 작업 범위 외).
+- 구독 webhook — Polar Dashboard 의 webhook endpoint 가 `subscription.created/updated/canceled/revoked` 4 이벤트를 `/api/payments/webhook` 으로 전송하도록 설정.
+
+## 발견 사항
+
+- 진단 §5-A "Author.plan 읽기 ~13곳"은 실측 = application 직접 읽기 **19곳**(generate-theme 2 + theme-slot 5 + get-theme 4 + plan.usecase 5 + admin.usecase 3 — `isPlanExpired`/`DAILY_FREE`/`THEME_SLOT`/`updatePlan` 라인 합산). 전부 案 B 이행 완료.
+- `polar.adapter.spec.ts:328` "subscription.* 무시" 테스트는 진단 시점 그대로 존재 — C5d 에서 4 이벤트 정규화 케이스로 교체.
+- CHANGELOG 는 CC-3/CC-4 항목이 누락된 상태(마지막 0.37.0 = CC-2a) — CC-5 를 0.38.0 으로 추가(시퀀스 연속).
