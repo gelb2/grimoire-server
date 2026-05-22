@@ -306,6 +306,12 @@ class FakeCreditLedger implements CreditLedgerPort {
  */
 class FakePaymentRepository {
   private payments = new Map<string, PaymentRecord>()
+  /**
+   * PAY-S2 — paymentId 별 환불 누적 합계 (실 repository 의 `tx.refundLog.aggregate`
+   * `_sum.amount` 대응). refundPaymentWithPoints 매 호출 시 가산되어 다회 부분환불
+   * 누적 한도 검증이 통합 spec 에서도 실 repository 와 동일 동작.
+   */
+  private refundedTotal = new Map<string, number>()
 
   constructor(private readonly store: CreditStore) {}
 
@@ -411,8 +417,11 @@ class FakePaymentRepository {
     const p = this.payments.get(input.paymentId)
     if (!p) throw new Error(`Payment not found: ${input.paymentId}`)
     if (p.amount <= 0) throw new Error('환불 불가 payment.amount')
-    if (input.refundedAmount > p.amount) {
-      throw new Error('환불 금액 초과')
+    // PAY-S2 — 누적 한도 검증 (실 repository 의 $transaction 내부 검증과 동일).
+    // 단건 검사를 흡수 — 누적 0 이면 `refundedAmount > p.amount` 와 동치.
+    const priorRefunded = this.refundedTotal.get(input.paymentId) ?? 0
+    if (priorRefunded + input.refundedAmount > p.amount) {
+      throw new Error('환불 누적 한도 초과')
     }
     const ratio = input.refundedAmount / p.amount
     const isPartial = ratio < 1.0
@@ -460,6 +469,9 @@ class FakePaymentRepository {
         relatedId: input.paymentId,
       })
     }
+
+    // PAY-S2 — RefundLog 박제 대응: 환불 누적 가산 (다음 호출의 누적 검증 기준)
+    this.refundedTotal.set(input.paymentId, priorRefunded + input.refundedAmount)
 
     return {
       actualRefunded: totalRecovered,

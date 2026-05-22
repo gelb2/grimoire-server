@@ -211,7 +211,11 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
    *
    * CLAUDE.md §9 결제 원자성 — 아래 전부를 단일 `$transaction` 으로 묶는다:
    *   1. authors row FOR UPDATE — 같은 작가 동시 차감/환수 직렬화
-   *   2. Payment 조회 + validation(refundedAmount > 0, ≤ payment.amount) + 비례 계산(PAY-P2-1)
+   *   2. Payment 조회 + validation + 비례 계산(PAY-P2-1)
+   *      validation = refundedAmount > 0 (메서드 진입부) + payment.amount > 0
+   *      + **PAY-S2(HIGH-1) 누적 한도 검증** — `tx.refundLog.aggregate` 로 이 paymentId 의
+   *        기존 환불 누적 합계 조회 → `누적 + refundedAmount > payment.amount` 시 throw.
+   *        같은 tx 핸들이므로 race 0건 (단건 검사를 흡수 — 누적 0이면 동치).
    *   3. Payment status — 전액 'refunded' / 부분 'partial_refunded'
    *   4. `computeRefundLedgerEntries` 로 4 출처 환수액 + 외상 부족분 계산
    *      (환수 우선순위: charged → gift → subscription → free)
@@ -274,9 +278,29 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
           `환불 불가 — payment.amount=${payment.amount} (free 결제 또는 비정상 데이터)`,
         )
       }
-      if (refundedAmount > payment.amount) {
+
+      // PAY-S2 (HIGH-1) — 다중 부분환불 누적 한도 검증 (depth-in-defense).
+      // 정본: shared-contracts §17 PartialRefund / §22 PaymentRaceCondition.
+      //
+      // 기존 단건 검사(`refundedAmount > payment.amount`)는 이 paymentId 에 이미 박제된
+      // RefundLog 가 1건도 없을 때만 적자를 막는다 — 게이트 우회 경로(reconciliation 수동
+      // 환수 / 향후 admin 다회 부분환불)로 같은 payment 에 2회차 부분환불이 들어오면
+      // 매 호출이 자체적으로 `6000 > 10000` false 라 통과해 누적 적자가 발생한다.
+      //
+      // → 같은 $transaction(`tx`) 핸들로 기존 환불 누적 합계를 aggregate.
+      //   tx 핸들이므로 FOR UPDATE 로 직렬화된 구간 안에서 일관 스냅샷을 읽는다
+      //   (서로 다른 트랜잭션의 동시 부분환불도 authors row 잠금으로 차단됨 — race 0건).
+      //   누적 검증식 = `이미_환불된_누적 + 이번_환불액 > payment.amount` → throw.
+      //   누적이 0 이면 단건 검사와 동치 → 단건 검사를 누적 검증으로 흡수(병행 제거).
+      const priorRefundAgg = await tx.refundLog.aggregate({
+        where: { paymentId },
+        _sum: { amount: true },
+      })
+      const priorRefundedAmount = priorRefundAgg._sum.amount ?? 0
+      if (priorRefundedAmount + refundedAmount > payment.amount) {
         throw new Error(
-          `환불 금액(${refundedAmount})이 결제 금액(${payment.amount})을 초과할 수 없습니다`,
+          `환불 누적 한도 초과 — 기존 환불 누적(${priorRefundedAmount}) + 이번 환불(${refundedAmount}) ` +
+            `= ${priorRefundedAmount + refundedAmount} 가 결제 금액(${payment.amount})을 초과할 수 없습니다`,
         )
       }
 
