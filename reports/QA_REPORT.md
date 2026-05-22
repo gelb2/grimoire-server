@@ -1,3 +1,82 @@
+# QA Report — CC-5 AUDIT (PAY-P1-4 Polar 구독 정기결제 + HIGH-1 案 B)
+
+> 작성: 2026-05-22 / grimoire-qa (Evaluator, 독립 재실행)
+> 대상: develop branch (`e61c91d` merge / `feature/cc5-subscription-polar` --no-ff / origin 대비 +4 commits)
+> 정본 게이트: `.claude/state/sprint-cc5-subscription-plan-draft.md` / `reports/sprint-cc5-subscription-progress.md` / `reports/CREDIT_CORE_DIAGNOSIS.md` §7+§5-A
+> 마이그레이션: **0건 신규** (案 B = deprecated 주석만, 순수 코드)
+
+## CC-5 AUDIT — 환경
+- Node v22.19.0 / npm 10.9.3 / 작업 디렉토리 `grimoire-server/`
+- git status — `working tree clean` (RED 재현 2회 후 `git diff` 완전 청결 원복 확인)
+
+## CC-5 AUDIT — 10 검증 영역 (qa 독립 재실행)
+
+### (1) 빌드/테스트/커버리지 — qa 실측 ✅
+- `npm run build` (nest build) — 무에러, 종료코드 0
+- `npm test` — **77 suites / 1094 passed / 0 failed** (dev 주장 1094 일치)
+- 커버리지 — **61.92% stmts / 63.45% lines** (dev 주장 일치, ≥60% 게이트 충족)
+- `npx tsc --noEmit` — 무에러
+
+### (2) Phase A 案 B — `MembershipPlan.tier` 정본화 ✅
+- `grep "\.plan\b|planExpireAt" src/application/{theme,plan,admin}` (spec 제외) — `Author.plan` 직접 읽기 **0건**. 잔존 매칭 6건 전수 검증: DTO 응답 키 `plan`/`planExpireAt`(web 호환 보존) + 주석 + admin `input.plan` 파라미터 — 실 컬럼 접근 아님
+- theme(generate-theme 2·theme-slot·get-theme) / plan(getPlanInfo/handleExpiry) / admin(createAuthor/changePlan) 전부 `MembershipPlanPort.getPlan` + `resolveTierOrFree`/`isMembershipExpired` 경유 확인
+- `authorRepo.updatePlan` 직접 호출 — application 전체 **0건** (잔존 4건 grep 매칭 전부 주석)
+- `changeTier` = plan/admin 등급 변경 단일 진입점 (activatePlan/createAuthor/changeRole 경유)
+- `schema.prisma:33-39` — `Author.plan`/`planExpireAt` `[DEPRECATED — CC-5, ADR-014 案 B]` 박제 확인
+
+### (3) Phase B webhook — subscription 4 이벤트 ✅
+- `polar.adapter.ts:438-445` — `switch`에 `subscription.created/updated/canceled/revoked` 4 case + `default: return null`
+- `parseSubscriptionEvent` — `data.productId` 역매핑(`tierForSubscriptionProductId`) 우선 + `metadata.subscriptionTier` 폴백, `data.id` 누락 시 null(안전 거부), canceled/revoked는 tier='free' 고정
+- `polar.adapter.spec.ts` — 구 "subscription.* 무시" 테스트가 4 이벤트 정규화 케이스 +5 it로 교체됨 (qa 재실행 56 passed)
+- `ProcessSubscriptionWebhookUseCase` — created/updated→`changeTier(실 tier)`, canceled/revoked→`changeTier('free')` (어댑터가 tier='free' 정규화)
+- 멱등성 — `WebhookEvent.findByEventId` 게이트 + userId 누락 1차 게이트 + `createIfAbsent` P2002 race 차단 재사용
+- 案 A 분리 — usecase가 `resetMonthlyPool` 미호출, 풀 리셋은 cron 단독 (통합 spec ⑦ 검증)
+
+### (4) Phase C HTTP — checkout/membership ✅
+- `POST /subscriptions/checkout` — `@UseGuards(JwtAuthGuard)` + `@Throttle({ttl:60000,limit:3})` + `StartSubscriptionDto` class-validator. body에 authorId 미수신(`req.user.sub` 사용 — 위조 불가)
+- `GET /membership` — `@UseGuards(JwtAuthGuard)`, `toMembershipResponse`로 내부 ID(authorId/polarSubscriptionId) 미노출
+- graceful 503 — `StartSubscriptionUseCase` 이중 가드: (a) `initiateSubscriptionCheckout` 메서드 미구현 시 503 (b) 어댑터 null 반환 시 503, 둘 다 `ServiceUnavailableException` + 한국어 메시지
+
+### (5) graceful 설계 ✅
+- 통합 spec ⑤ (qa 재실행 PASS) — env 미설정 `FakePaymentGateway(false)` → `checkout` 503 / 동일 상태에서 `webhook` 수신·`getMembership`·`changeTier` 정상 / env 설정 시 checkout 활성. `POLAR_PRODUCT_SUBSCRIPTION_PRO/_PREMIUM` Optional 설계 정합
+
+### (6) 통합 spec 진위 + RED 재현 — qa 독립 ✅
+- `subscription-webhook-integration.spec.ts` — 7 it, 실 `ProcessSubscriptionWebhookUseCase`/`GetMembershipUseCase`/`StartSubscriptionUseCase`/`ThemeSlotUseCase` 인스턴스 + 인메모리 fake. webhook→changeTier→MembershipPlan→getMembership 사슬 실제 검증, mock 위장 아님
+- **RED 재현** — `ProcessSubscriptionWebhookUseCase`의 `changeTier` 호출을 임시 무력화 → 통합 spec **6/7 FAIL**(①②③④⑤⑥), ⑦만 PASS(non-call 단언이라 정상). 사슬 진위 입증
+- RED 원복 — `git diff --stat` 완전 청결, GREEN 복원 71 passed 재확인. commit 0건
+
+### (7) 회귀 — 핵심 spec 0건 ✅ (qa 재실행)
+- CC-5 코어 5 suites / 95 passed — process-subscription-webhook / polar.adapter.spec / subscription.controller / subscription-webhook-integration / membership-tier
+- 회귀 10 suites / 138 passed — payment.usecase / refund-payment / payment-charge-credit-integration / credit-grant-integration / credit-gift-refund-integration / credit-rollover-source-ledger-integration / generate-theme / theme-slot / get-theme / reset-monthly-pool.job
+- admin/plan usecase 2 suites / 40 passed
+
+### (8) 마이그레이션 0건 ✅
+- `git diff bb420d4(CC-4) HEAD -- prisma/migrations/` — **빈 결과** (CC-5 머지에 마이그레이션 변경 0건)
+- `npx prisma migrate status` — "Database schema is up to date!" (35 migrations)
+- ※ plan-draft 본문이 "36 migrations"로 기재 — 실측 디렉토리 35개. 텍스트 경미 불일치이나 **CC-5 신규 추가 0건은 git diff로 확정** — 게이트 영향 없음
+
+### (9) 게이트 종합 — **PASS**
+
+| 게이트 | 결과 |
+|---|---|
+| build (nest build) | ✅ PASS |
+| 테스트 + 커버리지 (1094 / 61.92%·63.45%) | ✅ PASS |
+| Phase A 案 B (Author.plan 직접 읽기 0건 + deprecated 박제) | ✅ PASS |
+| Phase B webhook (subscription 4 이벤트 + changeTier + 멱등성) | ✅ PASS |
+| Phase C HTTP (Guard/Throttle/DTO + 내부 ID 미노출) | ✅ PASS |
+| graceful (env 미설정 시 checkout만 503) | ✅ PASS |
+| 회귀 (핵심 spec 0건) | ✅ PASS |
+| 마이그레이션 0건 | ✅ PASS |
+
+→ **CC-5 게이트 종합 PASS**. dev PASS + qa PASS 일치, CRITICAL 0건. develop 머지 상태 유효.
+
+### (10) 메인 후속 핸드오프 정합 ✅
+- plan-draft §11 "Polar 구독 상품 등록 + env" 핸드오프와 코드 graceful 설계 정합 — 메인이 dev/prod Polar org에 recurring product 2종 등록 → `POLAR_PRODUCT_SUBSCRIPTION_PRO/_PREMIUM` env 입력 → 컨테이너 재시작 1회로 checkout 활성, 코드 재배포 불요
+- ⚠️ 메인 후속 미해결 1건 — 멤버십 **priceUsd 정본 미존재**($9.99/$19.99 추정). cost-accountant §0 재확인 게이트가 Polar 상품 등록 선행 조건 (plan-draft §3-2·§10-2). 코드 머지와 독립이나 prod 구독 활성화 전 필수
+- VCK 게이트 불요 (server sprint, UI 변경 0건). web 구독 페이지 실연결은 별도 web sprint
+
+---
+
 # QA Report — 2026-05-21 (CC-4 Phase 3 AUDIT + CC-4 종결)
 
 > 작성: 2026-05-21 / grimoire-qa (Evaluator, 독립 재실행)
