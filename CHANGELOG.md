@@ -1,5 +1,36 @@
 # Changelog — grimoire-server
 
+## [0.38.0] - 2026-05-22
+
+### Add — 크레딧 개편 CC-5: Polar 구독 정기결제 연동 (PAY-P1-4) + HIGH-1 案 B
+
+> 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §7·§5-A + `.claude/state/sprint-cc5-subscription-plan-draft.md` + ADR-015.
+> 코드 구현만 — Polar 구독 상품 실등록 / 배포 / priceUsd cost-accountant 게이트는 메인 후속.
+> 진단 §7 의 PAY-P1-4 미착수(구독 webhook 명시적 무시, `changeTier` 호출처 0건) 해소 +
+> ADR-014 가 유보한 HIGH-1 案 B(`MembershipPlan.tier` 정본화)를 같은 sprint 에서 이행.
+
+#### Added — 구독 정기결제 + HIGH-1 案 B
+- `resolveTierOrFree`(membership-tier.ts) + `isMembershipExpired`(plan.ts) 도메인 헬퍼 — `getPlan` 결과 → tier 결정 / 만기 판정(plan null·status!='active' → free).
+- `NormalizedSubscriptionEvent` 신 타입 + `isSubscriptionEvent` 가드 (충전 status 3값이 구독 생명주기 표현 불가 — 타입 분리).
+- `ProcessSubscriptionWebhookUseCase` — 구독 webhook 4 이벤트 처리 (created/updated → `changeTier(tier)`, canceled/revoked → `changeTier('free')`).
+- `StartSubscriptionUseCase` / `GetMembershipUseCase` + `SubscriptionController` — `POST /subscriptions/checkout`(JwtAuthGuard + @Throttle 분당 3) + `GET /membership`(JwtAuthGuard).
+- `polar.adapter` — webhook 화이트리스트에 `subscription.*` 4 case + `initiateSubscriptionCheckout`(recurring product, CircuitBreaker 래핑) + `resolveSubscriptionProductId`/`tierForSubscriptionProductId`.
+
+#### Changed — 案 B 이행 + 인터페이스
+- theme 도메인 11곳(`generate-theme`/`theme-slot`/`get-theme`) — `Author.plan` 직접 읽기 → `MembershipPlanPort.getPlan` + `resolveTierOrFree`/`isMembershipExpired` 경유.
+- `plan.usecase`/`admin.usecase` — `activatePlan`/`createAuthor`/`changePlan` 의 직접 `authorRepo.updatePlan` SQL → `changeTier` 단일 진입점.
+- `MembershipPlanPort.changeTier` 시그니처 — 4번째 인자 `polarSubscriptionId?` 추가 + status/expiresAt 정합(free 다운그레이드 → cancelled).
+- `verifyAndParseWebhook` 반환 — `NormalizedWebhookEvent | NormalizedSubscriptionEvent | null`. `payment.usecase.processWebhook` 라우팅 분기.
+- `Author.plan`/`planExpireAt` `[DEPRECATED]` 박제 (tier 정본 = `MembershipPlan.tier`, `changeTier` 案 A 미러 유지 — 컬럼 물리 DROP 은 별도 후속).
+
+#### Notes
+- **graceful 설계** — env `POLAR_PRODUCT_SUBSCRIPTION_PRO/_PREMIUM` Optional. 미설정 시 `POST /subscriptions/checkout` 만 503, webhook 수신·`GET /membership`·기존 충전·테마·분석 전부 정상.
+- **정기결제 갱신 ↔ cron 정합** — 案 A 분리 (풀 리셋 = `resetMonthlyPool` cron 단독, 구독 webhook 은 등급 변경만).
+- **마이그레이션 0건** — 案 B = deprecated 주석만, `MembershipPlan.polarSubscriptionId` 필드는 I Phase 부터 존재.
+- 통합 spec `subscription-webhook-integration.spec.ts` (7 it) — webhook→changeTier→MembershipPlan→getMembership 사슬 + 案 B theme-slot 정합 + graceful 503 + 멱등성.
+- jest 1054 → 1094 PASS (+40 it). 커버리지 61.92%(stmts) / 63.45%(lines).
+- cost-accountant 게이트 = priceUsd 1건(메인 후속), visual-canon-keeper 불요(server sprint).
+
 ## [0.37.0] - 2026-05-20
 
 ### Fix — 크레딧 개편 CC-2a: 충전 결제 적립 신 포인트 원장 연동 (CRITICAL-2 충전분 + C-6 해소)

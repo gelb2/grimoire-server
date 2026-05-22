@@ -181,6 +181,30 @@ describe('PrismaMembershipPlanRepository', () => {
       expect(planUpdates.length).toBeGreaterThan(0)
       expect(authorUpdates.find((u) => u.plan !== undefined)).toBeDefined()
     })
+
+    // CC-5 (PAY-P1-4) — 구독 webhook 매핑 + status/expiresAt 정합
+    it('polarSubscriptionId 전달 시 MembershipPlan.polarSubscriptionId 갱신', async () => {
+      await repo.changeTier('author-1', 'pro', new Date('2026-05-17T00:00:00Z'), 'sub_polar_123')
+      expect(planUpdates[0].polarSubscriptionId).toBe('sub_polar_123')
+    })
+
+    it('polarSubscriptionId 미전달 시 polarSubscriptionId 키 없음 (기존 매핑 보존)', async () => {
+      await repo.changeTier('author-1', 'pro', new Date('2026-05-17T00:00:00Z'))
+      expect(planUpdates[0].polarSubscriptionId).toBeUndefined()
+    })
+
+    it('pro 전환 시 status="active" + expiresAt=poolResetAt', async () => {
+      await repo.changeTier('author-1', 'pro', new Date('2026-05-17T00:00:00Z'))
+      expect(planUpdates[0].status).toBe('active')
+      expect(planUpdates[0].expiresAt).toBeInstanceOf(Date)
+    })
+
+    it('free 다운그레이드 시 status="cancelled" + expiresAt=now (즉시 만료)', async () => {
+      const now = new Date('2026-05-17T00:00:00Z')
+      await repo.changeTier('author-1', 'free', now)
+      expect(planUpdates[0].status).toBe('cancelled')
+      expect(planUpdates[0].expiresAt).toEqual(now)
+    })
   })
 
   describe('checkAndResetExpiredPool — lazy 안전망 (CC-3 CRITICAL-1 案 B)', () => {

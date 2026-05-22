@@ -5,9 +5,19 @@ describe('ThemeSlotUseCase', () => {
   let useCase: ThemeSlotUseCase
   let mockThemeRepo: any
   let mockAuthorRepo: any
+  // 크레딧 개편 CC-5 (2026-05-22, HIGH-1 案 B) — tier 정본 MembershipPlanPort mock
+  let mockMembershipRepo: any
 
   const mockAuthor = { id: 'author-1', plan: 'free', planExpireAt: null, defaultThemeId: null }
   const mockTheme = { id: 'theme-1', authorId: 'author-1', isSlotted: false }
+
+  /** MembershipPlanState mock 생성 헬퍼 */
+  const planState = (tier: string, status = 'active') => ({
+    id: 'plan-1', authorId: 'author-1', tier,
+    monthlyPoolPoints: 0, poolBalance: 0, poolResetAt: new Date('2099-01-01'),
+    startedAt: new Date('2026-01-01'), expiresAt: null,
+    polarSubscriptionId: null, status,
+  })
 
   beforeEach(() => {
     mockThemeRepo = {
@@ -21,7 +31,11 @@ describe('ThemeSlotUseCase', () => {
       findById: jest.fn().mockResolvedValue(mockAuthor),
       updateDefaultThemeId: jest.fn().mockResolvedValue(mockAuthor),
     }
-    useCase = new ThemeSlotUseCase(mockThemeRepo, mockAuthorRepo)
+    // CC-5 案 B — 기본 = 멤버십 미가입(free). slotLimit 1.
+    mockMembershipRepo = {
+      getPlan: jest.fn().mockResolvedValue(null),
+    }
+    useCase = new ThemeSlotUseCase(mockThemeRepo, mockAuthorRepo, mockMembershipRepo)
   })
 
   describe('assignSlot', () => {
@@ -46,8 +60,9 @@ describe('ThemeSlotUseCase', () => {
       await expect(useCase.assignSlot('author-1', 'theme-1')).rejects.toThrow(ForbiddenException)
     })
 
-    it('플랜 만료 시 ForbiddenException', async () => {
-      mockAuthorRepo.findById.mockResolvedValue({ ...mockAuthor, plan: 'pro', planExpireAt: new Date('2020-01-01') })
+    it('플랜 만료 시 ForbiddenException (MembershipPlan status=cancelled)', async () => {
+      // CC-5 案 B — 만기는 MembershipPlan.status 로 판정.
+      mockMembershipRepo.getPlan.mockResolvedValue(planState('pro', 'cancelled'))
       await expect(useCase.assignSlot('author-1', 'theme-1')).rejects.toThrow(ForbiddenException)
     })
   })

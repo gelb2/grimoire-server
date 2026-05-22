@@ -33,8 +33,8 @@
 | pointsGift | points_gift | Int | default(0) | **크레딧 개편 I Phase** — 응원 선물 수령 포인트 잔액 캐시 |
 | pointsCharged | points_charged | Int | default(0) | **크레딧 개편 I Phase** — 충전 포인트 잔액 캐시 (영구 보존) |
 | deficitPoints | deficit_points | Int | default(0) | **크레딧 개편 I Phase** — 외상 (채팅 사후 차감 부족분, 충전 시 우선 상계) |
-| plan | plan | String | default("free") | 구독 플랜 (free/pro/premium). **CC-3 (HIGH-1 案 A, ADR-014)** — `Author.plan` 정본 유지 + `MembershipPlan.tier` 미러. `changeTier` 가 유일한 변경 진입점(`$transaction` 양측 동기). 직접 SQL UPDATE 금지 |
-| planExpireAt | plan_expire_at | DateTime? | - | 플랜 만료일. **CC-3 案 A 동기** — `MembershipPlan.poolResetAt` 미러 (free → null / pro·premium → 다음 풀 리셋일) |
+| plan | plan | String | default("free") | **[DEPRECATED — CC-5, ADR-015 案 B]** tier 정본이 `MembershipPlan.tier` 로 이행. application 직접 읽기 0건(`MembershipPlanPort.getPlan` 경유). `changeTier` 案 A 미러로 동기 갱신 — 컬럼 물리 DROP 전까지 stale 방지용. 컬럼 DROP 은 별도 후속 sprint |
+| planExpireAt | plan_expire_at | DateTime? | - | **[DEPRECATED — CC-5, ADR-015]** 만기 판정은 `MembershipPlan.status`/`expiresAt` 정본. `changeTier` 案 A 미러 — `MembershipPlan.poolResetAt` 미러 (free → null / pro·premium → 다음 풀 리셋일) |
 | theme | - | Theme? | 1:1 관계 | 작가 테마 |
 | works | - | Work[] | 1:N 관계 | 작품 목록 |
 | socialAccounts | - | SocialAccount[] | 1:N 관계 | 소셜 로그인 계정 |
@@ -45,6 +45,8 @@
 > **크레딧 개편 I Phase (2026-05-17)**: 디노미네이션 1:1,000 — `credits` 단일 Int → `points_*` 4 필드(출처별 잔액 캐시, 1-C 하이브리드) + `credit_ledgers` 원장. 정본 ADR-012.
 >
 > **크레딧 개편 CC-3 (2026-05-20, ADR-014)** — 이월 금지 lazy 안전망 + Author.plan 양측 동기 + 신 ledger 선물 랭킹. ① `MembershipPlanPort.checkAndResetExpiredPool` 신설 — `credit.usecase.getPointBalance` 진입에서 lazy 자동 보정(cron 1차 + lazy 2차 이중 안전망, §8-8 #2 이월 금지 코드 강제). ② `changeTier` 트랜잭션에 `Author.plan`/`planExpireAt` 동기 갱신 (案 A 양측 정합). ③ `CreditLedgerPort.getGiftRanking` 신설 — `credit.usecase.getGiftRanking`/`getLogs` 가 ledger 위임 (구 `CreditLog` 신·구 분열 해소).
+>
+> **크레딧 개편 CC-5 (2026-05-22, ADR-015)** — Polar 구독 정기결제 연동 + HIGH-1 案 B. ① **案 B 전환** — tier 정본을 `MembershipPlan.tier` 로 이행, `Author.plan`/`planExpireAt` `[DEPRECATED]`(`changeTier` 案 A 미러 유지 — 컬럼 물리 변경 0건, DROP 은 별도 후속). ② `MembershipPlan.polarSubscriptionId` 는 I Phase 부터 존재한 필드 — CC-5 에서 `changeTier(_, _, _, polarSubscriptionId)` 가 구독 webhook 매핑 저장에 사용(스키마 변경 0건). ③ `changeTier` 가 구독 상태를 `status`/`expiresAt` 에 반영 — free 다운그레이드 → `status='cancelled'`+`expiresAt=now` / pro·premium → `status='active'`. **마이그레이션 0건** (案 B = deprecated 주석만, 필드 추가 0).
 
 ### themes
 

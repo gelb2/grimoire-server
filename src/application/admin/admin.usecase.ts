@@ -1,14 +1,16 @@
-import { Injectable, Inject, BadRequestException, NotFoundException } from '@nestjs/common'
+import { Injectable, Inject, Optional, BadRequestException, NotFoundException } from '@nestjs/common'
 import * as bcrypt from 'bcryptjs'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { CreditLedgerPort, CreditBalance } from '@domain/port/outbound/credit-ledger.port'
 import { CreditSource, isCreditSource } from '@domain/model/credit-source'
 import { AdminRepositoryPort } from '@domain/port/outbound/admin-repository.port'
+import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
 import { GrantPointsUseCase } from '@application/credit/grant-points.usecase'
 import { AuditLogService } from './audit-log.service'
 import { Author } from '@domain/model/author'
 import { EpisodeStatus } from '@domain/model/work'
+import { normalizeMembershipTier } from '@domain/model/membership-tier'
 
 /**
  * 크레딧 개편 CC-4 Phase 1 (2026-05-21) — admin.usecase 신·구 분열 해소.
@@ -17,6 +19,10 @@ import { EpisodeStatus } from '@domain/model/work'
  *   - `creditRepo.sumNegativeAmounts` → `ledger.sumSpendByAuthor(null)` (L2c/L2d)
  *   - `creditRepo.findLogsByAuthorId` → `ledger.findByAuthor(authorId, 100)` (L2e)
  * 신 `CreditLedger` 원장 기반 통계/이력 — CC-2b 이후 신 선물·환불이 admin 통계에 정상 반영.
+ *
+ * 크레딧 개편 CC-5 (2026-05-22, HIGH-1 案 B) — 관리자 등급 변경을 MembershipPlan 으로 이행.
+ *   - `createAuthor`/`changePlan` 의 `authorRepo.updatePlan` 직접 SQL → `MembershipPlanPort.changeTier`.
+ *     changeTier 가 MembershipPlan.tier 정본 갱신 + 案 A 미러(Author.plan) 동기.
  */
 @Injectable()
 export class AdminUseCase {
@@ -29,6 +35,11 @@ export class AdminUseCase {
     private readonly grantPoints: GrantPointsUseCase,
     @Inject('CreditLedgerPort') private readonly ledger: CreditLedgerPort,
     private readonly auditLog: AuditLogService,
+    // CC-5 (HIGH-1 案 B) — 관리자 등급 변경 단일 진입점.
+    // Optional — 미주입 시 등급 변경 불가(BACKWARD COMPATIBLE).
+    @Optional()
+    @Inject('MembershipPlanPort')
+    private readonly membershipRepo: MembershipPlanPort | null = null,
   ) {}
 
   // ─── 통계 ───
@@ -70,7 +81,10 @@ export class AdminUseCase {
     if (existingSlug) throw new BadRequestException('이미 사용 중인 슬러그입니다')
     const passwordHash = await bcrypt.hash(input.password, 10)
     const author = await this.authorRepo.create({ slug: input.slug, name: input.name, email: input.email, passwordHash })
-    if (input.plan && input.plan !== 'free') await this.authorRepo.updatePlan(author.id, input.plan, null)
+    // CC-5 (HIGH-1 案 B) — 등급 부여를 changeTier 경유 (직접 updatePlan SQL 금지).
+    if (input.plan && input.plan !== 'free' && this.membershipRepo) {
+      await this.membershipRepo.changeTier(author.id, normalizeMembershipTier(input.plan), new Date())
+    }
     await this.auditLog.log(adminId, 'author_create', author.id, { slug: input.slug, email: input.email, plan: input.plan ?? 'free' })
     return author
   }
@@ -193,9 +207,17 @@ export class AdminUseCase {
   async changePlan(adminId: string, authorId: string, plan: string, durationDays: number): Promise<void> {
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
-    const planExpireAt = durationDays > 0 ? new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000) : null
-    await this.authorRepo.updatePlan(authorId, plan, planExpireAt)
-    await this.auditLog.log(adminId, 'plan_change', authorId, { before: { plan: author.plan, planExpireAt: author.planExpireAt }, after: { plan, durationDays } })
+    // CC-5 (HIGH-1 案 B) — 관리자 등급 변경을 changeTier 경유 (직접 updatePlan SQL 금지).
+    // changeTier 가 MembershipPlan.tier 정본 + 案 A 미러(Author.plan) 동기 + 풀 크기 갱신.
+    if (!this.membershipRepo) {
+      throw new BadRequestException('멤버십 모듈이 활성화되지 않았습니다')
+    }
+    const before = await this.membershipRepo.getPlan(authorId)
+    await this.membershipRepo.changeTier(authorId, normalizeMembershipTier(plan), new Date())
+    await this.auditLog.log(adminId, 'plan_change', authorId, {
+      before: { tier: before?.tier ?? 'free', status: before?.status ?? null },
+      after: { plan, durationDays },
+    })
   }
 
   // ─── 콘텐츠 관리 ───

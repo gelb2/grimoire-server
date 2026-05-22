@@ -10,6 +10,8 @@ describe('AdminUseCase', () => {
   let mockGrantPoints: any
   let mockLedger: any
   let mockAuditLog: any
+  // 크레딧 개편 CC-5 (2026-05-22, HIGH-1 案 B) — 등급 변경 MembershipPlanPort mock
+  let mockMembershipRepo: any
 
   beforeEach(() => {
     mockAuthorRepo = {
@@ -94,10 +96,21 @@ describe('AdminUseCase', () => {
       deleteSystemTheme: jest.fn().mockResolvedValue(undefined),
     }
 
+    // CC-5 (HIGH-1 案 B) — 관리자 등급 변경을 MembershipPlanPort.changeTier 경유로 이행.
+    mockMembershipRepo = {
+      getPlan: jest.fn().mockResolvedValue(null),
+      changeTier: jest.fn().mockResolvedValue({
+        id: 'plan-1', authorId: 'author-1', tier: 'pro',
+        monthlyPoolPoints: 93000, poolBalance: 93000, poolResetAt: new Date('2099-01-01'),
+        startedAt: new Date('2026-01-01'), expiresAt: new Date('2099-01-01'),
+        polarSubscriptionId: null, status: 'active',
+      }),
+    }
     // CC-4 Phase 1 — AdminUseCase 생성자에서 creditRepo 인자 제거.
+    // CC-5 — MembershipPlanPort 인자 추가 (案 B 등급 변경 단일 진입점).
     useCase = new AdminUseCase(
       mockAuthorRepo, mockWorkRepo, mockAdminRepo as any,
-      mockGrantPoints, mockLedger, mockAuditLog,
+      mockGrantPoints, mockLedger, mockAuditLog, mockMembershipRepo as any,
     )
   })
 
@@ -253,9 +266,10 @@ describe('AdminUseCase', () => {
   })
 
   describe('플랜 관리', () => {
-    it('플랜을 변경하고 감사 로그를 기록한다', async () => {
+    it('changeTier 경유로 등급을 변경하고 감사 로그를 기록한다 (案 B)', async () => {
       await useCase.changePlan('admin-1', 'author-1', 'pro', 30)
-      expect(mockAuthorRepo.updatePlan).toHaveBeenCalled()
+      // CC-5 案 B — 직접 updatePlan SQL 0건, changeTier 단일 진입점.
+      expect(mockMembershipRepo.changeTier).toHaveBeenCalledWith('author-1', 'pro', expect.any(Date))
       expect(mockAuditLog.log).toHaveBeenCalledWith('admin-1', 'plan_change', 'author-1', expect.any(Object))
     })
   })

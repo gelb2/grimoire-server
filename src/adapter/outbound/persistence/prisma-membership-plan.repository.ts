@@ -118,15 +118,23 @@ export class PrismaMembershipPlanRepository implements MembershipPlanPort {
     authorId: string,
     tier: MembershipTier,
     now: Date,
+    polarSubscriptionId?: string,
   ): Promise<MembershipPlanState> {
     const newPool = monthlyPoolFor(tier)
     const nextResetAt = nextMonthStart(now)
+
+    // CC-5 (PAY-P1-4) — 구독 가입/변경 시 구독 종료 의미를 status 로 표현.
+    // free 다운그레이드(해지/revoke) = status='cancelled' / pro·premium = status='active'.
+    const newStatus = tier === 'free' ? 'cancelled' : 'active'
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.membershipPlan.findFirst({
         where: { authorId, status: 'active' },
         orderBy: { startedAt: 'desc' },
       })
+      // CC-5 — polarSubscriptionId 전달 시만 매핑 갱신 (미전달 = 기존 매핑 보존).
+      const subscriptionIdData =
+        polarSubscriptionId !== undefined ? { polarSubscriptionId } : {}
       const planRow = existing
         ? await tx.membershipPlan.update({
             where: { id: existing.id },
@@ -135,6 +143,10 @@ export class PrismaMembershipPlanRepository implements MembershipPlanPort {
               monthlyPoolPoints: newPool,
               poolBalance: newPool,
               poolResetAt: nextResetAt,
+              status: newStatus,
+              // 구독 유효기간 — pro/premium 은 다음 리셋일까지, free 다운그레이드는 즉시 만료.
+              expiresAt: tier === 'free' ? now : nextResetAt,
+              ...subscriptionIdData,
             },
           })
         : // 멤버십 row 가 없는 작가 (마이그레이션 누락 방어) — 신규 생성
@@ -145,15 +157,16 @@ export class PrismaMembershipPlanRepository implements MembershipPlanPort {
               monthlyPoolPoints: newPool,
               poolBalance: newPool,
               poolResetAt: nextResetAt,
-              status: 'active',
+              status: newStatus,
+              expiresAt: tier === 'free' ? now : nextResetAt,
+              ...subscriptionIdData,
             },
           })
 
-      // CC-3 (HIGH-1 案 A) — Author.plan + planExpireAt 동기 갱신.
-      // 정본: ADR-014. `Author.plan` 정본 유지 + `MembershipPlan.tier` 미러.
-      // - free 전환 시 planExpireAt = null (만기 의미 없음 — 기존 plan.usecase 정합)
+      // CC-5 (HIGH-1 案 B, ADR-014 案 B 전환) — `MembershipPlan.tier` 정본.
+      // `Author.plan` + `planExpireAt` 는 案 A 미러 — DROP(별도 후속 sprint) 전까지 stale 방지.
+      // - free 전환 시 planExpireAt = null (만기 의미 없음)
       // - pro/premium 전환 시 planExpireAt = poolResetAt (다음 풀 리셋 = 미러 정책)
-      //   CC-5 PAY-P1-4 시 구독 결제 만기와 정합 재확인 — 본 sprint 는 미러 정책으로 진입.
       const newPlanExpireAt = tier === 'free' ? null : nextResetAt
       await tx.author.update({
         where: { id: authorId },
