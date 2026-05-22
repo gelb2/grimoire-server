@@ -1,23 +1,43 @@
-import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
+import { Injectable, Inject, Optional, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
 import { ThemeRepositoryPort } from '@domain/port/outbound/theme-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
+import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
 import { Theme } from '@domain/model/theme'
-import { THEME_SLOT_LIMITS } from '@domain/model/config'
-import { isPlanExpired } from '@domain/model/plan'
+import { isMembershipExpired } from '@domain/model/plan'
+import {
+  resolveTierOrFree,
+  MEMBERSHIP_THEME_SLOTS,
+  MembershipTier,
+} from '@domain/model/membership-tier'
 
 @Injectable()
 export class ThemeSlotUseCase {
   constructor(
     @Inject('ThemeRepositoryPort') private readonly themeRepo: ThemeRepositoryPort,
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
+    // 크레딧 개편 CC-5 (2026-05-22, HIGH-1 案 B) — tier 정본을 MembershipPlan 으로 이행.
+    // Optional — 미주입 시 free 폴백(BACKWARD COMPATIBLE).
+    @Optional()
+    @Inject('MembershipPlanPort')
+    private readonly membershipRepo: MembershipPlanPort | null = null,
   ) {}
+
+  /** CC-5 案 B — 작가 tier + 만기 여부를 MembershipPlan 정본으로 조회 */
+  private async resolveMembership(
+    authorId: string,
+  ): Promise<{ tier: MembershipTier; expired: boolean }> {
+    const plan = this.membershipRepo ? await this.membershipRepo.getPlan(authorId) : null
+    return { tier: resolveTierOrFree(plan), expired: isMembershipExpired(plan) }
+  }
 
   /** 테마를 활성 슬롯에 배치 — 슬롯 비었으면 자동 활성화 */
   async assignSlot(authorId: string, themeId: string): Promise<Theme> {
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
 
-    if (isPlanExpired(author.plan, author.planExpireAt)) {
+    // CC-5 (HIGH-1 案 B) — tier 정본을 MembershipPlan 으로 조회.
+    const { tier, expired } = await this.resolveMembership(authorId)
+    if (expired) {
       throw new ForbiddenException('구독 플랜이 만료되었습니다. 플랜을 갱신하세요.')
     }
 
@@ -31,7 +51,7 @@ export class ThemeSlotUseCase {
     }
 
     // 슬롯 용량 체크
-    const slotLimit = THEME_SLOT_LIMITS[author.plan] ?? 1
+    const slotLimit = MEMBERSHIP_THEME_SLOTS[tier]
     const slottedCount = await this.themeRepo.countSlottedByAuthorId(authorId)
     if (slottedCount >= slotLimit) {
       throw new BadRequestException(
@@ -84,7 +104,9 @@ export class ThemeSlotUseCase {
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
 
-    if (isPlanExpired(author.plan, author.planExpireAt)) {
+    // CC-5 (HIGH-1 案 B) — tier 정본을 MembershipPlan 으로 조회.
+    const { tier, expired } = await this.resolveMembership(authorId)
+    if (expired) {
       throw new ForbiddenException('구독 플랜이 만료되었습니다. 플랜을 갱신하세요.')
     }
 
@@ -95,7 +117,7 @@ export class ThemeSlotUseCase {
 
     // 슬롯에 없으면 자동 슬롯 배정, 가득 차면 기존 기본 테마를 보관으로 내리고 공간 확보
     if (!theme.isSlotted) {
-      const slotLimit = THEME_SLOT_LIMITS[author.plan] ?? 1
+      const slotLimit = MEMBERSHIP_THEME_SLOTS[tier]
       const slottedCount = await this.themeRepo.countSlottedByAuthorId(authorId)
       if (slottedCount >= slotLimit) {
         // auto-evict: 현재 기본 테마를 슬롯에서 내려 공간을 만든다
@@ -129,14 +151,20 @@ export class ThemeSlotUseCase {
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
 
+    // CC-5 (HIGH-1 案 B) — tier 정본을 MembershipPlan 으로 조회.
+    const membershipPlan = this.membershipRepo
+      ? await this.membershipRepo.getPlan(authorId)
+      : null
+    const tier = resolveTierOrFree(membershipPlan)
     const themes = await this.themeRepo.findAllByAuthorId(authorId)
     const slottedCount = themes.filter(t => t.isSlotted).length
-    const slotLimit = THEME_SLOT_LIMITS[author.plan] ?? 1
+    const slotLimit = MEMBERSHIP_THEME_SLOTS[tier]
 
     return {
-      plan: author.plan,
-      planExpireAt: author.planExpireAt,
-      isExpired: isPlanExpired(author.plan, author.planExpireAt),
+      // 응답 키 `plan`/`planExpireAt` 보존(web 호환) — 값은 MembershipPlan 정본.
+      plan: tier,
+      planExpireAt: membershipPlan?.expiresAt ?? null,
+      isExpired: isMembershipExpired(membershipPlan),
       slotLimit,
       slottedCount,
       defaultThemeId: author.defaultThemeId ?? null,

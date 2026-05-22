@@ -1,9 +1,10 @@
-import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
+import { Injectable, Inject, Optional, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
 import { ThemeRepositoryPort } from '@domain/port/outbound/theme-repository.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
+import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
 import { Theme, AuthorTheme } from '@domain/model/theme'
-import { isPlanExpired, SYSTEM_FALLBACK_PRESET } from '@domain/model/plan'
+import { isMembershipExpired, SYSTEM_FALLBACK_PRESET } from '@domain/model/plan'
 
 @Injectable()
 export class GetThemeUseCase {
@@ -11,7 +12,18 @@ export class GetThemeUseCase {
     @Inject('ThemeRepositoryPort') private readonly themeRepo: ThemeRepositoryPort,
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
     @Inject('AuthorRepositoryPort') private readonly authorRepo: AuthorRepositoryPort,
+    // 크레딧 개편 CC-5 (2026-05-22, HIGH-1 案 B) — tier 정본을 MembershipPlan 으로 이행.
+    // Optional — 미주입 시 만기 아님(free) 폴백(BACKWARD COMPATIBLE).
+    @Optional()
+    @Inject('MembershipPlanPort')
+    private readonly membershipRepo: MembershipPlanPort | null = null,
   ) {}
+
+  /** CC-5 案 B — 작가 멤버십 만기 여부를 MembershipPlan 정본으로 판정 */
+  private async isAuthorMembershipExpired(authorId: string): Promise<boolean> {
+    const plan = this.membershipRepo ? await this.membershipRepo.getPlan(authorId) : null
+    return isMembershipExpired(plan)
+  }
 
   /** 작가 기본 테마 조회 — 만기 시 시스템 테마(midnight) 폴백 */
   async execute(authorSlug: string): Promise<Theme> {
@@ -19,7 +31,7 @@ export class GetThemeUseCase {
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
 
     // 플랜 만기 → 시스템 테마 폴백
-    if (isPlanExpired(author.plan, author.planExpireAt)) {
+    if (await this.isAuthorMembershipExpired(author.id)) {
       return this.getSystemFallback()
     }
 
@@ -33,7 +45,7 @@ export class GetThemeUseCase {
     const author = await this.authorRepo.findBySlug(authorSlug)
     if (!author) return null
 
-    if (isPlanExpired(author.plan, author.planExpireAt)) {
+    if (await this.isAuthorMembershipExpired(author.id)) {
       return this.getSystemFallback()
     }
 

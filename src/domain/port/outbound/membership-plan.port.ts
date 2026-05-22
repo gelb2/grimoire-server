@@ -62,14 +62,24 @@ export interface MembershipPlanPort {
   findPlansToReset(now: Date): Promise<MembershipPlanState[]>
 
   /**
-   * 멤버십 등급 변경 (구독 가입/변경 — Polar 연동 별도 sprint).
+   * 멤버십 등급 변경 — 구독 가입/변경(Polar 연동) + 관리자 수동 등급 변경 단일 진입점.
    * 등급 변경 시 풀 크기 갱신.
    *
-   * CC-3 (HIGH-1 案 A) — 같은 `$transaction` 안에서 `Author.plan` + `planExpireAt` 도 동기 갱신.
-   * `Author.plan` 이 정본 유지, `MembershipPlan.tier` 가 미러 — `changeTier` 가 유일한 변경 진입점.
-   * 직접 SQL UPDATE 금지 (ADR-014 案 A 한계 — 마이그레이션·관리자 수동 외 금지).
+   * CC-5 (HIGH-1 案 B, ADR-014 案 B 전환) — `MembershipPlan.tier` 가 **정본**.
+   * application 레이어의 tier 읽기는 전부 `getPlan` 경유 — `Author.plan` 직접 읽기 0건.
+   * `changeTier` 는 案 A 미러로 `Author.plan` + `planExpireAt` 도 동기 갱신 — `Author.plan` 컬럼
+   * 물리 DROP(별도 후속 sprint) 전까지 stale 방지용 미러 (DROP 시점에 미러 코드 제거).
+   *
+   * CC-5 — `polarSubscriptionId` 인자(Optional): Polar 구독 결제 매핑 저장.
+   * 전달 시 `$transaction` 안에서 `MembershipPlan.polarSubscriptionId` 갱신.
+   * 미전달(관리자 수동 등급 변경 등) 시 기존 매핑 보존.
    */
-  changeTier(authorId: string, tier: MembershipTier, now: Date): Promise<MembershipPlanState>
+  changeTier(
+    authorId: string,
+    tier: MembershipTier,
+    now: Date,
+    polarSubscriptionId?: string,
+  ): Promise<MembershipPlanState>
 
   /**
    * lazy 안전망 — 잔액 조회 진입점에서 plan 만료 시 즉시 리셋.

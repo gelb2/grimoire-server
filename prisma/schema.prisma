@@ -30,11 +30,13 @@ model Author {
   pointsGift         Int             @default(0) @map("points_gift") // 응원 선물 수령 — 독자 결제분 이전
   pointsCharged      Int             @default(0) @map("points_charged") // 충전 (Polar) — pt 단가에 §0 박힘, 영구 보존
   deficitPoints      Int             @default(0) @map("deficit_points") // 외상 (채팅 사후 차감 시 잔액 부족분, 충전 시 우선 상계)
-  /// 案 A (HIGH-1 — CC-3, 2026-05-20, ADR-014) — `Author.plan` 정본 유지, `MembershipPlan.tier` 가 미러.
-  /// 변경 진입점은 `MembershipPlanPort.changeTier` 단일 — `$transaction` 안에서 양측 동기 강제.
-  /// 직접 SQL UPDATE 금지 (테스트/관리자 수동 등). 案 B(`tier` 정본화)는 CC-5 또는 후속 sprint 옵션.
+  /// [DEPRECATED — CC-5, 2026-05-22, ADR-014 案 B] tier 정본이 `MembershipPlan.tier` 로 이행됨.
+  ///   案 B 전환 — application 레이어의 `Author.plan` 직접 읽기 0건 (전부 `MembershipPlanPort.getPlan` 경유).
+  ///   `changeTier` 가 案 A 미러로 본 컬럼을 동기 갱신 — 컬럼 물리 DROP 전까지 stale 방지용 미러.
+  ///   컬럼 물리 DROP 은 별도 후속 sprint (CC-4 `Author.credits` deprecated→DROP 패턴 정합).
   plan               String          @default("free")
-  /// 案 A 동기 — `MembershipPlan.poolResetAt` 미러 (free → null / pro·premium → 다음 풀 리셋일).
+  /// [DEPRECATED — CC-5, 2026-05-22] 案 B — 만기 판정은 `MembershipPlan.status`/`expiresAt` 정본.
+  ///   `changeTier` 案 A 미러 — `MembershipPlan.poolResetAt` 미러 (free → null / pro·premium → 다음 풀 리셋일).
   planExpireAt       DateTime?       @map("plan_expire_at") @db.Timestamptz(3)
   defaultThemeId     String?         @map("default_theme_id")
   themes             Theme[]

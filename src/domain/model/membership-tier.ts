@@ -64,3 +64,24 @@ export function normalizeMembershipTier(plan: string): MembershipTier {
 export function monthlyPoolFor(tier: MembershipTier): number {
   return MEMBERSHIP_MONTHLY_POOL[tier]
 }
+
+/**
+ * CC-5 (HIGH-1 案 B) — `MembershipPlan` 을 tier 정본으로 사용할 때의 폴백 헬퍼.
+ *
+ * `MembershipPlanPort.getPlan` 이 정본 출처이나, 멤버십 row 가 없는 작가(마이그레이션 누락 /
+ * 신규 가입 직후)는 null 을 반환한다. 案 B 이행 시 `Author.plan`(deprecated) 대신 이 헬퍼로
+ * tier 를 결정 — plan 부재·non-active 는 'free' 폴백.
+ *
+ * 정본: reports/CREDIT_CORE_DIAGNOSIS.md §5-A 案 B / ADR-014 案 B 전환.
+ *
+ * @param plan `getPlan` 반환값 (null 가능). `tier`/`status` 만 사용.
+ */
+export function resolveTierOrFree(
+  plan: { tier: string; status: string } | null,
+): MembershipTier {
+  // plan row 부재 — 멤버십 미가입 작가 → free
+  if (!plan) return 'free'
+  // non-active(expired/cancelled) — 구독 종료 작가 → free 다운그레이드
+  if (plan.status !== 'active') return 'free'
+  return normalizeMembershipTier(plan.tier)
+}
