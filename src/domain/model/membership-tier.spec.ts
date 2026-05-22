@@ -4,6 +4,7 @@ import {
   isMembershipTier,
   normalizeMembershipTier,
   monthlyPoolFor,
+  resolveTierOrFree,
 } from './membership-tier'
 
 /**
@@ -62,6 +63,32 @@ describe('membership-tier — 구독 등급 + 월 포인트 풀', () => {
       expect(monthlyPoolFor('pro')).toBe(93000)
       expect(monthlyPoolFor('premium')).toBe(191500)
       expect(monthlyPoolFor('free')).toBe(0)
+    })
+  })
+
+  describe('resolveTierOrFree — CC-5 HIGH-1 案 B 폴백 헬퍼', () => {
+    it('plan 이 null 이면 free (멤버십 미가입 작가)', () => {
+      expect(resolveTierOrFree(null)).toBe('free')
+    })
+
+    it('plan.status 가 cancelled 면 free 다운그레이드', () => {
+      expect(resolveTierOrFree({ tier: 'pro', status: 'cancelled' })).toBe('free')
+    })
+
+    it('plan.status 가 expired 면 free 다운그레이드', () => {
+      expect(resolveTierOrFree({ tier: 'premium', status: 'expired' })).toBe('free')
+    })
+
+    it('active + tier=pro 면 pro', () => {
+      expect(resolveTierOrFree({ tier: 'pro', status: 'active' })).toBe('pro')
+    })
+
+    it('active + tier=premium 면 premium', () => {
+      expect(resolveTierOrFree({ tier: 'premium', status: 'active' })).toBe('premium')
+    })
+
+    it('active + tier 가 알 수 없는 값이면 free 폴백 (normalizeMembershipTier 정합)', () => {
+      expect(resolveTierOrFree({ tier: 'enterprise', status: 'active' })).toBe('free')
     })
   })
 })

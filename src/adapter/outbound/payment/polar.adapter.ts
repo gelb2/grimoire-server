@@ -7,6 +7,7 @@ import {
   PaymentInitRequest,
   PaymentInitResponse,
   NormalizedWebhookEvent,
+  NormalizedSubscriptionEvent,
   NormalizedCheckout,
   PolarErrorClass,
   PolarErrorClassification,
@@ -165,6 +166,33 @@ export class PolarAdapter implements PaymentGatewayPort {
     return polarId || null
   }
 
+  /**
+   * CC-5 (PAY-P1-4) — 구독 등급 → Polar 구독 product UUID 매핑 (graceful §4).
+   *
+   * env `POLAR_PRODUCT_SUBSCRIPTION_PRO` / `_PREMIUM` 기반. `resolvePolarProductId` 패턴 차용.
+   * env 미설정 시 null → 호출자가 503 graceful 분기 (구독 checkout 만 비활성, 나머지 정상).
+   */
+  private resolveSubscriptionProductId(tier: 'pro' | 'premium'): string | null {
+    const envKey = `POLAR_PRODUCT_SUBSCRIPTION_${tier.toUpperCase()}`
+    const polarId = process.env[envKey]
+    return polarId || null
+  }
+
+  /**
+   * CC-5 (PAY-P1-4) — Polar 구독 product UUID → 내부 등급 역매핑.
+   *
+   * `resolveSubscriptionProductId` 의 역(逆). 구독 webhook 에서 `data.productId` 로 등급 판정.
+   * env 미설정/미매칭 시 null → 호출자가 metadata.tier 폴백.
+   */
+  private tierForSubscriptionProductId(
+    polarProductId: string | undefined,
+  ): 'pro' | 'premium' | null {
+    if (!polarProductId) return null
+    if (polarProductId === process.env['POLAR_PRODUCT_SUBSCRIPTION_PRO']) return 'pro'
+    if (polarProductId === process.env['POLAR_PRODUCT_SUBSCRIPTION_PREMIUM']) return 'premium'
+    return null
+  }
+
   /** Checkout 세션 생성 */
   async initiatePayment(request: PaymentInitRequest): Promise<PaymentInitResponse> {
     const polarProductId = this.resolvePolarProductId(request.productId)
@@ -236,16 +264,83 @@ export class PolarAdapter implements PaymentGatewayPort {
   }
 
   /**
+   * CC-5 (PAY-P1-4) — Polar 구독 정기결제 Checkout 세션 생성 (graceful §4).
+   *
+   * recurring product 를 전달하면 Polar 가 정기결제 모드로 자동 처리.
+   * env(`POLAR_PRODUCT_SUBSCRIPTION_{tier}`) 미설정 시 **null 반환** — 호출자(usecase)가 503 분기.
+   * env 설정 시 `initiatePayment` 와 동일 CircuitBreaker 래핑 + metadata(authorId/tier) 박제.
+   */
+  async initiateSubscriptionCheckout(
+    tier: 'pro' | 'premium',
+    userId: string,
+    returnUrl: string,
+  ): Promise<PaymentInitResponse | null> {
+    const polarProductId = this.resolveSubscriptionProductId(tier)
+    // graceful §4 — env 미설정 시 null (구독 checkout 만 비활성, 나머지 정상).
+    if (!polarProductId) {
+      this.logger.warn(
+        `구독 product env 미설정 (POLAR_PRODUCT_SUBSCRIPTION_${tier.toUpperCase()}) — 구독 checkout 비활성`,
+      )
+      return null
+    }
+
+    const invokeSDK = async (): Promise<PaymentInitResponse> => {
+      try {
+        const checkout = await this.polar.checkouts.create({
+          products: [polarProductId],
+          successUrl: returnUrl,
+          // 구독 webhook 에서 authorId ↔ MembershipPlan 매칭 + 등급 추적용
+          metadata: {
+            authorId: userId,
+            subscriptionTier: tier,
+          },
+        })
+        return { paymentUrl: checkout.url, tradeNo: checkout.id }
+      } catch (e: unknown) {
+        const polarError = this.classifyPolarError(e)
+        const httpStatusLabel = polarError.httpStatus ?? 'N/A'
+        this.logger.error(
+          `[PolarSDK] initiateSubscriptionCheckout ${polarError.errorClass} httpStatus=${httpStatusLabel} message="${polarError.message.slice(0, 200)}"`,
+        )
+        if (polarError.errorClass === 'client_4xx') {
+          throw new Error(`Polar 구독 checkout 생성 실패: ${polarError.message}`)
+        }
+        throw e
+      }
+    }
+
+    // initiatePayment 와 동일 CircuitBreaker 호출점 재사용 (polar:checkouts:create).
+    if (!this.circuitBreaker) {
+      try {
+        return await invokeSDK()
+      } catch (e: unknown) {
+        if (e instanceof Error && e.message.startsWith('Polar 구독 checkout 생성 실패')) throw e
+        const polarError = this.classifyPolarError(e)
+        throw new Error(`Polar 구독 checkout 생성 실패: ${polarError.message}`)
+      }
+    }
+    try {
+      return await this.circuitBreaker.execute('polar:checkouts:create', invokeSDK)
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === 'CircuitOpenError') throw e
+      if (e instanceof Error && e.message.startsWith('Polar 구독 checkout 생성 실패')) throw e
+      const polarError = this.classifyPolarError(e)
+      throw new Error(`Polar 구독 checkout 생성 실패: ${polarError.message}`)
+    }
+  }
+
+  /**
    * Polar 웹훅 검증 + 정규화
    * - Standard Webhooks 서명 검증 (webhook-id / webhook-timestamp / webhook-signature)
-   * - 처리 대상 이벤트: order.paid, order.refunded
+   * - 처리 대상 이벤트: order.paid, order.refunded, checkout.updated
+   * - CC-5 (PAY-P1-4): subscription.created/updated/canceled/revoked 4 이벤트
    * - 그 외 이벤트는 null 반환 (무시)
    * - eventId 박제 (Sprint PAY-P0-1): `webhook-id` 헤더 추출, 누락 시 null 반환 (멱등성 보장 불가 → 안전 거부)
    */
   verifyAndParseWebhook(
     rawBody: Buffer | string,
     headers: Record<string, string>,
-  ): NormalizedWebhookEvent | null {
+  ): NormalizedWebhookEvent | NormalizedSubscriptionEvent | null {
     if (!this.webhookSecret) {
       if (isProduction()) {
         this.logger.error('POLAR_WEBHOOK_SECRET 미설정 — 프로덕션 웹훅 거부')
@@ -286,6 +381,8 @@ export class PolarAdapter implements PaymentGatewayPort {
       amount?: number
       netAmount?: number
       totalAmount?: number
+      // CC-5 — 구독 webhook: product 역매핑(productId) + 구독 상태(status)
+      productId?: string
       metadata?: Record<string, unknown>
     }
 
@@ -337,10 +434,66 @@ export class PolarAdapter implements PaymentGatewayPort {
         }
         return null
       }
+      // CC-5 (PAY-P1-4) — 구독 생명주기 4 이벤트.
+      case 'subscription.created':
+        return this.parseSubscriptionEvent(eventId, event.type, 'created', data)
+      case 'subscription.updated':
+        return this.parseSubscriptionEvent(eventId, event.type, 'updated', data)
+      case 'subscription.canceled':
+        return this.parseSubscriptionEvent(eventId, event.type, 'canceled', data)
+      case 'subscription.revoked':
+        return this.parseSubscriptionEvent(eventId, event.type, 'revoked', data)
       default:
-        // 그 외 이벤트는 무시 (구독 관련은 추후 확장)
+        // 그 외 이벤트는 무시 (benefit.* / customer.* 등 미지원)
         return null
     }
+  }
+
+  /**
+   * CC-5 (PAY-P1-4) — Polar 구독 webhook payload → NormalizedSubscriptionEvent 정규화.
+   *
+   * 등급 결정 — `data.productId` 역매핑 우선, 미매칭 시 `metadata.subscriptionTier` 폴백.
+   * canceled/revoked 는 등급 무관 'free' 다운그레이드 → tier='free' 고정.
+   * `polarSubscriptionId`(data.id) 누락 시 null 반환 (매핑 불가 → 안전 거부).
+   */
+  private parseSubscriptionEvent(
+    eventId: string,
+    type: string,
+    lifecycle: 'created' | 'updated' | 'canceled' | 'revoked',
+    data: { id?: string; productId?: string; metadata?: Record<string, unknown> },
+  ): NormalizedSubscriptionEvent | null {
+    const polarSubscriptionId = data.id
+    if (!polarSubscriptionId) {
+      this.logger.warn(`구독 webhook data.id 누락 (${type}) — MembershipPlan 매핑 불가, 거부`)
+      return null
+    }
+
+    // canceled/revoked = free 다운그레이드 (등급 무관).
+    let tier: 'free' | 'pro' | 'premium' = 'free'
+    if (lifecycle === 'created' || lifecycle === 'updated') {
+      // productId 역매핑 우선 → metadata.subscriptionTier 폴백.
+      const mapped = this.tierForSubscriptionProductId(data.productId)
+      tier = mapped ?? this.extractSubscriptionTier(data.metadata) ?? 'free'
+    }
+
+    return {
+      eventId,
+      type,
+      lifecycle,
+      polarSubscriptionId,
+      tier,
+      userId: this.extractAuthorId(data.metadata),
+    }
+  }
+
+  /** 구독 metadata 에서 subscriptionTier 안전 추출 (productId 역매핑 폴백). */
+  private extractSubscriptionTier(
+    metadata?: Record<string, unknown>,
+  ): 'pro' | 'premium' | null {
+    if (!metadata) return null
+    const value = metadata['subscriptionTier']
+    if (value === 'pro' || value === 'premium') return value
+    return null
   }
 
   /**

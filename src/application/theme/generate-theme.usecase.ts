@@ -1,11 +1,12 @@
-import { Injectable, Inject, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common'
+import { Injectable, Inject, Optional, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common'
 import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
 import { ThemeRepositoryPort } from '@domain/port/outbound/theme-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
+import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
 import { ChargePointsUseCase } from '@application/credit/charge-points.usecase'
 import { Theme } from '@domain/model/theme'
-import { isPlanExpired } from '@domain/model/plan'
-import { DAILY_FREE_LIMITS } from '@domain/model/config'
+import { isMembershipExpired } from '@domain/model/plan'
+import { resolveTierOrFree, MEMBERSHIP_DAILY_FREE_THEME } from '@domain/model/membership-tier'
 import { guardPromptInjection } from '@lib/prompt-injection-guard'
 
 @Injectable()
@@ -17,6 +18,12 @@ export class GenerateThemeUseCase {
     // 크레딧 개편 CC-1 (2026-05-19) — 테마 차감을 신 포인트 원장(CreditLedger)으로 이행.
     // 구 creditRepo.adjustCredits(Author.credits -1) → ChargePointsUseCase.chargeTheme 교체.
     private readonly chargePoints: ChargePointsUseCase,
+    // 크레딧 개편 CC-5 (2026-05-22, HIGH-1 案 B) — tier 정본을 MembershipPlan 으로 이행.
+    // 구 Author.plan(deprecated) 직접 읽기 → MembershipPlanPort.getPlan + resolveTierOrFree.
+    // Optional — 미주입 시 free 폴백(BACKWARD COMPATIBLE).
+    @Optional()
+    @Inject('MembershipPlanPort')
+    private readonly membershipRepo: MembershipPlanPort | null = null,
   ) {}
 
   /** AI 테마 생성 — 슬롯 체크 없음 (생성은 자유, 활성화가 슬롯 제한) */
@@ -28,15 +35,18 @@ export class GenerateThemeUseCase {
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
 
-    if (isPlanExpired(author.plan, author.planExpireAt)) {
+    // CC-5 (HIGH-1 案 B) — tier 정본을 MembershipPlan 으로 조회 (Author.plan deprecated).
+    const plan = this.membershipRepo ? await this.membershipRepo.getPlan(authorId) : null
+    if (isMembershipExpired(plan)) {
       throw new ForbiddenException('구독 플랜이 만료되었습니다. 플랜을 갱신하세요.')
     }
 
-    // 일일 무료 생성 제한 체크 — 오늘 생성한 테마 수 vs 플랜별 한도
+    // 일일 무료 생성 제한 체크 — 오늘 생성한 테마 수 vs 등급별 한도
+    const tier = resolveTierOrFree(plan)
     const todayStart = new Date()
     todayStart.setHours(0, 0, 0, 0)
     const todayCount = await this.themeRepo.countByAuthorIdSince(authorId, ['ai', 'user'], todayStart)
-    const dailyLimit = DAILY_FREE_LIMITS[author.plan] ?? DAILY_FREE_LIMITS.free
+    const dailyLimit = MEMBERSHIP_DAILY_FREE_THEME[tier]
     const isFree = todayCount < dailyLimit
 
     // 무료 한도 초과 시 신 포인트 원장에서 590pt 사전 차감.
@@ -95,7 +105,9 @@ export class GenerateThemeUseCase {
     const author = await this.authorRepo.findById(authorId)
     if (!author) throw new NotFoundException('작가를 찾을 수 없습니다')
 
-    if (isPlanExpired(author.plan, author.planExpireAt)) {
+    // CC-5 (HIGH-1 案 B) — tier 정본을 MembershipPlan 으로 조회 (Author.plan deprecated).
+    const plan = this.membershipRepo ? await this.membershipRepo.getPlan(authorId) : null
+    if (isMembershipExpired(plan)) {
       throw new ForbiddenException('구독 플랜이 만료되었습니다. 플랜을 갱신하세요.')
     }
 

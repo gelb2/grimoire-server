@@ -8,6 +8,8 @@ describe('GenerateThemeUseCase', () => {
   let mockAuthorRepo: any
   // 크레딧 개편 CC-1 (2026-05-19) — 구 mockCreditRepo → mockChargePoints (신 포인트 원장 차감)
   let mockChargePoints: any
+  // 크레딧 개편 CC-5 (2026-05-22, HIGH-1 案 B) — tier 정본 MembershipPlanPort mock
+  let mockMembershipRepo: any
 
   const mockAuthor = { id: 'author-1', slug: 'deerdevil', name: '테스트', email: 'test@test.com', credits: 3, plan: 'free', planExpireAt: null, createdAt: new Date() }
   const mockThemeData = {
@@ -40,8 +42,13 @@ describe('GenerateThemeUseCase', () => {
     }
 
     mockThemeRepo.countByAuthorIdSince = jest.fn().mockResolvedValue(100) // 일일 무료 한도 초과 → 포인트 차감
+    // CC-5 (HIGH-1 案 B) — tier 정본을 MembershipPlan 으로 조회. 기본 = 멤버십 미가입(free).
+    mockMembershipRepo = {
+      getPlan: jest.fn().mockResolvedValue(null),
+    }
     useCase = new GenerateThemeUseCase(
       mockClaudeApi as any, mockThemeRepo as any, mockAuthorRepo as any, mockChargePoints as any,
+      mockMembershipRepo as any,
     )
   })
 
@@ -80,9 +87,14 @@ describe('GenerateThemeUseCase', () => {
     await expect(useCase.execute('author-1', '테스트')).rejects.toThrow(BadRequestException)
   })
 
-  it('플랜 만기 시 ForbiddenException', async () => {
-    const expiredAuthor = { ...mockAuthor, plan: 'pro', planExpireAt: new Date('2020-01-01') }
-    mockAuthorRepo.findById.mockResolvedValue(expiredAuthor)
+  it('플랜 만기 시 ForbiddenException (MembershipPlan status=cancelled)', async () => {
+    // CC-5 案 B — 만기는 MembershipPlan.status 로 판정.
+    mockMembershipRepo.getPlan.mockResolvedValue({
+      id: 'plan-1', authorId: 'author-1', tier: 'pro',
+      monthlyPoolPoints: 0, poolBalance: 0, poolResetAt: new Date('2099-01-01'),
+      startedAt: new Date('2026-01-01'), expiresAt: new Date('2020-01-01'),
+      polarSubscriptionId: null, status: 'cancelled',
+    })
     await expect(useCase.execute('author-1', '테스트')).rejects.toThrow(ForbiddenException)
   })
 

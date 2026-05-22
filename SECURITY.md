@@ -173,6 +173,14 @@
 - [ ] 환경변수에 placeholder/기본값 없는지 확인
 - [ ] Rate limiting (APP_GUARD `ThrottlerGuard` 전역 적용 확인)
 
+### CC-5 구독 정기결제 엔드포인트 (PAY-P1-4, 2026-05-22)
+
+- [x] `POST /subscriptions/checkout` — `@UseGuards(JwtAuthGuard)` + `@Throttle`(분당 3) 적용. 소유권 = body 에 authorId 미수신, `req.user.sub` 사용(위조 불가)
+- [x] `GET /membership` — `@UseGuards(JwtAuthGuard)` 적용. 응답에 내부 ID(`authorId`/`polarSubscriptionId`/`id`) 미노출
+- [x] DTO `StartSubscriptionDto` class-validator 적용 (`@IsIn(['pro','premium'])` + `@IsUrl`)
+- [x] graceful — env(`POLAR_PRODUCT_SUBSCRIPTION_*`) 미설정 시 `503` (시크릿/내부 상태 미노출 메시지)
+- [x] 구독 webhook — `WebhookEvent` 멱등성 게이트 재사용 (중복 `changeTier` 차단)
+
 ### 자동화 — sensor-security-gate.sh (신설, 2026-04-17)
 
 QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICAL 감지 시 배포 차단:
