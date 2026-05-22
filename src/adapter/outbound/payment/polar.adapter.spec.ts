@@ -1,4 +1,21 @@
 import { PolarAdapter } from './polar.adapter'
+import {
+  NormalizedWebhookEvent,
+  NormalizedSubscriptionEvent,
+  isSubscriptionEvent,
+} from '@domain/port/outbound/payment-gateway.port'
+
+/**
+ * CC-5 — verifyAndParseWebhook 반환이 충전/구독 union 으로 확장됨.
+ * 충전(order/checkout) 이벤트 테스트는 이 헬퍼로 NormalizedWebhookEvent 로 좁힌다.
+ */
+function asOrderEvent(
+  e: NormalizedWebhookEvent | NormalizedSubscriptionEvent | null,
+): NormalizedWebhookEvent | null {
+  if (e === null) return null
+  if (isSubscriptionEvent(e)) throw new Error('구독 이벤트가 아닌 충전 이벤트를 기대함')
+  return e
+}
 
 // Polar SDK 모킹 — 실제 HTTP 호출 방지
 const mockCreate = jest.fn()
@@ -259,7 +276,7 @@ describe('PolarAdapter', () => {
         },
       })
 
-      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
+      const result = asOrderEvent(adapter.verifyAndParseWebhook(dummyBody, dummyHeaders))
 
       expect(result?.tradeNo).toBe('order-fallback')
     })
@@ -275,7 +292,7 @@ describe('PolarAdapter', () => {
         },
       })
 
-      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
+      const result = asOrderEvent(adapter.verifyAndParseWebhook(dummyBody, dummyHeaders))
 
       expect(result?.status).toBe('cancel')
       expect(result?.tradeNo).toBe('checkout-xyz')
@@ -292,7 +309,7 @@ describe('PolarAdapter', () => {
         },
       })
 
-      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
+      const result = asOrderEvent(adapter.verifyAndParseWebhook(dummyBody, dummyHeaders))
 
       expect(result?.status).toBe('success')
       expect(result?.tradeNo).toBe('checkout-s')
@@ -309,7 +326,7 @@ describe('PolarAdapter', () => {
         },
       })
 
-      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
+      const result = asOrderEvent(adapter.verifyAndParseWebhook(dummyBody, dummyHeaders))
 
       expect(result?.status).toBe('fail')
     })
@@ -325,9 +342,88 @@ describe('PolarAdapter', () => {
       expect(result).toBeNull()
     })
 
-    it('처리 대상이 아닌 이벤트(subscription.created 등)는 null 반환', () => {
+    // CC-5 (PAY-P1-4) — 구독 생명주기 4 이벤트는 이제 정규화 결과를 반환한다.
+    it('subscription.created — productId 역매핑으로 tier=pro 정규화', () => {
+      process.env.POLAR_PRODUCT_SUBSCRIPTION_PRO = 'prod_pro_uuid'
       mockValidateEvent.mockReturnValue({
         type: 'subscription.created',
+        data: {
+          id: 'sub_polar_1',
+          productId: 'prod_pro_uuid',
+          metadata: { authorId: 'author-sub-1' },
+        },
+      })
+
+      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
+
+      expect(result).not.toBeNull()
+      expect(isSubscriptionEvent(result!)).toBe(true)
+      const sub = result as NormalizedSubscriptionEvent
+      expect(sub.lifecycle).toBe('created')
+      expect(sub.tier).toBe('pro')
+      expect(sub.polarSubscriptionId).toBe('sub_polar_1')
+      expect(sub.userId).toBe('author-sub-1')
+      delete process.env.POLAR_PRODUCT_SUBSCRIPTION_PRO
+    })
+
+    it('subscription.updated — productId 미매칭 시 metadata.subscriptionTier 폴백', () => {
+      mockValidateEvent.mockReturnValue({
+        type: 'subscription.updated',
+        data: {
+          id: 'sub_polar_2',
+          productId: 'unknown_prod',
+          metadata: { authorId: 'author-sub-2', subscriptionTier: 'premium' },
+        },
+      })
+
+      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
+      const sub = result as NormalizedSubscriptionEvent
+      expect(sub.lifecycle).toBe('updated')
+      expect(sub.tier).toBe('premium')
+    })
+
+    it('subscription.canceled — tier=free 다운그레이드 (등급 무관)', () => {
+      mockValidateEvent.mockReturnValue({
+        type: 'subscription.canceled',
+        data: {
+          id: 'sub_polar_3',
+          productId: 'prod_pro_uuid',
+          metadata: { authorId: 'author-sub-3' },
+        },
+      })
+
+      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
+      const sub = result as NormalizedSubscriptionEvent
+      expect(sub.lifecycle).toBe('canceled')
+      expect(sub.tier).toBe('free')
+    })
+
+    it('subscription.revoked — tier=free 다운그레이드', () => {
+      mockValidateEvent.mockReturnValue({
+        type: 'subscription.revoked',
+        data: { id: 'sub_polar_4', metadata: { authorId: 'author-sub-4' } },
+      })
+
+      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
+      const sub = result as NormalizedSubscriptionEvent
+      expect(sub.lifecycle).toBe('revoked')
+      expect(sub.tier).toBe('free')
+    })
+
+    it('subscription.created — data.id(구독 ID) 누락 시 null 반환 (매핑 불가)', () => {
+      mockValidateEvent.mockReturnValue({
+        type: 'subscription.created',
+        data: { metadata: { authorId: 'author-sub-5', subscriptionTier: 'pro' } },
+      })
+
+      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
+
+      expect(result).toBeNull()
+    })
+
+    it('미지원 이벤트(benefit.created 등)는 여전히 null 반환', () => {
+      mockValidateEvent.mockReturnValue({
+        type: 'benefit.created',
         data: {},
       })
 
@@ -388,7 +484,7 @@ describe('PolarAdapter', () => {
         },
       })
 
-      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
+      const result = asOrderEvent(adapter.verifyAndParseWebhook(dummyBody, dummyHeaders))
 
       expect(result?.amount).toBe(3500) // 250센트 → 고정 환율 폴백 (250/100 * 1400)
     })

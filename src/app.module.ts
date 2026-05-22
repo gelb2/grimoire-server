@@ -19,6 +19,10 @@ import { CreditUseCase } from '@application/credit/credit.usecase'
 import { ChargePointsUseCase } from '@application/credit/charge-points.usecase'
 import { GrantPointsUseCase } from '@application/credit/grant-points.usecase'
 import { ResetMonthlyPoolJob } from '@application/subscription/reset-monthly-pool.job'
+// 크레딧 개편 CC-5 (2026-05-22, PAY-P1-4) — Polar 구독 webhook + checkout/멤버십 조회
+import { ProcessSubscriptionWebhookUseCase } from '@application/subscription/process-subscription-webhook.usecase'
+import { StartSubscriptionUseCase } from '@application/subscription/start-subscription.usecase'
+import { GetMembershipUseCase } from '@application/subscription/get-membership.usecase'
 import { AuthorUseCase } from '@application/author/author.usecase'
 import { ContentUseCase } from '@application/content/content.usecase'
 import { AuthUseCase } from '@application/auth/auth.usecase'
@@ -62,6 +66,8 @@ import { StatsController } from '@adapter/inbound/http/controller/stats.controll
 import { CreditController } from '@adapter/inbound/http/controller/credit.controller'
 import { PlanController } from '@adapter/inbound/http/controller/plan.controller'
 import { ChatController } from '@adapter/inbound/http/controller/chat.controller'
+// 크레딧 개편 CC-5 (2026-05-22, PAY-P1-4) — 구독 정기결제 컨트롤러
+import { SubscriptionController } from '@adapter/inbound/http/controller/subscription.controller'
 
 // 아웃바운드 어댑터
 import { PrismaAuthorRepository } from '@adapter/outbound/persistence/prisma-author.repository'
@@ -125,6 +131,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     CreditController,
     PlanController,
     ChatController,
+    SubscriptionController,
   ],
   providers: [
     // 인프라
@@ -142,6 +149,10 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     ChargePointsUseCase,
     GrantPointsUseCase,
     ResetMonthlyPoolJob,
+    // 크레딧 개편 CC-5 (2026-05-22, PAY-P1-4) — Polar 구독 정기결제 연동
+    ProcessSubscriptionWebhookUseCase,
+    StartSubscriptionUseCase,
+    GetMembershipUseCase,
     AuthorUseCase,
     ContentUseCase,
     AuthUseCase,

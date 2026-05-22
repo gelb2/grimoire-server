@@ -1,7 +1,8 @@
 import { Injectable, Inject, BadRequestException, Logger, Optional, ServiceUnavailableException } from '@nestjs/common'
 import { PaymentRepositoryPort } from '@domain/port/outbound/payment-repository.port'
-import { PaymentGatewayPort } from '@domain/port/outbound/payment-gateway.port'
+import { PaymentGatewayPort, isSubscriptionEvent } from '@domain/port/outbound/payment-gateway.port'
 import { WebhookEventRepositoryPort } from '@domain/port/outbound/webhook-event-repository.port'
+import { ProcessSubscriptionWebhookUseCase } from '@application/subscription/process-subscription-webhook.usecase'
 import { WebhookRetryQueueRepositoryPort } from '@domain/port/outbound/webhook-retry-queue-repository.port'
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { CREDIT_PRODUCTS, Product } from '@domain/model/config'
@@ -50,6 +51,12 @@ export class PaymentUseCase {
     @Optional()
     @Inject('WebhookRetryQueueRepositoryPort')
     private readonly retryQueueRepo: WebhookRetryQueueRepositoryPort | null = null,
+    /**
+     * CC-5 (PAY-P1-4) — 구독 생명주기 webhook 라우팅. Optional —
+     * 미주입 시 구독 webhook 은 'ignored' 처리(회귀 보존). 실 운영은 app.module 주입.
+     */
+    @Optional()
+    private readonly subscriptionWebhookUseCase: ProcessSubscriptionWebhookUseCase | null = null,
   ) {}
 
   /**
@@ -241,10 +248,11 @@ export class PaymentUseCase {
    *
    * 게이트 순서:
    * 1. verifyAndParseWebhook → eventId 포함된 NormalizedWebhookEvent 반환
-   * 2. eventId 멱등성 게이트: webhookEventRepo.findByEventId — 이미 박제 시 즉시 skip
-   * 3. tradeNo로 Payment 조회 + 약식 게이트(already_completed)
-   * 4. completePaymentWithPoints (성공 — CC-2a 충전 포인트 적립) / refund (취소) / updateStatus (실패)
-   * 5. webhookEventRepo.createIfAbsent — race 차단 (P2002 → null로 안전 skip)
+   * 2. CC-5 — 구독 생명주기 이벤트면 ProcessSubscriptionWebhookUseCase 로 라우팅 분기
+   * 3. eventId 멱등성 게이트: webhookEventRepo.findByEventId — 이미 박제 시 즉시 skip
+   * 4. tradeNo로 Payment 조회 + 약식 게이트(already_completed)
+   * 5. completePaymentWithPoints (성공 — CC-2a 충전 포인트 적립) / refund (취소) / updateStatus (실패)
+   * 6. webhookEventRepo.createIfAbsent — race 차단 (P2002 → null로 안전 skip)
    */
   async processWebhook(
     rawBody: Buffer | string,
@@ -257,6 +265,19 @@ export class PaymentUseCase {
   }> {
     const event = this.paymentGateway.verifyAndParseWebhook(rawBody, headers)
     if (!event) return { processed: false, reason: 'invalid_or_ignored' }
+
+    // CC-5 (PAY-P1-4) — 구독 생명주기 이벤트는 구독 webhook usecase 로 라우팅.
+    if (isSubscriptionEvent(event)) {
+      if (!this.subscriptionWebhookUseCase) {
+        this.logger.warn(
+          `구독 webhook 수신 (${event.type}) — ProcessSubscriptionWebhookUseCase 미주입, ignored`,
+        )
+        return { processed: false, reason: 'subscription_handler_unavailable' }
+      }
+      const result = await this.subscriptionWebhookUseCase.execute(event)
+      return { processed: result.processed, reason: result.reason }
+    }
+
     return await this.processNormalizedWebhook(event)
   }
 

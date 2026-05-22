@@ -46,6 +46,33 @@ export interface NormalizedWebhookEvent {
 }
 
 /**
+ * CC-5 (PAY-P1-4) — Polar 구독 생명주기 webhook 정규화 결과.
+ *
+ * 별도 타입 분리 — 일회성 충전 `NormalizedWebhookEvent`(status 3값 success/fail/cancel)는
+ * 구독 생명주기(created/updated/canceled/revoked)를 표현하지 못한다(C5a 案 — 타입 분리 채택).
+ *
+ * - created/updated → `MembershipPlanPort.changeTier(authorId, tier)` (구독 가입/등급 변경)
+ * - canceled/revoked → `changeTier(authorId, 'free')` (free 다운그레이드)
+ *
+ * 정기결제 갱신(매월 `order.paid` 재발행, tier 불변)은 `NormalizedWebhookEvent` 로 처리 —
+ * 풀 리셋은 cron 단독 책임 (정합 정책 案 A 분리, plan-draft §8).
+ */
+export interface NormalizedSubscriptionEvent {
+  /** PG 발급 unique 이벤트 식별자 (멱등성 게이트 키 — `webhook-id` 헤더). */
+  eventId: string
+  /** 이벤트 타입 — 'subscription.created' / 'subscription.updated' 등 (원본 보존). */
+  type: string
+  /** 구독 생명주기 — webhook usecase 의 분기 키. */
+  lifecycle: 'created' | 'updated' | 'canceled' | 'revoked'
+  /** Polar 구독 ID (`data.id`) — `MembershipPlan.polarSubscriptionId` 매핑 키. */
+  polarSubscriptionId: string
+  /** 구독 등급 (Polar product ID 역매핑 또는 metadata.tier). canceled/revoked 시 'free'. */
+  tier: 'free' | 'pro' | 'premium'
+  /** 구독 작가 ID (metadata.authorId). 누락 시 webhook 무시. */
+  userId?: string
+}
+
+/**
  * PAY-P3-B 구멍-C 차단: Polar SDK exception 5분류 매트릭스.
  * 정본: shared-contracts §24 PolarSDKTimeoutPolicy.
  *
@@ -89,6 +116,18 @@ export interface NormalizedCheckout {
   createdAt: Date
 }
 
+/**
+ * CC-5 — webhook 정규화 결과 판별: 구독 생명주기 이벤트인지 여부.
+ *
+ * `verifyAndParseWebhook` 가 충전(`NormalizedWebhookEvent`)/구독(`NormalizedSubscriptionEvent`)
+ * 양쪽을 반환 → usecase 가 이 가드로 라우팅 분기.
+ */
+export function isSubscriptionEvent(
+  event: NormalizedWebhookEvent | NormalizedSubscriptionEvent,
+): event is NormalizedSubscriptionEvent {
+  return 'lifecycle' in event
+}
+
 export interface PaymentGatewayPort {
   /** 결제 요청 시작 — 호스티드 체크아웃 URL 반환 */
   initiatePayment(request: PaymentInitRequest): Promise<PaymentInitResponse>
@@ -97,11 +136,33 @@ export interface PaymentGatewayPort {
    * 웹훅 원본을 검증하고 정규화된 이벤트로 반환.
    * 서명 검증 실패 시 null 반환.
    * 처리 대상 이벤트가 아닐 경우에도 null 반환 (무시).
+   *
+   * CC-5 (PAY-P1-4) — 충전(`NormalizedWebhookEvent`) + 구독(`NormalizedSubscriptionEvent`)
+   * 양쪽을 반환. 호출자는 `isSubscriptionEvent` 가드로 라우팅 분기.
    */
   verifyAndParseWebhook(
     rawBody: Buffer | string,
     headers: Record<string, string>,
-  ): NormalizedWebhookEvent | null
+  ): NormalizedWebhookEvent | NormalizedSubscriptionEvent | null
+
+  /**
+   * CC-5 (PAY-P1-4) — 구독 정기결제 Checkout 세션 생성.
+   *
+   * recurring product 를 전달하면 Polar 가 정기결제 모드로 자동 처리.
+   * env(`POLAR_PRODUCT_SUBSCRIPTION_{tier}`) 미설정 시 null 반환 — 호출자가 503 graceful 분기.
+   *
+   * Optional 메서드 — 미구현 adapter 에서는 호출자가 null 처리(graceful §4).
+   *
+   * @param tier 구독 등급 ('pro' | 'premium' — 'free' 는 checkout 불가)
+   * @param userId 구독 작가 ID (metadata.authorId 박제)
+   * @param returnUrl 결제 완료 후 리다이렉트 웹 URL
+   * @returns 호스티드 URL + tradeNo, 또는 env 미설정 시 null
+   */
+  initiateSubscriptionCheckout?(
+    tier: 'pro' | 'premium',
+    userId: string,
+    returnUrl: string,
+  ): Promise<PaymentInitResponse | null>
 
   /**
    * PG↔DB 정합성 검증 cron용 — 최근 checkout 목록 조회 (Sprint PAY-P0-2).

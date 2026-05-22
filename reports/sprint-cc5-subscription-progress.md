@@ -39,14 +39,41 @@
 
 **Phase A 게이트 — PASS**. `Author.plan` application 직접 읽기 0건(getPlan 경유), deprecated 박제 완료.
 
-## Phase B — Polar 구독 webhook
+## Phase B — Polar 구독 webhook — 완료
 
-(작업 중 갱신)
+| # | sub-task | 결과 |
+|---|---|---|
+| C4a | graceful 설계 명문화 | ✅ plan-draft §4 — `resolveSubscriptionProductId` null → 503 패턴 |
+| C5a | `NormalizedSubscriptionEvent` 신 타입 | ✅ `payment-gateway.port.ts` — 별도 타입 분리(案 — status 3값 부적합). `isSubscriptionEvent` 가드 |
+| C5b | webhook 화이트리스트 확장 | ✅ `polar.adapter.ts` switch 에 `subscription.created/updated/canceled/revoked` 4 case. `parseSubscriptionEvent` 정규화 |
+| C5c | tier 역매핑 헬퍼 | ✅ `tierForSubscriptionProductId`(productId→tier) + `extractSubscriptionTier`(metadata 폴백) |
+| C5d | `polar.adapter.spec` 수정 | ✅ `:328` "subscription.* 무시" → 4 이벤트 정규화 케이스 +7 it. `asOrderEvent` 헬퍼(union 타입 좁힘) |
+| C6a | 구독 webhook usecase 신설 | ✅ `process-subscription-webhook.usecase.ts` — created/updated→changeTier(tier) / canceled·revoked→changeTier(free) |
+| C6b | `changeTier` polarSubscriptionId 매핑 | ✅ port + repository 시그니처 4번째 인자. `$transaction` 안 매핑 저장 |
+| C6c | 멱등성/원자성 + 라우팅 | ✅ `payment.usecase.processWebhook` 에 `isSubscriptionEvent` 라우팅 분기. `WebhookEvent` 멱등성 게이트 재사용 |
+| C6d | 정기결제 갱신↔cron 정합 | ✅ 案 A 분리 — 구독 webhook 은 changeTier(등급)만, 풀 리셋은 cron 단독. usecase 가 resetMonthlyPool 미호출 |
+| C6e | 구독 webhook usecase spec | ✅ `process-subscription-webhook.usecase.spec.ts` 12 it |
+| C6f | `changeTier` spec 보강 | ✅ `prisma-membership-plan.repository.spec` +5 it (Phase A 에서 처리) |
 
-## Phase C — HTTP 엔드포인트 + 통합
+**Phase B 게이트 — PASS**.
 
-(작업 중 갱신)
+## Phase C — HTTP 엔드포인트 + 통합 — 완료
+
+| # | sub-task | 결과 |
+|---|---|---|
+| C7a | 구독 checkout adapter 메서드 | ✅ `polar.adapter.ts` `initiateSubscriptionCheckout` + `resolveSubscriptionProductId`. CircuitBreaker 래핑. env 미설정 시 null |
+| C7b | 구독 checkout usecase | ✅ `start-subscription.usecase.ts` — null 시 `ServiceUnavailableException`(503). tier 검증(pro/premium만) |
+| C7c | `SubscriptionController` 신설 | ✅ `POST /subscriptions/checkout`(JwtAuthGuard + @Throttle 분당3) + `GET /membership`(JwtAuthGuard). DTO + class-validator |
+| C7d | `GET /membership` usecase | ✅ `get-membership.usecase.ts` — getPlan + checkAndResetExpiredPool lazy 안전망. 내부 ID 미노출 |
+| C7e | 컨트롤러 spec | ✅ `subscription.controller.spec.ts` — Guard/Throttle/503/내부 ID 미노출 검증 |
+| C7f | 통합 spec 신설 | ✅ `subscription-webhook-integration.spec.ts` — webhook→changeTier→MembershipPlan→getMembership 사슬 |
+| C7g | 통합 spec 추가 케이스 | ✅ ④ 案 B theme-slot 새 tier ⑤ graceful 503 ⑥ 멱등성 |
+| C7h | 정기결제↔cron 정합 통합 | ✅ ⑦ 구독 webhook 이 resetMonthlyPool 미호출 (案 A 분리) |
+
+**Phase C 게이트 — PASS**.
 
 ## 마무리
 
-(작업 중 갱신)
+- Gate 1 (`npm run build`): ✅ 무에러
+- Gate 2 (`npm test`): ✅ 1094 passed (77 suites). 커버리지 61.92% stmts / 63.45% lines — ≥60% 게이트 충족
+- Gate 3 (문서/sensor): 진행 중 — shared-contracts §30 + TECH_STATUS + api-contract + environments + ADR + SECURITY + data-model
