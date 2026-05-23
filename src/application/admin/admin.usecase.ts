@@ -6,6 +6,8 @@ import { CreditLedgerPort, CreditBalance } from '@domain/port/outbound/credit-le
 import { CreditSource, isCreditSource } from '@domain/model/credit-source'
 import { AdminRepositoryPort } from '@domain/port/outbound/admin-repository.port'
 import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
+import { CircuitBreakerPort } from '@domain/port/outbound/circuit-breaker.port'
+import { CircuitBreakerStats } from '@domain/model/circuit-breaker-state'
 import { GrantPointsUseCase } from '@application/credit/grant-points.usecase'
 import { AuditLogService } from './audit-log.service'
 import { Author } from '@domain/model/author'
@@ -40,6 +42,12 @@ export class AdminUseCase {
     @Optional()
     @Inject('MembershipPlanPort')
     private readonly membershipRepo: MembershipPlanPort | null = null,
+    // PAY-S3 Phase A (2026-05-23) — Circuit Breaker 운영자 admin UI.
+    // Optional — 미주입 시 admin endpoint 3 (state/trip/reset) 호출 시 500.
+    // app.module.ts L203 에서 `'CircuitBreakerPort' → InMemoryCircuitBreakerAdapter` 박제.
+    @Optional()
+    @Inject('CircuitBreakerPort')
+    private readonly circuitBreaker: CircuitBreakerPort | null = null,
   ) {}
 
   // ─── 통계 ───
@@ -398,5 +406,101 @@ export class AdminUseCase {
 
   async getAuditLogs(options: { page?: number; limit?: number; action?: string }) {
     return this.auditLog.findAll(options)
+  }
+
+  // ─── Circuit Breaker 운영자 admin (PAY-S3 Phase A — 2026-05-23) ───
+  //
+  // ADR-009 §"잔존 영역" 4번째 항목 해소 — port 위 HTTP admin 박제.
+  // 정본: shared-contracts §27 CircuitBreakerPolicy.
+  //
+  // 정책:
+  // - 조회(getCircuitBreakerState) — 항시 가용, 호출 비용 0 (in-memory Map).
+  // - 차단(tripCircuitBreaker) — 운영자 수동 차단. forceOpen + AuditLog `circuit_breaker.manual_trip` 박제.
+  //   ⚠️ 파괴적 액션 — 결제 즉시 503. 사고 대응/연습 전용.
+  // - 복구(resetCircuitBreaker) — 운영자 수동 복구. forceClose + AuditLog `circuit_breaker.manual_reset` 박제.
+  //
+  // AuditLog 박제 시그니처(controller 영역 — adapter 의 auto open/close 와 dual박제):
+  //   adminId + action('circuit_breaker.manual_trip' | 'manual_reset') + circuitKey
+  //   detail: { reason, circuitKey } + beforeState/afterState (§20 정합)
+
+  /**
+   * Circuit Breaker port 미주입 시 fail-fast.
+   * app.module.ts 박제 누락 시점 디버깅 보조.
+   */
+  private requireCircuitBreaker(): CircuitBreakerPort {
+    if (!this.circuitBreaker) {
+      throw new BadRequestException('Circuit Breaker 모듈이 활성화되지 않았습니다')
+    }
+    return this.circuitBreaker
+  }
+
+  /**
+   * 호출점 stats 조회 — 운영자 모니터링용.
+   * @param key 호출점 식별자 (controller 가 화이트리스트 검증 후 위임)
+   */
+  async getCircuitBreakerState(key: string): Promise<CircuitBreakerStats> {
+    const cb = this.requireCircuitBreaker()
+    return cb.getStats(key)
+  }
+
+  /**
+   * Circuit Breaker 수동 차단 — 운영자 사고 대응.
+   *
+   * forceOpen + AuditLog `circuit_breaker.manual_trip` 박제(beforeState/afterState §20 정합).
+   * adapter 의 `forceOpen` 도 `circuit_breaker.open` action 별도 박제 — dual박제 의도적(operator 행위 강조).
+   *
+   * @param adminId 운영자 ID
+   * @param key 호출점 식별자
+   * @param reason 차단 사유 (빈값 검증은 controller 영역)
+   * @returns beforeState/afterState — 응답 DTO 매핑용
+   */
+  async tripCircuitBreaker(
+    adminId: string,
+    key: string,
+    reason: string,
+  ): Promise<{ beforeState: CircuitBreakerStats; afterState: CircuitBreakerStats }> {
+    const cb = this.requireCircuitBreaker()
+    const beforeState = cb.getStats(key)
+    await cb.forceOpen(key, `operator:${adminId}:${reason}`)
+    const afterState = cb.getStats(key)
+    await this.auditLog.log(
+      adminId,
+      'circuit_breaker.manual_trip',
+      key,
+      { reason, circuitKey: key },
+      { state: beforeState.state, failureCount: beforeState.failureCount },
+      { state: afterState.state, failureCount: afterState.failureCount },
+    )
+    return { beforeState, afterState }
+  }
+
+  /**
+   * Circuit Breaker 수동 복구 — 운영자 사고 후 복원.
+   *
+   * forceClose + AuditLog `circuit_breaker.manual_reset` 박제.
+   * adapter 의 `forceClose` 도 `circuit_breaker.close` action 별도 박제 — dual박제 의도적.
+   *
+   * @param adminId 운영자 ID
+   * @param key 호출점 식별자
+   * @param reason 복구 사유
+   */
+  async resetCircuitBreaker(
+    adminId: string,
+    key: string,
+    reason: string,
+  ): Promise<{ beforeState: CircuitBreakerStats; afterState: CircuitBreakerStats }> {
+    const cb = this.requireCircuitBreaker()
+    const beforeState = cb.getStats(key)
+    await cb.forceClose(key, `operator:${adminId}:${reason}`)
+    const afterState = cb.getStats(key)
+    await this.auditLog.log(
+      adminId,
+      'circuit_breaker.manual_reset',
+      key,
+      { reason, circuitKey: key },
+      { state: beforeState.state, failureCount: beforeState.failureCount },
+      { state: afterState.state, failureCount: afterState.failureCount },
+    )
+    return { beforeState, afterState }
   }
 }

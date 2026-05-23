@@ -10,6 +10,14 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import { AccessLogService } from '@infrastructure/security/access-log.service'
 import { isRemoteEnv } from '@infrastructure/config/app-env'
+import {
+  CIRCUIT_BREAKER_KEYS,
+  CircuitBreakerActionDto,
+  CircuitBreakerActionResponseDto,
+  CircuitBreakerKey,
+  CircuitBreakerStateResponseDto,
+  toCircuitBreakerStateResponse,
+} from '@adapter/inbound/http/dto/circuit-breaker.dto'
 
 interface AuthenticatedRequest {
   user: { sub: string; slug: string; role: string }
@@ -429,5 +437,155 @@ export class AdminController {
   @UseGuards(JwtAuthGuard, AdminGuard)
   async getAuditLogs(@Query('page') page?: string, @Query('limit') limit?: string, @Query('action') action?: string) {
     return this.adminUseCase.getAuditLogs({ page: page ? parseInt(page) : 1, limit: limit ? parseInt(limit) : 50, action })
+  }
+
+  // ─── Circuit Breaker 운영자 admin (PAY-S3 Phase A — 2026-05-23) ───
+  //
+  // ADR-009 §"잔존 영역" 4번째 항목 해소 — port (forceOpen/forceClose) 위 HTTP admin 박제.
+  // 정본: shared-contracts §27 CircuitBreakerPolicy.
+  //
+  // graceful 설계 (plan-draft §4):
+  // - GET /admin/circuit-breaker/state — 항시 가용, 호출 비용 0. @Throttle 분당 60회 (운영 폴링 허용).
+  // - POST /admin/circuit-breaker/trip — 파괴적 액션 ⚠️ 결제 즉시 503. reason 빈값 400. key 화이트리스트 400.
+  //   @Throttle 분당 5회 (운영자 호출 빈도 상한).
+  // - POST /admin/circuit-breaker/reset — 수동 복구. reason/key 검증 동일. @Throttle 분당 5회.
+
+  /**
+   * env 정수 파싱 (NaN/음수 fallback) — adapter `parseEnvInt` 와 동일 정책.
+   * controller 가 응답 policy 4값 동봉 시 사용.
+   */
+  private parsePolicyEnvInt(raw: string | undefined, fallback: number): number {
+    if (!raw) return fallback
+    const parsed = parseInt(raw, 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+  }
+
+  /**
+   * 응답 동봉용 policy 4값 — adapter 와 동일 fallback (5/30000/3/60000).
+   */
+  private getCircuitBreakerPolicy(): {
+    failureThreshold: number
+    cooldownMs: number
+    halfOpenTrial: number
+    resetWindowMs: number
+  } {
+    return {
+      failureThreshold: this.parsePolicyEnvInt(process.env.POLAR_CB_FAILURE_THRESHOLD, 5),
+      cooldownMs: this.parsePolicyEnvInt(process.env.POLAR_CB_COOLDOWN_MS, 30_000),
+      halfOpenTrial: this.parsePolicyEnvInt(process.env.POLAR_CB_HALF_OPEN_TRIAL, 3),
+      resetWindowMs: this.parsePolicyEnvInt(process.env.POLAR_CB_RESET_WINDOW_MS, 60_000),
+    }
+  }
+
+  /**
+   * key 화이트리스트 검증 — CIRCUIT_BREAKER_KEYS 외 입력 시 400 (운영자 오타 방어).
+   *
+   * 본 검증은 DTO `@IsIn` 외에 controller 영역에서도 명시적 강제 — query param(`GET`) 도 검증 정합.
+   */
+  private assertCircuitBreakerKey(key: string): CircuitBreakerKey {
+    if (!CIRCUIT_BREAKER_KEYS.includes(key as CircuitBreakerKey)) {
+      throw new BadRequestException(
+        `지원하지 않는 Circuit Breaker key — 허용: ${CIRCUIT_BREAKER_KEYS.join(', ')}`,
+      )
+    }
+    return key as CircuitBreakerKey
+  }
+
+  /**
+   * reason 빈값/공백만 검증 — 400 BadRequest (사후 추적 강제).
+   */
+  private assertReason(reason: string | undefined): string {
+    if (!reason || reason.trim().length === 0) {
+      throw new BadRequestException('Circuit Breaker 수동 차단/복구 시 사유(reason) 필수')
+    }
+    return reason
+  }
+
+  /**
+   * GET /admin/circuit-breaker/state — 호출점 상태 조회 (운영 모니터링).
+   *
+   * query `key` 지정 시 단일 상태 — 화이트리스트 외 입력 시 400.
+   * 미지정 시 화이트리스트 2 호출점 모두 반환 (운영자 일괄 모니터링).
+   *
+   * 응답: `{ states: CircuitBreakerStateResponseDto[] }` — 내부 ID 노출 0건.
+   */
+  @Throttle({ default: { ttl: 60000, limit: 60 } })
+  @Get('circuit-breaker/state')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async getCircuitBreakerState(
+    @Query('key') key?: string,
+  ): Promise<{ states: CircuitBreakerStateResponseDto[] }> {
+    const policy = this.getCircuitBreakerPolicy()
+    const targetKeys: CircuitBreakerKey[] = key
+      ? [this.assertCircuitBreakerKey(key)]
+      : [...CIRCUIT_BREAKER_KEYS]
+
+    const states = await Promise.all(
+      targetKeys.map(async (k) => {
+        const stats = await this.adminUseCase.getCircuitBreakerState(k)
+        return toCircuitBreakerStateResponse(k, stats, policy)
+      }),
+    )
+    return { states }
+  }
+
+  /**
+   * POST /admin/circuit-breaker/trip — Circuit Breaker 수동 차단.
+   *
+   * ⚠️ 파괴적 액션 — 호출 즉시 해당 호출점 `polar:checkouts:*` 결제 503 변환.
+   * 사고 대응 / 연습 / 점검 전용. 운영자 행위 AuditLog `circuit_breaker.manual_trip` 박제.
+   *
+   * Body: `CircuitBreakerActionDto` (key 화이트리스트 + reason 필수)
+   * 응답: `{ success: true, beforeState, afterState }` (§20 정합)
+   */
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @Post('circuit-breaker/trip')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async tripCircuitBreaker(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: CircuitBreakerActionDto,
+  ): Promise<CircuitBreakerActionResponseDto> {
+    const key = this.assertCircuitBreakerKey(body?.key)
+    const reason = this.assertReason(body?.reason)
+    const { beforeState, afterState } = await this.adminUseCase.tripCircuitBreaker(
+      req.user.sub,
+      key,
+      reason,
+    )
+    return {
+      success: true,
+      beforeState: beforeState.state,
+      afterState: afterState.state,
+    }
+  }
+
+  /**
+   * POST /admin/circuit-breaker/reset — Circuit Breaker 수동 복구.
+   *
+   * `forceClose` 호출 — failureCount=0 / state=CLOSED 강제. 운영자 사고 후 복원 용도.
+   * 운영자 행위 AuditLog `circuit_breaker.manual_reset` 박제.
+   *
+   * Body: `CircuitBreakerActionDto` (key 화이트리스트 + reason 필수)
+   * 응답: `{ success: true, beforeState, afterState }`
+   */
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
+  @Post('circuit-breaker/reset')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  async resetCircuitBreaker(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: CircuitBreakerActionDto,
+  ): Promise<CircuitBreakerActionResponseDto> {
+    const key = this.assertCircuitBreakerKey(body?.key)
+    const reason = this.assertReason(body?.reason)
+    const { beforeState, afterState } = await this.adminUseCase.resetCircuitBreaker(
+      req.user.sub,
+      key,
+      reason,
+    )
+    return {
+      success: true,
+      beforeState: beforeState.state,
+      afterState: afterState.state,
+    }
   }
 }

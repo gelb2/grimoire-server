@@ -1,5 +1,6 @@
 import { AdminUseCase } from './admin.usecase'
 import { NotFoundException, BadRequestException } from '@nestjs/common'
+import { CircuitBreakerState } from '@domain/model/circuit-breaker-state'
 
 describe('AdminUseCase', () => {
   let useCase: AdminUseCase
@@ -12,6 +13,8 @@ describe('AdminUseCase', () => {
   let mockAuditLog: any
   // 크레딧 개편 CC-5 (2026-05-22, HIGH-1 案 B) — 등급 변경 MembershipPlanPort mock
   let mockMembershipRepo: any
+  // PAY-S3 Phase A (2026-05-23) — Circuit Breaker port mock
+  let mockCircuitBreaker: any
 
   beforeEach(() => {
     mockAuthorRepo = {
@@ -106,11 +109,26 @@ describe('AdminUseCase', () => {
         polarSubscriptionId: null, status: 'active',
       }),
     }
+    // PAY-S3 Phase A — CircuitBreakerPort mock (in-memory adapter 5 메서드 시뮬레이트)
+    mockCircuitBreaker = {
+      execute: jest.fn(),
+      getState: jest.fn().mockReturnValue(CircuitBreakerState.CLOSED),
+      getStats: jest.fn().mockReturnValue({
+        state: CircuitBreakerState.CLOSED,
+        failureCount: 0,
+        halfOpenTrialCount: 0,
+        halfOpenSuccessCount: 0,
+      }),
+      forceOpen: jest.fn().mockResolvedValue(undefined),
+      forceClose: jest.fn().mockResolvedValue(undefined),
+    }
     // CC-4 Phase 1 — AdminUseCase 생성자에서 creditRepo 인자 제거.
     // CC-5 — MembershipPlanPort 인자 추가 (案 B 등급 변경 단일 진입점).
+    // PAY-S3 Phase A — CircuitBreakerPort 인자 추가 (Optional — 미주입 시 BadRequest).
     useCase = new AdminUseCase(
       mockAuthorRepo, mockWorkRepo, mockAdminRepo as any,
       mockGrantPoints, mockLedger, mockAuditLog, mockMembershipRepo as any,
+      mockCircuitBreaker as any,
     )
   })
 
@@ -354,6 +372,117 @@ describe('AdminUseCase', () => {
     it('설정을 변경하고 감사 로그를 기록한다', async () => {
       await useCase.updateSetting('admin-1', 'maintenance_mode', 'true')
       expect(mockAuditLog.log).toHaveBeenCalledWith('admin-1', 'setting_change', 'maintenance_mode', { value: 'true' })
+    })
+  })
+
+  // PAY-S3 Phase A (2026-05-23) — Circuit Breaker 운영자 admin
+  describe('Circuit Breaker 운영자 admin (PAY-S3 Phase A)', () => {
+    it('getCircuitBreakerState — port.getStats 위임 + stats 반환', async () => {
+      mockCircuitBreaker.getStats.mockReturnValueOnce({
+        state: CircuitBreakerState.CLOSED,
+        failureCount: 2,
+        halfOpenTrialCount: 0,
+        halfOpenSuccessCount: 0,
+      })
+      const stats = await useCase.getCircuitBreakerState('polar:checkouts:create')
+
+      expect(mockCircuitBreaker.getStats).toHaveBeenCalledWith('polar:checkouts:create')
+      expect(stats.state).toBe(CircuitBreakerState.CLOSED)
+      expect(stats.failureCount).toBe(2)
+    })
+
+    it('tripCircuitBreaker — forceOpen 호출 + AuditLog manual_trip 6-arg 박제(beforeState/afterState §20)', async () => {
+      // beforeState: CLOSED → afterState: OPEN 시뮬레이트
+      mockCircuitBreaker.getStats
+        .mockReturnValueOnce({
+          state: CircuitBreakerState.CLOSED,
+          failureCount: 0,
+          halfOpenTrialCount: 0,
+          halfOpenSuccessCount: 0,
+        })
+        .mockReturnValueOnce({
+          state: CircuitBreakerState.OPEN,
+          failureCount: 0,
+          halfOpenTrialCount: 0,
+          halfOpenSuccessCount: 0,
+        })
+
+      const result = await useCase.tripCircuitBreaker(
+        'admin-1',
+        'polar:checkouts:create',
+        '사고 대응 — 결제 차단',
+      )
+
+      // forceOpen 호출 — operator: 박제 정합
+      expect(mockCircuitBreaker.forceOpen).toHaveBeenCalledWith(
+        'polar:checkouts:create',
+        'operator:admin-1:사고 대응 — 결제 차단',
+      )
+      // AuditLog 6-arg 박제 — beforeState/afterState §20 정합
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'admin-1',
+        'circuit_breaker.manual_trip',
+        'polar:checkouts:create',
+        { reason: '사고 대응 — 결제 차단', circuitKey: 'polar:checkouts:create' },
+        { state: CircuitBreakerState.CLOSED, failureCount: 0 },
+        { state: CircuitBreakerState.OPEN, failureCount: 0 },
+      )
+      expect(result.beforeState.state).toBe(CircuitBreakerState.CLOSED)
+      expect(result.afterState.state).toBe(CircuitBreakerState.OPEN)
+    })
+
+    it('resetCircuitBreaker — forceClose 호출 + AuditLog manual_reset 6-arg 박제', async () => {
+      mockCircuitBreaker.getStats
+        .mockReturnValueOnce({
+          state: CircuitBreakerState.OPEN,
+          failureCount: 5,
+          halfOpenTrialCount: 0,
+          halfOpenSuccessCount: 0,
+        })
+        .mockReturnValueOnce({
+          state: CircuitBreakerState.CLOSED,
+          failureCount: 0,
+          halfOpenTrialCount: 0,
+          halfOpenSuccessCount: 0,
+        })
+
+      const result = await useCase.resetCircuitBreaker(
+        'admin-1',
+        'polar:checkouts:list',
+        '수동 복구',
+      )
+
+      expect(mockCircuitBreaker.forceClose).toHaveBeenCalledWith(
+        'polar:checkouts:list',
+        'operator:admin-1:수동 복구',
+      )
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'admin-1',
+        'circuit_breaker.manual_reset',
+        'polar:checkouts:list',
+        { reason: '수동 복구', circuitKey: 'polar:checkouts:list' },
+        { state: CircuitBreakerState.OPEN, failureCount: 5 },
+        { state: CircuitBreakerState.CLOSED, failureCount: 0 },
+      )
+      expect(result.beforeState.state).toBe(CircuitBreakerState.OPEN)
+      expect(result.afterState.state).toBe(CircuitBreakerState.CLOSED)
+    })
+
+    it('CircuitBreakerPort 미주입 시 BadRequestException (모듈 미활성)', async () => {
+      const useCaseNoCb = new AdminUseCase(
+        mockAuthorRepo, mockWorkRepo, {} as any,
+        mockGrantPoints, mockLedger, mockAuditLog, mockMembershipRepo as any,
+        null,
+      )
+      await expect(
+        useCaseNoCb.getCircuitBreakerState('polar:checkouts:create'),
+      ).rejects.toThrow(BadRequestException)
+      await expect(
+        useCaseNoCb.tripCircuitBreaker('admin-1', 'polar:checkouts:create', 'reason'),
+      ).rejects.toThrow(BadRequestException)
+      await expect(
+        useCaseNoCb.resetCircuitBreaker('admin-1', 'polar:checkouts:create', 'reason'),
+      ).rejects.toThrow(BadRequestException)
     })
   })
 })
