@@ -411,7 +411,7 @@ ACCEPTED (사용자 5/15 결정 Draft §16 권장값 전부 채택 정합)
 ### 잔존 영역
 - 다중 인스턴스 환경 — in-memory 상태 분리 (Redis 별도 sprint)
 - 정책 변경 시 Container Apps 재시작 필요 (in-memory 0 초기화)
-- 관리자 UI (forceOpen/forceClose) — P3-I 별도 sprint 분리 (port 인터페이스만 본 sprint 박제)
+- ~~관리자 UI (forceOpen/forceClose)~~ — **PAY-S3 종료 (2026-05-23)** — admin endpoint 3(`GET /admin/circuit-breaker/state` + `POST /reset` + `POST /trip`) + DTO 3종 + AuditLog 신 2 action(`circuit_breaker.manual_trip`/`manual_reset` dual박제) + web `CircuitBreakerPanel`(SettingsTab "결제 인프라" sub-section) + VCK PASS 4/4 + qa 8/8 PASS + sensor 10/10 회귀 0. 정본: `.claude/shared-contracts.md §27` + `reports/sprint-pay-s3-circuit-breaker-admin-progress.md`
 - 호출 빈도 인벤토리 박제 필요 (운영 모니터링 영역)
 
 ### 정본 영역
