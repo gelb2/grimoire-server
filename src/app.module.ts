@@ -9,6 +9,9 @@ import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import { BlobStorageService } from '@infrastructure/storage/blob-storage.service'
 import { GcsStorageService } from '@infrastructure/storage/gcs-storage.service'
 import { SemanticCacheService } from '@lib/semantic-cache'
+// EMAIL-POLAR-READY Phase B (2026-05-27) — Email 어댑터 factory.
+// 사용자 절대 규정 0-1 정합 — default 시 NullEmailAdapter 반환, env EMAIL_PROVIDER 분기.
+import { createEmailService } from '@infrastructure/email/email.factory'
 
 // 유스케이스
 import { GenerateThemeUseCase } from '@application/theme/generate-theme.usecase'
@@ -27,6 +30,9 @@ import { GetMembershipUseCase } from '@application/subscription/get-membership.u
 import { AuthorUseCase } from '@application/author/author.usecase'
 import { ContentUseCase } from '@application/content/content.usecase'
 import { AuthUseCase } from '@application/auth/auth.usecase'
+// EMAIL-POLAR-READY Phase C+D (2026-05-27) — 이메일 인증 UseCase + 결제 알림 UseCase.
+import { EmailVerificationUseCase } from '@application/auth/email-verification.usecase'
+import { PaymentNotificationUseCase } from '@application/payment/payment-notification.usecase'
 import { WorkManagementUseCase } from '@application/work/work-management.usecase'
 import { PaymentUseCase } from '@application/payment/payment.usecase'
 import { PaymentReconciliationJob } from '@application/payment/payment-reconciliation.job'
@@ -88,6 +94,8 @@ import { PrismaAuthTokenRepository } from '@adapter/outbound/persistence/prisma-
 import { PrismaSignupHistoryRepository } from '@adapter/outbound/persistence/prisma-signup-history.repository'
 import { PrismaAdminRepository } from '@adapter/outbound/persistence/prisma-admin.repository'
 import { PrismaPaymentRepository } from '@adapter/outbound/persistence/prisma-payment.repository'
+// EMAIL-POLAR-READY Phase C (2026-05-27) — 이메일 인증 토큰 영역.
+import { PrismaEmailVerificationTokenRepository } from '@adapter/outbound/persistence/prisma-email-verification-token.repository'
 import { PrismaWebhookEventRepository } from '@adapter/outbound/persistence/prisma-webhook-event.repository'
 import { PrismaWebhookRetryQueueRepository } from '@adapter/outbound/persistence/prisma-webhook-retry-queue.repository'
 import { PrismaReconciliationCheckpointRepository } from '@adapter/outbound/persistence/prisma-reconciliation-checkpoint.repository'
@@ -158,6 +166,9 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     AuthorUseCase,
     ContentUseCase,
     AuthUseCase,
+    // EMAIL-POLAR-READY Phase C+D (2026-05-27) — 이메일 인증 + 결제 알림 use case.
+    EmailVerificationUseCase,
+    PaymentNotificationUseCase,
     WorkManagementUseCase,
     PaymentUseCase,
     PaymentReconciliationJob,
@@ -217,6 +228,11 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'AnalysisReportRepositoryPort', useClass: PrismaAnalysisReportRepository },
     // USER-SOFT-DELETE sprint (2026-05-15): GDPR 익명화 영역 — basic 옵션 A 영역 (사용자 5/15 채택)
     { provide: 'UserAnonymizerPort', useClass: DefaultUserAnonymizerAdapter },
+    // EMAIL-POLAR-READY Phase B (2026-05-27) — Email 어댑터 factory provider.
+    // env EMAIL_PROVIDER 분기 (null/resend/sendgrid), 사용자 라이브 액션 1줄로 활성.
+    { provide: 'EmailServicePort', useFactory: () => createEmailService() },
+    // EMAIL-POLAR-READY Phase C (2026-05-27) — 이메일 인증 토큰 repository.
+    { provide: 'EmailVerificationTokenRepositoryPort', useClass: PrismaEmailVerificationTokenRepository },
   ],
 })
 export class AppModule {

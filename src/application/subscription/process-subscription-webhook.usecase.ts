@@ -1,7 +1,8 @@
-import { Injectable, Inject, Logger } from '@nestjs/common'
+import { Injectable, Inject, Logger, Optional } from '@nestjs/common'
 import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
 import { WebhookEventRepositoryPort } from '@domain/port/outbound/webhook-event-repository.port'
 import { NormalizedSubscriptionEvent } from '@domain/port/outbound/payment-gateway.port'
+import { PaymentNotificationUseCase } from '@application/payment/payment-notification.usecase'
 
 /**
  * 크레딧 개편 CC-5 (2026-05-22, PAY-P1-4) — Polar 구독 생명주기 webhook 처리 usecase.
@@ -33,6 +34,13 @@ export class ProcessSubscriptionWebhookUseCase {
     @Inject('MembershipPlanPort') private readonly membershipRepo: MembershipPlanPort,
     @Inject('WebhookEventRepositoryPort')
     private readonly webhookEventRepo: WebhookEventRepositoryPort,
+    /**
+     * EMAIL-POLAR-READY Phase D (2026-05-27) — 구독 갱신 알림 호출점.
+     * Optional — 미주입 시 알림 skip (회귀 보존). NullAdapter 시 호출 0.
+     * $transaction 외부 + try/catch (changeTier commit 보존).
+     */
+    @Optional()
+    private readonly notificationUseCase: PaymentNotificationUseCase | null = null,
   ) {}
 
   /**
@@ -109,6 +117,30 @@ export class ProcessSubscriptionWebhookUseCase {
     this.logger.log(
       `구독 webhook 처리 완료 (eventId=${event.eventId}, ${event.lifecycle} → tier=${event.tier})`,
     )
+
+    // EMAIL-POLAR-READY Phase D (2026-05-27) — 구독 갱신 알림 호출 (created/updated 시만).
+    // $transaction 외부 + try/catch (changeTier commit 보존). NullAdapter 시 호출 0.
+    if (this.notificationUseCase && (event.lifecycle === 'created' || event.lifecycle === 'updated')) {
+      try {
+        // membership 조회로 monthlyPoolPoints / expiresAt 매핑 (방금 changeTier한 결과)
+        const plan = await this.membershipRepo.getPlan(event.userId)
+        if (plan) {
+          await this.notificationUseCase.notifySubscriptionRenewal({
+            authorId: event.userId,
+            tier: event.tier,
+            monthlyPoolPoints: plan.monthlyPoolPoints,
+            expiresAt: plan.expiresAt,
+          })
+        }
+      } catch (e: unknown) {
+        this.logger.warn(
+          `구독 갱신 알림 실패 (eventId=${event.eventId}): ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        )
+      }
+    }
+
     return { processed: true, tier: event.tier }
   }
 }

@@ -59,6 +59,8 @@ model Author {
   // 크레딧 개편 I Phase (2026-05-17) — CreditLedger 회계 원장 / MembershipPlan 구독 이력 (ADR-007 Restrict 정합)
   creditLedgers    CreditLedger[]
   membershipPlans  MembershipPlan[]
+  // EMAIL-POLAR-READY Phase C (2026-05-27) — 이메일 인증/비밀번호 초기화 토큰 (감사용 영구 보존)
+  emailVerificationTokens EmailVerificationToken[]
 
   // SetNull 영역 (익명화 + 운영자 변경 시 기록 보존)
   likes              Like[]
@@ -628,4 +630,33 @@ model WebhookRetryQueue {
   @@index([nextRetryAt])
   @@index([retentionTier, createdAt])
   @@map("webhook_retry_queues")
+}
+
+/// EMAIL-POLAR-READY Phase C (2026-05-27) — 이메일 인증/비밀번호 초기화 토큰.
+/// 사용자 라이브 액션 게이트 통과 전(`EMAIL_PROVIDER=null`) 에도 토큰 발급/검증 흐름은 정상 동작.
+/// 외부 발송만 NullEmailAdapter 시 0건 (logger.warn만 박제).
+///
+/// 필드:
+/// - tokenHash: sha256(token + pepper) — 평문 토큰은 발송 시점만 메모리에 박제, DB 0건
+/// - purpose: 'verify_email' | 'password_reset' — 1 모델로 2 흐름 통합 (스키마 단순화)
+/// - authorId: FK Restrict (Author hard delete 시 차단, 토큰 영구 보존 — 감사용)
+/// - email: 발급 시점 이메일 (Author.email 변경 시 stale 방지)
+/// - expireAt: 만료 시각 (verify_email=1h / password_reset=30min, usecase에서 결정)
+/// - redeemedAt: 사용 완료 시각 (NULL=미사용, NOT NULL=사용됨 — 재사용 차단)
+///
+/// 정본: `.claude/state/sprint-email-polar-ready-plan-draft.md` §7 + `.claude/shared-contracts.md` §32
+model EmailVerificationToken {
+  id         String    @id @default(uuid())
+  authorId   String    @map("author_id")
+  author     Author    @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  email      String
+  tokenHash  String    @unique @map("token_hash")
+  purpose    String // 'verify_email' | 'password_reset'
+  expireAt   DateTime  @map("expire_at") @db.Timestamptz(3)
+  redeemedAt DateTime? @map("redeemed_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([authorId, expireAt])
+  @@index([purpose, expireAt])
+  @@map("email_verification_tokens")
 }
