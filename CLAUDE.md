@@ -17,12 +17,17 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 파서 출력(Block[])의 시각적 기준은 운영 사슴악마다. 루트 `CLAUDE.md` §1 "시각적 정본" 참조.
 파서 변경 후 사슴악마 에피소드와 시각적으로 다르면 → **파서 버그**.
 
-### Azure 절대 규칙
+### GCP 절대 규칙 (2026-05-27 마이그레이션 완료)
 
-- 리소스그룹: **`zenith-rg` 1개만 사용** (모든 Azure 리소스가 여기에 있음)
-- 새 리소스그룹 생성 **절대 금지**
-- 리소스그룹명이 불확실하면: `az resource list --resource-group zenith-rg -o table`
-- GitHub Actions 워크플로우: `--resource-group zenith-rg` 고정
+- 프로젝트: **`grimoire-491708` 1개만 사용** (project number `23295981916`)
+- 리전: **`asia-northeast1` 단일** (Tokyo). 새 리전 생성 금지
+- 새 GCP 프로젝트/리전 생성 **절대 금지**
+- 리소스 확인 시: `gcloud config list` 로 project 정합 확인 후 `gcloud {run,sql,artifacts,secrets,storage} ...`
+- GitHub Actions: `GCP_SA_KEY` (`google-github-actions/auth@v2`) + `--project grimoire-491708 --region asia-northeast1` 고정
+- 비밀값 단일 진실: **Secret Manager** (Cloud Run env로 `--update-secrets` 바인딩, 평문 `.env` 금지)
+- Cloud SQL 접근: **Auth Proxy 강제** (Public IP allowlist 폐기 — 메인 IP `221.150.30.109/32`만 잔존)
+
+> **Azure 잔존**: §12 정리 대기 (`INFRASTRUCTURE.md §12` 참조). 사용 중지 상태이나 미삭제. Phase 7 정리 sprint 후 제거 예정.
 
 ---
 
@@ -33,10 +38,10 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 | 1 | `docs/api-contract.md` (정본) | API 엔드포인트 전체 명세 |
 | 2 | `docs/data-model.md` (정본) | DB 스키마 정의 |
 | 3 | `docs/theme-spec.md` | 테마 파라미터 (Claude API 응답 형식) |
-| 4 | `docs/environments.md` (정본) | 빌드 환경 + Azure 배포 |
+| 4 | `docs/environments.md` (정본) | 빌드 환경 + GCP 배포 |
 | 5 | `docs/glossary.md` (정본) | 용어 정의 |
 | 6 | `SCHEMA.md` | Prisma 스키마 구현 상세 |
-| 7 | `INFRASTRUCTURE.md` | Azure 인프라 구성 |
+| 7 | `INFRASTRUCTURE.md` | GCP 인프라 구성 (Cloud Run + Cloud SQL + Artifact Registry + GCS) |
 | 8 | `SECURITY.md` | 보안 정책 + 배포 전 체크리스트 |
 | 9 | `MIGRATION.md` | 마이그레이션 규칙 + 롤백 가이드 |
 | 10 | `TECH_STATUS.md` | 현재 구현 상태 + 배포 현황 |
