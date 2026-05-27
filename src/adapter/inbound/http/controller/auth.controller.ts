@@ -3,7 +3,8 @@ import { Controller, Post, Body, Get, Req, Res, UseGuards, ForbiddenException, I
 import { Throttle } from '@nestjs/throttler'
 import { Request, Response } from 'express'
 import { AuthUseCase } from '@application/auth/auth.usecase'
-import { RegisterDto, LoginDto } from '@adapter/inbound/http/dto/auth.dto'
+import { EmailVerificationUseCase } from '@application/auth/email-verification.usecase'
+import { RegisterDto, LoginDto, PasswordResetRequestDto, TokenConfirmDto } from '@adapter/inbound/http/dto/auth.dto'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 import { verifyRecaptcha } from '@adapter/inbound/http/util/recaptcha-verifier'
 import { AccessLogService } from '@infrastructure/security/access-log.service'
@@ -77,6 +78,12 @@ export class AuthController {
     @Optional()
     @Inject('CreditLedgerPort')
     private readonly creditLedger: CreditLedgerPort | null = null,
+    /**
+     * EMAIL-POLAR-READY Phase C (2026-05-27) — 이메일 인증/비밀번호 초기화 토큰 발급/검증.
+     * Optional — 미주입 시 4 endpoint 503 폴백 (회귀 보존). 실 운영은 app.module 주입.
+     */
+    @Optional()
+    private readonly emailVerification: EmailVerificationUseCase | null = null,
   ) {}
 
   /**
@@ -218,5 +225,130 @@ export class AuthController {
     await this.accessLog.log({ action: 'password_change', authorId: req.user.sub, ip, userAgent })
 
     return { success: true }
+  }
+
+  /**
+   * EMAIL-POLAR-READY Phase C (2026-05-27) — 이메일 인증 토큰 발급 요청 (본인 인증 후).
+   *
+   * 사용자 절대 규정 0-1 정합:
+   * - EMAIL_PROVIDER=null (default) 시 NullEmailAdapter → 토큰 DB 박제 정상, 외부 발송 0
+   * - EMAIL_PROVIDER=resend/sendgrid 시 실 발송
+   *
+   * Throttle: 분당 3회 — 발송 spam + DB 토큰 누적 방지.
+   */
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
+  @UseGuards(JwtAuthGuard)
+  @Post('email/verify-request')
+  async emailVerifyRequest(@Req() req: AuthenticatedRequest) {
+    if (!this.emailVerification) {
+      throw new ForbiddenException('이메일 인증 시스템이 아직 활성화되지 않았습니다')
+    }
+    const result = await this.emailVerification.sendVerification(req.user.sub)
+
+    const { ip, userAgent } = extractClientInfo(req as unknown as Request)
+    await this.accessLog.log({
+      action: 'email_verify_request',
+      authorId: req.user.sub,
+      ip,
+      userAgent,
+      detail: `provider:${result.provider}`,
+    })
+
+    return { issued: result.issued, provider: result.provider }
+  }
+
+  /**
+   * EMAIL-POLAR-READY Phase C — 이메일 인증 토큰 검증 (본인 인증 후).
+   *
+   * 토큰 검증 성공 시 redeem 표식 박제 (재사용 차단).
+   * 응답: { verified: true, email } — Author.emailVerifiedAt 컬럼 갱신은 별 sprint (스키마 변경 1건 제약).
+   */
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @UseGuards(JwtAuthGuard)
+  @Post('email/verify-confirm')
+  async emailVerifyConfirm(
+    @Body() dto: TokenConfirmDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    if (!this.emailVerification) {
+      throw new ForbiddenException('이메일 인증 시스템이 아직 활성화되지 않았습니다')
+    }
+    const result = await this.emailVerification.verifyToken(dto.token)
+    // 본인 토큰 검증 — JWT sub와 token.authorId 일치 검증 (계정 탈취 차단)
+    if (result.authorId !== req.user.sub) {
+      throw new ForbiddenException('본인의 토큰만 검증할 수 있습니다')
+    }
+
+    const { ip, userAgent } = extractClientInfo(req as unknown as Request)
+    await this.accessLog.log({
+      action: 'email_verify_confirm',
+      authorId: req.user.sub,
+      ip,
+      userAgent,
+      detail: `purpose:${result.purpose}`,
+    })
+
+    return { verified: true, email: result.email, purpose: result.purpose }
+  }
+
+  /**
+   * EMAIL-POLAR-READY Phase C — 비밀번호 초기화 요청 (비로그인 호출 가능).
+   *
+   * enumeration 차단 — 등록 여부와 무관하게 동일 응답.
+   * Throttle: 분당 3회 — 무차별 대입 차단.
+   */
+  @Throttle({ default: { ttl: 60000, limit: 3 } })
+  @Post('password/reset-request')
+  async passwordResetRequest(
+    @Body() dto: PasswordResetRequestDto,
+    @Req() req: Request,
+  ) {
+    if (!this.emailVerification) {
+      throw new ForbiddenException('비밀번호 초기화 시스템이 아직 활성화되지 않았습니다')
+    }
+    const result = await this.emailVerification.sendPasswordReset(dto.email)
+
+    const { ip, userAgent } = extractClientInfo(req)
+    await this.accessLog.log({
+      action: 'password_reset_request',
+      email: dto.email,
+      ip,
+      userAgent,
+      detail: `provider:${result.provider}`,
+    })
+
+    return { issued: result.issued }
+  }
+
+  /**
+   * EMAIL-POLAR-READY Phase C — 비밀번호 초기화 토큰 검증 + 신 비밀번호 설정.
+   *
+   * 본 sprint에서는 토큰 검증만 박제 — Author.passwordHash 갱신은 별 sprint 진입 시
+   * verify → reset 2단계 분리 또는 본 endpoint 확장.
+   * 현 응답: { verified: true, email } — 호출자가 다음 step 결정.
+   */
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Post('password/reset-confirm')
+  async passwordResetConfirm(
+    @Body() dto: TokenConfirmDto,
+    @Req() req: Request,
+  ) {
+    if (!this.emailVerification) {
+      throw new ForbiddenException('비밀번호 초기화 시스템이 아직 활성화되지 않았습니다')
+    }
+    const result = await this.emailVerification.verifyToken(dto.token)
+    if (result.purpose !== 'password_reset') {
+      throw new ForbiddenException('비밀번호 초기화 토큰이 아닙니다')
+    }
+
+    const { ip, userAgent } = extractClientInfo(req)
+    await this.accessLog.log({
+      action: 'password_reset_confirm',
+      email: result.email,
+      ip,
+      userAgent,
+    })
+
+    return { verified: true, email: result.email }
   }
 }

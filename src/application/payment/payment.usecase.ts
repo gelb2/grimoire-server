@@ -7,6 +7,7 @@ import { WebhookRetryQueueRepositoryPort } from '@domain/port/outbound/webhook-r
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { CREDIT_PRODUCTS, Product } from '@domain/model/config'
 import { RefundPaymentUseCase } from './refund-payment.usecase'
+import { PaymentNotificationUseCase } from './payment-notification.usecase'
 import { AuditLogService } from '@application/admin/audit-log.service'
 import { CircuitOpenError } from '@domain/model/circuit-breaker-state'
 // PAY-P3-D Status enum mapping (도메인 어휘 통일 — shared-contracts §28 / ADR-010)
@@ -57,6 +58,14 @@ export class PaymentUseCase {
      */
     @Optional()
     private readonly subscriptionWebhookUseCase: ProcessSubscriptionWebhookUseCase | null = null,
+    /**
+     * EMAIL-POLAR-READY Phase D (2026-05-27) — 결제 알림 호출점.
+     * Optional — 미주입 시 알림 skip (회귀 보존). 실 운영은 app.module 주입.
+     * 트랜잭션 외부 + try/catch (결제 commit 보존 — CLAUDE.md §9 정합).
+     * NullAdapter (default) 시 isEnabled=false → 호출 0건.
+     */
+    @Optional()
+    private readonly notificationUseCase: PaymentNotificationUseCase | null = null,
   ) {}
 
   /**
@@ -448,6 +457,27 @@ export class PaymentUseCase {
           `webhook event race detected (eventId=${event.eventId}) — completePaymentWithPoints already executed`,
         )
       }
+      // EMAIL-POLAR-READY Phase D (2026-05-27) — 결제 성공 알림 호출.
+      // CLAUDE.md §9 결제 트랜잭션 원자성 정합 — $transaction 외부 + try/catch.
+      // 알림 실패는 logger.warn만, throw 0 (결제 commit 보존).
+      // NullAdapter (default) 시 isEnabled=false → 호출 0건.
+      if (this.notificationUseCase) {
+        try {
+          await this.notificationUseCase.notifyChargeSuccess({
+            paymentId: payment.id,
+            authorId: payment.authorId,
+            amount: event.amount,
+            credits: payment.points,
+          })
+        } catch (e: unknown) {
+          this.logger.warn(
+            `결제 성공 알림 실패 (paymentId=${payment.id}): ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          )
+        }
+      }
+
       // 응답 키 `credits` 보존 (외부 호환성, webhook 응답 schema 안정). 내부 컬럼은 payment.points.
       return { processed: true, credits: payment.points }
     } else if (event.status === NORMALIZED_WEBHOOK_STATUS.CANCEL) {
@@ -496,6 +526,29 @@ export class PaymentUseCase {
         payload: event as unknown as object,
         status: 'processed',
       })
+
+      // EMAIL-POLAR-READY Phase D (2026-05-27) — 환불 완료 알림 호출.
+      // $transaction 외부 + try/catch (결제 trigger 부분환불도 commit 보존).
+      if (this.notificationUseCase) {
+        try {
+          await this.notificationUseCase.notifyRefundProcessed({
+            paymentId: payment.id,
+            authorId: payment.authorId,
+            refundedAmount: event.amount,
+            actualRefunded: payment.points - deficitIncurred,
+            deficitIncurred,
+            isPartial: event.amount < payment.amount,
+            reason: `polar_webhook_${event.type}`,
+          })
+        } catch (e: unknown) {
+          this.logger.warn(
+            `환불 완료 알림 실패 (paymentId=${payment.id}): ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          )
+        }
+      }
+
       return { processed: true, credits: 0, deficitCredits: deficitIncurred }
     } else {
       // event.status === 'fail' — 결제 실패 (크레딧 환수 대상 아님 — pending → failed만)
@@ -507,6 +560,25 @@ export class PaymentUseCase {
         payload: event as unknown as object,
         status: 'processed',
       })
+
+      // EMAIL-POLAR-READY Phase D (2026-05-27) — 결제 실패 알림 호출.
+      // $transaction 외부 + try/catch.
+      if (this.notificationUseCase) {
+        try {
+          await this.notificationUseCase.notifyChargeFailed({
+            paymentId: payment.id,
+            authorId: payment.authorId,
+            amount: event.amount,
+          })
+        } catch (e: unknown) {
+          this.logger.warn(
+            `결제 실패 알림 실패 (paymentId=${payment.id}): ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          )
+        }
+      }
+
       return { processed: true, credits: 0 }
     }
   }
