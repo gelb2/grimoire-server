@@ -5,24 +5,39 @@
 # 비상용 수단: GitHub Actions `db-sync-nightly.yml`이 다운되거나 빌링 문제 시
 #   로컬에서 동일한 로직으로 수동 실행 가능. 스크립트가 정본, CI는 래퍼로 관리.
 #
-# 사용 (2026-04-19 inhouse 제거 — 2환경 유지):
+# 2026-05-27 GCP 영역: Azure 의존 영역 (azure/login + az postgres firewall-rule) 영역 일괄 제거.
+#   Cloud SQL Auth Proxy 영역 spawn 영역 대체 — 양측 DB 영역 localhost:port 영역 binding 영역.
+#
+# 사용:
 #   ./scripts/db-sync-remote.sh prod dev --mask-pii       # PII 마스킹
 #
 # 환경변수:
-#   DB_PASSWORD           Azure DB 비밀번호 (필수)
-#   SKIP_INTERACTIVE=1    prod 확인 프롬프트 스킵 (CI용)
+#   DB_PASSWORD_PROD       prod Cloud SQL 비밀번호 (필수)
+#   DB_PASSWORD_DEV        dev Cloud SQL 비밀번호 (필수)
+#   SKIP_INTERACTIVE=1     prod 확인 프롬프트 스킵
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$(dirname "$SCRIPT_DIR")"  # grimoire-server/ 루트
 
-# deploy-common.sh에서 info/ok/warn/fail/step + 상수 로드
+# deploy-common.sh에서 info/ok/warn/fail/step 로드 (RESOURCE_GROUP 등 Azure 상수는 무시)
 source "${SCRIPT_DIR}/deploy-common.sh"
 
 SOURCE="${1:-}"
 TARGET="${2:-}"
 MASK_FLAG="${3:-}"
+
+# ─────────────────────────────────────────────────────────────
+# 0. GCP 영역 상수 (Cloud SQL 영역 정합)
+# ─────────────────────────────────────────────────────────────
+readonly GCP_PROJECT_ID="grimoire-491708"
+readonly GCP_REGION="asia-northeast1"
+readonly CLOUD_SQL_DEV="grimoire-491708:asia-northeast1:grimoire-db-dev"
+readonly CLOUD_SQL_PROD="grimoire-491708:asia-northeast1:grimoire-db-prod"
+readonly PORT_SOURCE=5432
+readonly PORT_TARGET=5433
+readonly PROXY_VERSION="v2.13.0"
 
 # ─────────────────────────────────────────────────────────────
 # 1. 입력 검증
@@ -46,28 +61,64 @@ if [ "$(rank_of "$SOURCE")" -le "$(rank_of "$TARGET")" ]; then
   fail "하위 → 상위 동기화 금지: $SOURCE → $TARGET (허용: prod→dev)"
 fi
 
-# MASK_FLAG 처리
 if [ -n "$MASK_FLAG" ] && [ "$MASK_FLAG" != "--mask-pii" ]; then
   fail "세 번째 인자는 --mask-pii만 허용 (got '$MASK_FLAG')"
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 2. preflight — 인증/자격증명/스키마 동기화
+# 2. preflight — 자격증명 + gcloud 영역 + Auth Proxy 영역 + Prisma 영역
 # ─────────────────────────────────────────────────────────────
 step "preflight"
 
-if [ -z "${DB_PASSWORD:-}" ]; then
-  fail "DB_PASSWORD 환경변수 필수. export DB_PASSWORD=... 후 재실행"
+# 환경별 비밀번호 영역 분리 강제
+DB_PW_SOURCE=""
+DB_PW_TARGET=""
+case "$SOURCE" in
+  prod) DB_PW_SOURCE="${DB_PASSWORD_PROD:-}" ;;
+  dev)  DB_PW_SOURCE="${DB_PASSWORD_DEV:-}" ;;
+esac
+case "$TARGET" in
+  dev)  DB_PW_TARGET="${DB_PASSWORD_DEV:-}" ;;
+esac
+
+if [ -z "$DB_PW_SOURCE" ]; then
+  fail "DB_PASSWORD_${SOURCE^^} 환경변수 필수. export DB_PASSWORD_${SOURCE^^}=... 후 재실행"
+fi
+if [ -z "$DB_PW_TARGET" ]; then
+  fail "DB_PASSWORD_${TARGET^^} 환경변수 필수. export DB_PASSWORD_${TARGET^^}=... 후 재실행"
 fi
 
-# Azure CLI 로그인 상태
-current_user=$(az account show --query user.name -o tsv 2>/dev/null || echo "")
-if [ -z "$current_user" ]; then
-  fail "Azure CLI 로그인 필요: az login"
+# gcloud 로그인 영역 (project + account)
+current_account=$(gcloud config get-value account 2>/dev/null || echo "")
+if [ -z "$current_account" ]; then
+  fail "gcloud 로그인 필요: gcloud auth login"
 fi
-info "Azure 로그인: $current_user"
+current_project=$(gcloud config get-value project 2>/dev/null || echo "")
+if [ "$current_project" != "$GCP_PROJECT_ID" ]; then
+  fail "gcloud project 영역 불일치 (현재=$current_project, 요구=$GCP_PROJECT_ID). gcloud config set project $GCP_PROJECT_ID"
+fi
+info "gcloud 로그인: $current_account (project=$current_project)"
 
-# Prisma Client 최신 상태 (schema 변경 반영)
+# Cloud SQL Auth Proxy 영역 binary 영역 (없으면 다운로드)
+PROXY_BIN="/tmp/cloud-sql-proxy-${PROXY_VERSION}"
+if [ ! -x "$PROXY_BIN" ]; then
+  info "Cloud SQL Auth Proxy 영역 다운로드 (${PROXY_VERSION})"
+  # OS 영역 자동 감지 — darwin 영역 + linux 영역
+  UNAME=$(uname -s | tr '[:upper:]' '[:lower:]')
+  ARCH=$(uname -m)
+  case "$ARCH" in
+    arm64|aarch64) ARCH="arm64" ;;
+    x86_64) ARCH="amd64" ;;
+    *) fail "지원 불가 아키텍처: $ARCH" ;;
+  esac
+  curl -sSL -o "$PROXY_BIN" \
+    "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/${PROXY_VERSION}/cloud-sql-proxy.${UNAME}.${ARCH}" \
+    || fail "Cloud SQL Auth Proxy 영역 다운로드 실패"
+  chmod +x "$PROXY_BIN"
+fi
+info "Cloud SQL Auth Proxy: $PROXY_BIN"
+
+# Prisma Client 최신 상태
 if [ ! -d "node_modules/.prisma/client" ]; then
   info "Prisma Client 미생성 — generate 실행"
   npx prisma generate
@@ -87,47 +138,65 @@ if { [ "$SOURCE" = "prod" ] || [ "$TARGET" = "prod" ]; } && [ -z "${SKIP_INTERAC
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 4. 방화벽 규칙 임시 추가 + trap으로 보장 제거
+# 4. Cloud SQL Auth Proxy 영역 spawn + trap 영역 보장 정리
 # ─────────────────────────────────────────────────────────────
-step "방화벽 규칙 추가 (SOURCE + TARGET)"
+step "Cloud SQL Auth Proxy 영역 spawn (source + target)"
 
-MY_IP=$(curl -s --max-time 10 ifconfig.me || echo "")
-if [ -z "$MY_IP" ]; then fail "러너 IP 확인 실패"; fi
-info "러너 IP: $MY_IP"
+case "$SOURCE" in
+  prod) SRC_CONN="$CLOUD_SQL_PROD" ;;
+  dev)  SRC_CONN="$CLOUD_SQL_DEV" ;;
+esac
+case "$TARGET" in
+  dev)  TGT_CONN="$CLOUD_SQL_DEV" ;;
+esac
 
-FW_RULE_NAME="manual-db-sync-$(date +%s)"
-DB_LIST=("grimoire-db-${SOURCE}" "grimoire-db-${TARGET}")
+PROXY_LOG_DIR="/tmp/db-sync-proxy-$$"
+mkdir -p "$PROXY_LOG_DIR"
+PROXY_PID_SOURCE=""
+PROXY_PID_TARGET=""
 
-cleanup_firewall() {
-  step "방화벽 규칙 제거 (cleanup)"
-  for DB in "${DB_LIST[@]}"; do
-    az postgres flexible-server firewall-rule delete \
-      --resource-group "$RESOURCE_GROUP" \
-      --name "$DB" \
-      --rule-name "$FW_RULE_NAME" \
-      --yes --output none 2>/dev/null || warn "  $DB: 규칙 제거 실패 (이미 없거나 네트워크 이슈)"
-  done
-  ok "방화벽 정리 완료"
+cleanup_proxy() {
+  step "Auth Proxy 영역 정리 (cleanup)"
+  if [ -n "$PROXY_PID_SOURCE" ]; then kill "$PROXY_PID_SOURCE" 2>/dev/null || true; fi
+  if [ -n "$PROXY_PID_TARGET" ]; then kill "$PROXY_PID_TARGET" 2>/dev/null || true; fi
+  rm -rf "$PROXY_LOG_DIR" 2>/dev/null || true
+  ok "Auth Proxy 영역 정리 완료"
 }
-trap cleanup_firewall EXIT
+trap cleanup_proxy EXIT
 
-for DB in "${DB_LIST[@]}"; do
-  info "  $DB에 $MY_IP 추가..."
-  az postgres flexible-server firewall-rule create \
-    --resource-group "$RESOURCE_GROUP" \
-    --name "$DB" \
-    --rule-name "$FW_RULE_NAME" \
-    --start-ip-address "$MY_IP" \
-    --end-ip-address "$MY_IP" \
-    --output none \
-    || fail "$DB 방화벽 규칙 추가 실패"
+info "  source($SOURCE)=$SRC_CONN → 127.0.0.1:$PORT_SOURCE"
+"$PROXY_BIN" --port "$PORT_SOURCE" "$SRC_CONN" > "$PROXY_LOG_DIR/source.log" 2>&1 &
+PROXY_PID_SOURCE=$!
+
+info "  target($TARGET)=$TGT_CONN → 127.0.0.1:$PORT_TARGET"
+"$PROXY_BIN" --port "$PORT_TARGET" "$TGT_CONN" > "$PROXY_LOG_DIR/target.log" 2>&1 &
+PROXY_PID_TARGET=$!
+
+# Proxy 영역 준비 영역 대기 (최대 30s)
+for i in $(seq 1 30); do
+  if nc -z 127.0.0.1 "$PORT_SOURCE" 2>/dev/null && nc -z 127.0.0.1 "$PORT_TARGET" 2>/dev/null; then
+    ok "Auth Proxy 영역 준비 완료 (${i}s)"
+    break
+  fi
+  sleep 1
+  if [ "$i" = "30" ]; then
+    cat "$PROXY_LOG_DIR/source.log" "$PROXY_LOG_DIR/target.log" >&2
+    fail "Auth Proxy 영역 준비 영역 시간 영역 초과 (30s)"
+  fi
 done
-ok "방화벽 규칙 추가 완료"
 
 # ─────────────────────────────────────────────────────────────
 # 5. db-sync.ts 실행
 # ─────────────────────────────────────────────────────────────
 step "DB 동기화 실행: $SOURCE → $TARGET ${MASK_FLAG}"
+
+export DB_PASSWORD_SOURCE="$DB_PW_SOURCE"
+export DB_PASSWORD_TARGET="$DB_PW_TARGET"
+export DB_HOST_SOURCE="127.0.0.1"
+export DB_HOST_TARGET="127.0.0.1"
+export DB_PORT_SOURCE="$PORT_SOURCE"
+export DB_PORT_TARGET="$PORT_TARGET"
+export DB_SSL_MODE="disable"
 
 if [ -n "$MASK_FLAG" ]; then
   npx tsx scripts/db-sync.ts "$SOURCE" "$TARGET" "$MASK_FLAG"
@@ -136,4 +205,4 @@ else
 fi
 
 ok "동기화 성공: $SOURCE → $TARGET"
-info "  방화벽 정리는 EXIT trap으로 자동 수행됩니다"
+info "  Auth Proxy 영역 정리 영역 — EXIT trap 영역 자동 수행"

@@ -1,7 +1,7 @@
 /**
  * DB 동기화 스크립트 — source DB의 데이터를 target DB로 복사
  *
- * 사용법 (2026-04-19 inhouse 제거):
+ * 사용법 (2026-04-19 inhouse 제거 / 2026-05-27 GCP 영역 정합):
  *   npx tsx scripts/db-sync.ts prod dev --mask-pii
  *   npx tsx scripts/db-sync.ts prod dev --mask-pii --preserve-accounts
  *   npx tsx scripts/db-sync.ts dev local
@@ -11,21 +11,41 @@
  *   --preserve-accounts DB_SYNC_PRESERVE_EMAILS 환경변수의 이메일 목록은 마스킹 스킵
  *                       (2026-04-19 회귀: --mask-pii로 dev 로그인 불가 → 테스트 계정 보존용)
  *
- * 환경변수:
- *   DB_PASSWORD                Azure DB 비밀번호 (미설정 시 기본값 사용)
+ * 환경변수 (2026-05-27 GCP 영역 신설 — Cloud SQL Auth Proxy 영역 정합):
+ *   DB_PASSWORD_SOURCE         source DB 비밀번호 (필수, 신 영역 — Cloud SQL grimoireadmin)
+ *   DB_PASSWORD_TARGET         target DB 비밀번호 (필수, 신 영역 — Cloud SQL grimoireadmin)
+ *   DB_HOST_SOURCE             source DB host (선택, 기본 127.0.0.1) — Auth Proxy 영역 localhost
+ *   DB_HOST_TARGET             target DB host (선택, 기본 127.0.0.1)
+ *   DB_PORT_SOURCE             source DB port (선택, 기본 5432)
+ *   DB_PORT_TARGET             target DB port (선택, 기본 5433)
+ *   DB_SSL_MODE                sslmode (선택, 기본 disable) — Auth Proxy 영역 plaintext 영역 정합
+ *
+ *   DB_PASSWORD                (Legacy, deprecated) — DB_PASSWORD_SOURCE/TARGET 미설정 시 fallback
  *   DB_SYNC_PRESERVE_EMAILS    --preserve-accounts 사용 시 마스킹 제외할 이메일 (콤마 분리)
  *                              예: deerdevil@example.com,admin@example.com
  */
 
 import { PrismaClient } from '@prisma/client'
 
-// 2026-04-25: fallback 평문 제거 (보안 회수). DB_PASSWORD env 필수.
-const PW = process.env.DB_PASSWORD
-if (!PW) {
-  console.error('❌ DB_PASSWORD env 필수. 예: DB_PASSWORD="strong-pw" npx tsx scripts/db-sync.ts ...')
+// 2026-05-27 GCP 영역: DB_PASSWORD_SOURCE/TARGET 영역 신설 (Cloud SQL Auth Proxy 영역 정합).
+// 환경별 비밀번호 영역 분리 강제 (dev/prod Cloud SQL 영역 분리 영역).
+// Legacy DB_PASSWORD 영역 fallback 영역 — 기존 로컬 호출자 영역 보존.
+const LEGACY_PW = process.env.DB_PASSWORD
+const PW_SOURCE = process.env.DB_PASSWORD_SOURCE || LEGACY_PW
+const PW_TARGET = process.env.DB_PASSWORD_TARGET || LEGACY_PW
+if (!PW_SOURCE || !PW_TARGET) {
+  console.error('❌ DB_PASSWORD_SOURCE + DB_PASSWORD_TARGET env 필수 (또는 legacy DB_PASSWORD).')
+  console.error('   예: DB_PASSWORD_SOURCE=... DB_PASSWORD_TARGET=... npx tsx scripts/db-sync.ts prod dev --mask-pii')
   process.exit(1)
 }
 const ADMIN = 'grimoireadmin'
+
+// GCP Cloud SQL Auth Proxy 영역 정합 — host/port 영역 환경변수 영역 주입 강제
+const HOST_SOURCE = process.env.DB_HOST_SOURCE || '127.0.0.1'
+const HOST_TARGET = process.env.DB_HOST_TARGET || '127.0.0.1'
+const PORT_SOURCE = process.env.DB_PORT_SOURCE || '5432'
+const PORT_TARGET = process.env.DB_PORT_TARGET || '5433'
+const SSL_MODE = process.env.DB_SSL_MODE || 'disable'
 
 // PII 마스킹용 고정 bcrypt 해시 (비밀번호: "masked2026")
 const MASKED_PASSWORD_HASH = '$2b$10$KjXGfJxQJfzQ2q8lRj5zWOBYcZJg.Zq0Z9R8Q1RVG8J5r5t8N2H0O'
@@ -40,13 +60,19 @@ function getPreserveEmails(): Set<string> {
   )
 }
 
-function getDbUrl(env: string): string {
+// 2026-05-27 GCP 영역: role 영역 (source/target) 영역 별 host/port/password 영역 주입 강제.
+// Auth Proxy 영역 정합 — env 영역 명칭 영역 (prod/dev/local) 영역 ≠ 직접 host 영역 박제.
+function getDbUrl(env: string, role: 'source' | 'target'): string {
   if (env === 'local') {
     // 로컬 docker-compose 기본값 — 외부 노출 영향 없음
     const localPw = process.env.LOCAL_DB_PASSWORD || 'REMOVED_CREDENTIAL_011'
     return `postgresql://${ADMIN}:${localPw}@localhost:5432/grimoire`
   }
-  return `postgresql://${ADMIN}:${PW}@grimoire-db-${env}.postgres.database.azure.com:5432/grimoire?sslmode=require`
+  // 원격 영역 (prod/dev) — Auth Proxy 영역 localhost:port 영역 정합 영역 강제
+  const pw = role === 'source' ? PW_SOURCE : PW_TARGET
+  const host = role === 'source' ? HOST_SOURCE : HOST_TARGET
+  const port = role === 'source' ? PORT_SOURCE : PORT_TARGET
+  return `postgresql://${ADMIN}:${pw}@${host}:${port}/grimoire?sslmode=${SSL_MODE}`
 }
 
 const VALID_ENVS = ['prod', 'dev', 'local']
@@ -143,8 +169,8 @@ async function main() {
     console.log(`  보존 이메일: ${[...preserveEmails].join(', ')}`)
   }
 
-  const sourceDb = new PrismaClient({ datasources: { db: { url: getDbUrl(source) } } })
-  const targetDb = new PrismaClient({ datasources: { db: { url: getDbUrl(target) } } })
+  const sourceDb = new PrismaClient({ datasources: { db: { url: getDbUrl(source, 'source') } } })
+  const targetDb = new PrismaClient({ datasources: { db: { url: getDbUrl(target, 'target') } } })
 
   try {
     // 1. Source에서 데이터 읽기

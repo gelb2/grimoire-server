@@ -1,6 +1,11 @@
-name: DB Sync (Nightly)
+name: DB Sync (Nightly) — GCP Cloud SQL
 
 # 매일 자정 KST (UTC 15:00) 자동 실행 + 수동 트리거
+# 2026-05-27: Azure PostgreSQL → GCP Cloud SQL 마이그레이션 정합 (Phase 0~6 종결 후 영역).
+#   - Azure 의존 0건 (azure/login + az CLI + Azure DB host 일괄 제거)
+#   - GCP 인증: google-github-actions/auth (SA Key JSON via GCP_SA_KEY secret)
+#   - 양측 DB 연결: Cloud SQL Auth Proxy v2 (Azure 방화벽 임시 추가 영역 → Proxy spawn 영역 대체)
+#   - 데이터 코어: scripts/db-sync.ts (기존 Prisma 영역 재사용 — PII 마스킹 정합 보존)
 on:
   schedule:
     - cron: '0 15 * * *'
@@ -11,13 +16,13 @@ on:
         required: true
         default: 'prod'
         type: choice
-        options: ['prod', 'inhouse', 'dev']
+        options: ['prod', 'dev']
       target:
         description: 'Target 환경'
         required: true
         default: 'dev'
         type: choice
-        options: ['inhouse', 'dev']
+        options: ['dev']
       mask_pii:
         description: 'PII 마스킹 적용'
         required: true
@@ -28,86 +33,36 @@ concurrency:
   group: db-sync
   cancel-in-progress: false
 
+env:
+  GCP_PROJECT_ID: grimoire-491708
+  GCP_REGION: asia-northeast1
+  CLOUD_SQL_DEV: grimoire-491708:asia-northeast1:grimoire-db-dev
+  CLOUD_SQL_PROD: grimoire-491708:asia-northeast1:grimoire-db-prod
+  PROXY_VERSION: v2.13.0
+  # Auth Proxy 영역 binding 영역 (source=5432, target=5433 — 충돌 회피 강제)
+  PORT_SOURCE: 5432
+  PORT_TARGET: 5433
+
 jobs:
-  sync-prod-to-inhouse:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: 러너 IP 확인
-        id: ip
-        run: echo "RUNNER_IP=$(curl -s ifconfig.me)" >> $GITHUB_OUTPUT
-
-      - name: 방화벽 규칙 추가 (prod + inhouse)
-        run: |
-          for DB in grimoire-db-prod grimoire-db-inhouse; do
-            az postgres flexible-server firewall-rule create \
-              --resource-group zenith-rg \
-              --name $DB \
-              --rule-name github-actions-sync \
-              --start-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
-              --end-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
-              --output none 2>/dev/null || true
-          done
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: 의존성 설치
-        run: npm ci
-
-      - name: Prisma Generate
-        run: npx prisma generate
-
-      - name: prod → inhouse 동기화 (PII 유지)
-        env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-        run: npx tsx scripts/db-sync.ts prod inhouse
-
-      - name: 방화벽 규칙 제거
-        if: always()
-        run: |
-          for DB in grimoire-db-prod grimoire-db-inhouse; do
-            az postgres flexible-server firewall-rule delete \
-              --resource-group zenith-rg \
-              --name $DB \
-              --rule-name github-actions-sync \
-              --yes --output none 2>/dev/null || true
-          done
-
+  # ─────────────────────────────────────────────────────────────
+  # 자동 야간 영역: prod → dev (PII 마스킹 강제)
+  # ─────────────────────────────────────────────────────────────
   sync-prod-to-dev:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure Login
-        uses: azure/login@v2
+      - name: GCP 인증 (SA Key)
+        uses: google-github-actions/auth@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: 러너 IP 확인
-        id: ip
-        run: echo "RUNNER_IP=$(curl -s ifconfig.me)" >> $GITHUB_OUTPUT
-
-      - name: 방화벽 규칙 추가 (prod + dev)
-        run: |
-          for DB in grimoire-db-prod grimoire-db-dev; do
-            az postgres flexible-server firewall-rule create \
-              --resource-group zenith-rg \
-              --name $DB \
-              --rule-name github-actions-sync \
-              --start-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
-              --end-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
-              --output none 2>/dev/null || true
-          done
+      - name: gcloud SDK 설치
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
 
       - uses: actions/setup-node@v4
         with:
@@ -118,50 +73,71 @@ jobs:
 
       - name: Prisma Generate
         run: npx prisma generate
+
+      - name: Cloud SQL Auth Proxy 설치
+        run: |
+          curl -L -o cloud-sql-proxy \
+            "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/${{ env.PROXY_VERSION }}/cloud-sql-proxy.linux.amd64"
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy --version
+
+      - name: Auth Proxy spawn (source=prod 5432 + target=dev 5433)
+        run: |
+          # source=prod 영역 5432 영역 binding
+          ./cloud-sql-proxy --port ${{ env.PORT_SOURCE }} "${{ env.CLOUD_SQL_PROD }}" > proxy-source.log 2>&1 &
+          echo $! > proxy-source.pid
+          # target=dev 영역 5433 영역 binding
+          ./cloud-sql-proxy --port ${{ env.PORT_TARGET }} "${{ env.CLOUD_SQL_DEV }}" > proxy-target.log 2>&1 &
+          echo $! > proxy-target.pid
+          # Proxy 영역 준비 영역 대기 (최대 30s)
+          for i in $(seq 1 30); do
+            if nc -z 127.0.0.1 ${{ env.PORT_SOURCE }} && nc -z 127.0.0.1 ${{ env.PORT_TARGET }}; then
+              echo "Auth Proxy 영역 준비 영역 완료 (${i}s)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Auth Proxy 영역 준비 영역 시간 영역 초과 (30s)"
+          cat proxy-source.log proxy-target.log
+          exit 1
 
       - name: prod → dev 동기화 (PII 마스킹)
         env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_PASSWORD_SOURCE: ${{ secrets.DB_PASSWORD_PROD }}
+          DB_PASSWORD_TARGET: ${{ secrets.DB_PASSWORD_DEV }}
+          DB_HOST_SOURCE: 127.0.0.1
+          DB_HOST_TARGET: 127.0.0.1
+          DB_PORT_SOURCE: ${{ env.PORT_SOURCE }}
+          DB_PORT_TARGET: ${{ env.PORT_TARGET }}
+          DB_SSL_MODE: disable
         run: npx tsx scripts/db-sync.ts prod dev --mask-pii
 
-      - name: 방화벽 규칙 제거
+      - name: Auth Proxy 정리
         if: always()
         run: |
-          for DB in grimoire-db-prod grimoire-db-dev; do
-            az postgres flexible-server firewall-rule delete \
-              --resource-group zenith-rg \
-              --name $DB \
-              --rule-name github-actions-sync \
-              --yes --output none 2>/dev/null || true
-          done
+          if [ -f proxy-source.pid ]; then kill "$(cat proxy-source.pid)" 2>/dev/null || true; fi
+          if [ -f proxy-target.pid ]; then kill "$(cat proxy-target.pid)" 2>/dev/null || true; fi
+          echo "Proxy 영역 정리 완료"
 
-  # 수동 트리거 — 임의 source/target 지정 가능
+  # ─────────────────────────────────────────────────────────────
+  # 수동 트리거 영역 — 임의 source/target 영역 지정 영역
+  # ─────────────────────────────────────────────────────────────
   sync-manual:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure Login
-        uses: azure/login@v2
+      - name: GCP 인증 (SA Key)
+        uses: google-github-actions/auth@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: 러너 IP 확인
-        id: ip
-        run: echo "RUNNER_IP=$(curl -s ifconfig.me)" >> $GITHUB_OUTPUT
-
-      - name: 방화벽 규칙 추가
-        run: |
-          for DB in grimoire-db-${{ inputs.source }} grimoire-db-${{ inputs.target }}; do
-            az postgres flexible-server firewall-rule create \
-              --resource-group zenith-rg \
-              --name $DB \
-              --rule-name github-actions-sync \
-              --start-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
-              --end-ip-address ${{ steps.ip.outputs.RUNNER_IP }} \
-              --output none 2>/dev/null || true
-          done
+      - name: gcloud SDK 설치
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
 
       - uses: actions/setup-node@v4
         with:
@@ -173,9 +149,55 @@ jobs:
       - name: Prisma Generate
         run: npx prisma generate
 
-      - name: DB 동기화
+      - name: Cloud SQL Auth Proxy 설치
+        run: |
+          curl -L -o cloud-sql-proxy \
+            "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/${{ env.PROXY_VERSION }}/cloud-sql-proxy.linux.amd64"
+          chmod +x cloud-sql-proxy
+          ./cloud-sql-proxy --version
+
+      - name: source/target → connection 영역 매핑
+        id: conn
+        run: |
+          case "${{ inputs.source }}" in
+            prod) echo "SRC_CONN=${{ env.CLOUD_SQL_PROD }}" >> $GITHUB_OUTPUT
+                  echo "SRC_SECRET_KEY=DB_PASSWORD_PROD" >> $GITHUB_OUTPUT ;;
+            dev)  echo "SRC_CONN=${{ env.CLOUD_SQL_DEV }}" >> $GITHUB_OUTPUT
+                  echo "SRC_SECRET_KEY=DB_PASSWORD_DEV" >> $GITHUB_OUTPUT ;;
+            *)    echo "::error::Invalid source: ${{ inputs.source }}"; exit 1 ;;
+          esac
+          case "${{ inputs.target }}" in
+            dev)  echo "TGT_CONN=${{ env.CLOUD_SQL_DEV }}" >> $GITHUB_OUTPUT
+                  echo "TGT_SECRET_KEY=DB_PASSWORD_DEV" >> $GITHUB_OUTPUT ;;
+            *)    echo "::error::Invalid target: ${{ inputs.target }}"; exit 1 ;;
+          esac
+
+      - name: Auth Proxy spawn (source + target)
+        run: |
+          ./cloud-sql-proxy --port ${{ env.PORT_SOURCE }} "${{ steps.conn.outputs.SRC_CONN }}" > proxy-source.log 2>&1 &
+          echo $! > proxy-source.pid
+          ./cloud-sql-proxy --port ${{ env.PORT_TARGET }} "${{ steps.conn.outputs.TGT_CONN }}" > proxy-target.log 2>&1 &
+          echo $! > proxy-target.pid
+          for i in $(seq 1 30); do
+            if nc -z 127.0.0.1 ${{ env.PORT_SOURCE }} && nc -z 127.0.0.1 ${{ env.PORT_TARGET }}; then
+              echo "Auth Proxy 영역 준비 영역 완료 (${i}s)"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Auth Proxy 영역 준비 영역 시간 영역 초과 (30s)"
+          cat proxy-source.log proxy-target.log
+          exit 1
+
+      - name: DB 동기화 실행
         env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_PASSWORD_SOURCE: ${{ secrets[steps.conn.outputs.SRC_SECRET_KEY] }}
+          DB_PASSWORD_TARGET: ${{ secrets[steps.conn.outputs.TGT_SECRET_KEY] }}
+          DB_HOST_SOURCE: 127.0.0.1
+          DB_HOST_TARGET: 127.0.0.1
+          DB_PORT_SOURCE: ${{ env.PORT_SOURCE }}
+          DB_PORT_TARGET: ${{ env.PORT_TARGET }}
+          DB_SSL_MODE: disable
         run: |
           MASK_FLAG=""
           if [ "${{ inputs.mask_pii }}" = "true" ]; then
@@ -183,13 +205,9 @@ jobs:
           fi
           npx tsx scripts/db-sync.ts ${{ inputs.source }} ${{ inputs.target }} $MASK_FLAG
 
-      - name: 방화벽 규칙 제거
+      - name: Auth Proxy 정리
         if: always()
         run: |
-          for DB in grimoire-db-${{ inputs.source }} grimoire-db-${{ inputs.target }}; do
-            az postgres flexible-server firewall-rule delete \
-              --resource-group zenith-rg \
-              --name $DB \
-              --rule-name github-actions-sync \
-              --yes --output none 2>/dev/null || true
-          done
+          if [ -f proxy-source.pid ]; then kill "$(cat proxy-source.pid)" 2>/dev/null || true; fi
+          if [ -f proxy-target.pid ]; then kill "$(cat proxy-target.pid)" 2>/dev/null || true; fi
+          echo "Proxy 영역 정리 완료"

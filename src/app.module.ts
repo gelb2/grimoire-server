@@ -7,6 +7,7 @@ import { ScheduleModule } from '@nestjs/schedule'
 // 인프라
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import { BlobStorageService } from '@infrastructure/storage/blob-storage.service'
+import { GcsStorageService } from '@infrastructure/storage/gcs-storage.service'
 import { SemanticCacheService } from '@lib/semantic-cache'
 
 // 유스케이스
@@ -137,6 +138,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     // 인프라
     PrismaService,
     BlobStorageService,
+    GcsStorageService,
     SemanticCacheService,
 
     // 유스케이스
@@ -203,7 +205,7 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
     { provide: 'CircuitBreakerPort', useClass: InMemoryCircuitBreakerAdapter },
     { provide: 'PaymentGatewayPort', useClass: PolarAdapter },
     { provide: 'ChatRepositoryPort', useClass: PrismaChatRepository },
-    { provide: 'BlobStoragePort', useClass: BlobStorageService },
+    { provide: 'BlobStoragePort', useClass: GcsStorageService },
     { provide: 'AuditLogRepositoryPort', useClass: PrismaAuditLogRepository },
     { provide: 'AuthTokenRepositoryPort', useClass: PrismaAuthTokenRepository },
     { provide: 'SignupHistoryRepositoryPort', useClass: PrismaSignupHistoryRepository },
