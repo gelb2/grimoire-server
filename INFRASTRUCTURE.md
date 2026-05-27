@@ -363,14 +363,17 @@ prod ──→ dev     (PII 마스킹)
 dev  ──→ local   (수동, 이미 마스킹된 데이터)
 ```
 
-### 자동 동기화 (GitHub Actions)
+### 자동 동기화 (GitHub Actions) — 2026-05-27 GCP 영역 정합
 
 | 항목 | 값 |
 |------|-----|
 | 워크플로우 | `.github/workflows/db-sync-nightly.yml` |
 | 스케줄 | 매일 자정 KST (UTC 15:00) |
 | 수동 트리거 | `workflow_dispatch` (source/target/mask 선택) |
-| 필요 시크릿 | `DB_PASSWORD`, `AZURE_CREDENTIALS` |
+| 필요 시크릿 | `GCP_SA_KEY` (GCP 인증), `DB_PASSWORD_PROD`, `DB_PASSWORD_DEV` (Cloud SQL 영역 분리 강제) |
+| 인증 방식 | google-github-actions/auth@v2 (SA Key JSON) |
+| DB 연결 | Cloud SQL Auth Proxy v2.13.0 (source=127.0.0.1:5432, target=127.0.0.1:5433) |
+| Cloud SQL 영역 | `grimoire-491708:asia-northeast1:grimoire-db-{prod\|dev}` |
 
 ### PII 마스킹 정책
 
@@ -386,12 +389,14 @@ dev  ──→ local   (수동, 이미 마스킹된 데이터)
 
 `docs/DEPLOY.md §8` 원칙 "수동 실행은 긴급 수단으로 계속 유지. 스크립트가 정본, CI는 래퍼"를 DB 동기화에도 동일 적용.
 
-#### Makefile 진입점
+#### Makefile 진입점 (2026-05-27 GCP 영역 정합)
 
 ```bash
 # prod 관련은 interactive 'yes' 확인 프롬프트 있음 (CI에선 SKIP_INTERACTIVE=1)
-export DB_PASSWORD='...'
-az login  # 선행
+export DB_PASSWORD_PROD='...'   # prod Cloud SQL 영역
+export DB_PASSWORD_DEV='...'    # dev Cloud SQL 영역
+gcloud auth login              # 선행 (project=grimoire-491708 영역 정합)
+gcloud config set project grimoire-491708
 
 make db-sync-prod-to-dev         # prod → dev (PII 마스킹)
 make db-sync-dev-to-local        # dev → localhost (Docker DB 필요)
@@ -400,11 +405,11 @@ make db-sync-dev-to-local        # dev → localhost (Docker DB 필요)
 #### 동작 순서 (scripts/db-sync-remote.sh)
 
 1. **입력 검증**: SOURCE/TARGET 유효성 + 방향 검증 (하위→상위 금지)
-2. **preflight**: `DB_PASSWORD` 환경변수 확인 + `az login` 확인 + Prisma Client generate
+2. **preflight**: `DB_PASSWORD_{ENV}` 환경변수 영역 + `gcloud auth` 영역 + project 영역 정합 + Prisma Client generate
 3. **interactive 확인**: prod가 source이면 'yes' 입력 요구 (`SKIP_INTERACTIVE=1`로 스킵 가능)
-4. **방화벽 규칙 임시 추가**: 러너 IP를 source/target 양쪽 DB에 추가 (`rule-name=manual-db-sync-{epoch}`)
-5. **동기화 실행**: `npx tsx scripts/db-sync.ts SOURCE TARGET [--mask-pii]`
-6. **방화벽 규칙 제거**: `trap EXIT`으로 실패 시에도 자동 정리
+4. **Cloud SQL Auth Proxy spawn**: source/target 영역 양측 DB 영역 localhost:port 영역 binding (5432/5433)
+5. **동기화 실행**: `npx tsx scripts/db-sync.ts SOURCE TARGET [--mask-pii]` (env 영역 주입 영역 host/port/password)
+6. **Auth Proxy 정리**: `trap EXIT`으로 실패 시에도 자동 kill (PID 영역 박제)
 
 #### 언제 수동 실행이 필요한가
 
@@ -412,22 +417,22 @@ make db-sync-dev-to-local        # dev → localhost (Docker DB 필요)
 - 긴급 QA를 위한 즉시 동기화 (자정 자동 실행 기다릴 수 없음)
 - 장애 대응 — prod 데이터로 dev 재구성
 
-### 방화벽 처리
+### 네트워크 접근 영역 (2026-05-27 GCP 영역 정합)
 
-- 동기화 시작 시 러너 IP를 임시 방화벽 규칙으로 추가
-- 동기화 완료 후 (실패 포함) 반드시 제거 (`if: always()` / `trap EXIT`)
-- 규칙명:
-  - `github-actions-sync` (자동 / nightly workflow)
-  - `manual-db-sync-{epoch}` (수동 / db-sync-remote.sh)
-  - `temp-local-sync` (수동 / dev→local)
+Azure 영역 방화벽 영역 임시 추가/제거 영역 폐기 — Cloud SQL Auth Proxy 영역 spawn/kill 영역 대체:
 
-### 스크립트
+- Auth Proxy spawn 시 source/target 양측 DB 영역 → 127.0.0.1:port 영역 binding (IAM 인증 영역 자동)
+- 동기화 완료 후 (실패 포함) 반드시 kill (`if: always()` / `trap EXIT` + PID 영역 박제)
+- Auth Proxy binary: `/tmp/cloud-sql-proxy-v2.13.0` (캐시 영역 / 미존재 시 GCS 영역 자동 다운로드)
+- Cloud SQL 인스턴스 영역 0.0.0.0/0 영역 allowlist 영역 폐기 영역 (Auth Proxy 영역 정합)
+
+### 스크립트 (2026-05-27 GCP 영역 정합)
 
 | 스크립트 | 용도 | 진입점 |
 |---------|------|-------|
-| `scripts/db-sync.ts` | 데이터 동기화 코어 (Prisma 기반, PII 마스킹 지원) | 다른 스크립트가 호출 |
-| `scripts/db-sync-remote.sh` | 원격 DB 간 동기화 래퍼 (방화벽 자동 관리 + interactive 확인) | `make db-sync-*` |
-| `scripts/db-sync-local.sh` | dev → localhost 동기화 (방화벽 자동 관리) | `make db-sync-dev-to-local` |
+| `scripts/db-sync.ts` | 데이터 동기화 코어 (Prisma 기반, PII 마스킹 지원, 환경별 host/port/password 영역 주입) | 다른 스크립트가 호출 |
+| `scripts/db-sync-remote.sh` | 원격 DB 간 동기화 래퍼 (Auth Proxy spawn + interactive 확인) | `make db-sync-*` |
+| `scripts/db-sync-local.sh` | dev → localhost 동기화 (Auth Proxy spawn) | `make db-sync-dev-to-local` |
 
 ### 동기화 대상 테이블
 
