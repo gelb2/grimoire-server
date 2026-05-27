@@ -220,6 +220,12 @@ async function main() {
     await targetDb.subscription.deleteMany()
     await targetDb.readingProgress.deleteMany()
     await targetDb.bookmark.deleteMany()
+    // GCP 마이그레이션 잔여 (2026-05-27) — CC-1~5 + Payment 신 모델 FK 의존 14건 추가 박제.
+    // payment FK 의존 자식 (payment 전):
+    await targetDb.refundLog.deleteMany()
+    await targetDb.webhookEvent.deleteMany()
+    await targetDb.webhookRetryQueue.deleteMany()
+    await targetDb.reconciliationCheckpoint.deleteMany()
     await targetDb.payment.deleteMany()
     // CC-4 Phase 3 (2026-05-21) — `creditLog.deleteMany` 제거. `CreditLog` 모델 폐기.
     // 플랫폼 관리자 데이터 — Author/Work에 느슨 참조(FK 없음)
@@ -231,6 +237,17 @@ async function main() {
     await targetDb.theme.deleteMany()
     await targetDb.socialAccount.deleteMany()
     await targetDb.signupHistory.deleteMany()
+    // author FK 의존 자식 (author 전, 2026-05-27 신설):
+    await targetDb.chatMessage.deleteMany()   // FK chatSession (cascade)
+    await targetDb.chatSession.deleteMany()   // FK author
+    await targetDb.creditLedger.deleteMany()  // FK author (CC-1, INVOKE 원인)
+    await targetDb.membershipPlan.deleteMany()// FK author (CC-5)
+    await targetDb.analysisReport.deleteMany()// FK author/work/episode
+    await targetDb.adminAuditLog.deleteMany() // FK admin author
+    await targetDb.report.deleteMany()        // FK author
+    await targetDb.userSanction.deleteMany()  // FK author
+    await targetDb.accessLog.deleteMany()     // FK author
+    await targetDb.refreshToken.deleteMany()  // FK author
     await targetDb.author.deleteMany()
     console.log('  초기화 완료')
 
