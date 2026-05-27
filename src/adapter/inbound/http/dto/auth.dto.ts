@@ -78,3 +78,16 @@ export class LoginDto {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   __emailXorSlug?: any
 }
+
+/** EMAIL-POLAR-READY Phase C — 비밀번호 초기화 요청 DTO */
+export class PasswordResetRequestDto {
+  @IsEmail({}, { message: '올바른 이메일 형식이 아닙니다' })
+  email!: string
+}
+
+/** EMAIL-POLAR-READY Phase C — 토큰 검증 DTO (verify-email / password-reset 공유) */
+export class TokenConfirmDto {
+  @IsString()
+  @MinLength(20, { message: '토큰이 유효하지 않습니다' })
+  token!: string
+}
