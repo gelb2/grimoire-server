@@ -5,7 +5,10 @@
 > 정본: 이 문서. INFRASTRUCTURE.md §5/§9가 참조한다.
 >
 > **2026-05-27: Azure → GCP 마이그레이션 완료.** Cloud Run + Artifact Registry + Cloud SQL Auth Proxy + Secret Manager 정합.
+> **2026-06-04: Azure decommission 완료** (`zenith-rg` 삭제). 현역 인프라 = GCP 단독.
 > **2026-04-19: `inhouse` 환경 제거 (3환경 → 2환경).** QA는 dev에서 develop 브랜치로 수행.
+
+> 🚨 **배포 스크립트 미전환 결함 (2026-06-10 발견)**: 아래 §1 매트릭스는 GCP 실측이나, **실제 배포 스크립트 `scripts/deploy-common.sh`(+`deploy-{dev,prod}.sh`/`preflight.sh`)는 여전히 `az containerapp` 호출 기반**이다. Azure가 2026-06-04 삭제됐으므로 **현재 `make deploy-dev`/`make deploy-prod`는 무력화 상태**(스크립트가 삭제된 Azure 리소스를 호출). `make logs`/`make rollback` 등 일부 운영 타깃만 gcloud로 갱신됨. 스크립트 Azure→gcloud(Cloud Run) 전환은 코드/배포 경로 변경이라 별도 sprint + 사용자 검증 필요.
 
 ---
 
@@ -110,7 +113,7 @@ echo "asia-northeast1-docker.pkg.dev" | docker-credential-osxkeychain get
 
 이후 `make deploy-*` 실행 시 TCC 다이얼로그 뜨지 않는다. Keychain 접근은 macOS 표준 자격증명 저장소라 gcloud python이 접근해도 "다른 앱" 판정이 뜨지 않는다.
 
-> **Azure ACR 흔적 (§12 잔존)**: `grimoireacr.azurecr.io` Keychain 항목이 잔존할 수 있음. Phase 7 정리 시 `security delete-internet-password -s grimoireacr.azurecr.io`로 제거 가능.
+> **Azure ACR 로컬 흔적**: Azure는 2026-06-04 decommission 완료(`INFRASTRUCTURE.md §12`). 단 `grimoireacr.azurecr.io` Keychain 항목은 로컬 머신에 잔존할 수 있음(Azure 삭제와 무관한 로컬 자격증명) → `security delete-internet-password -s grimoireacr.azurecr.io`로 제거 가능(선택).
 
 **금지**: `credsStore` 항목을 삭제하지 말 것. 삭제 시 `auths`에 base64 평문 자격증명이 저장되어 보안 사고 위험.
 

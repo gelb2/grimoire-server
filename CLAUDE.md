@@ -22,12 +22,15 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 - 프로젝트: **`grimoire-491708` 1개만 사용** (project number `23295981916`)
 - 리전: **`asia-northeast1` 단일** (Tokyo). 새 리전 생성 금지
 - 새 GCP 프로젝트/리전 생성 **절대 금지**
-- 리소스 확인 시: `gcloud config list` 로 project 정합 확인 후 `gcloud {run,sql,artifacts,secrets,storage} ...`
+- **gcloud 측정 시 project 명시 강제**: 로컬 gcloud 전역 default가 **다른 프로젝트(`pr-letter-addr`, ne3)** 일 수 있음 → 무지정 측정은 grimoire가 아닌 엉뚱한 프로젝트를 봐서 **거짓 FAIL/PASS** 유발. 항상 둘 중 하나로:
+  - `gcloud ... --project=grimoire-491708 --region=asia-northeast1` 명시, 또는
+  - grimoire 전용 named config: `gcloud --configuration=grimoire ...` (또는 `CLOUDSDK_ACTIVE_CONFIG_NAME=grimoire`). 이 config는 전역 default를 건드리지 않음(`is_active=false`).
+  - ⚠️ `gcloud config set project ...` (전역 default 덮어쓰기) **금지** — 사용자의 `pr-letter-addr` 작업 방해.
 - GitHub Actions: `GCP_SA_KEY` (`google-github-actions/auth@v2`) + `--project grimoire-491708 --region asia-northeast1` 고정
 - 비밀값 단일 진실: **Secret Manager** (Cloud Run env로 `--update-secrets` 바인딩, 평문 `.env` 금지)
 - Cloud SQL 접근: **Auth Proxy 강제** (Public IP allowlist 폐기 — 메인 IP `221.150.30.109/32`만 잔존)
 
-> **Azure 잔존**: §12 정리 대기 (`INFRASTRUCTURE.md §12` 참조). 사용 중지 상태이나 미삭제. Phase 7 정리 sprint 후 제거 예정.
+> **Azure decommission 완료 (2026-06-04)**: `zenith-rg` 전체 삭제(RG NotFound). 현역 인프라는 **GCP 단독**. 삭제 이력은 `INFRASTRUCTURE.md §12` 참조.
 
 ---
 
@@ -70,7 +73,7 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 - Prisma 스키마 변경 → `docs/data-model.md` + `SCHEMA.md` 업데이트 (절차: `MIGRATION.md` 참조)
 - 서버 API 추가/변경 → 루트 `SYNC_STATUS.md` 업데이트
 - 환경변수/배포 변경 → `docs/environments.md` + `INFRASTRUCTURE.md` 업데이트
-- **Azure 인프라 설정 변경** (replicas, SKU, 스토리지, 방화벽 등) → `INFRASTRUCTURE.md` §9 설정값 표 업데이트 (같은 커밋)
+- **GCP 인프라 설정 변경** (Cloud Run replicas/CPU, Cloud SQL tier, GCS, IAM 등) → `INFRASTRUCTURE.md` §9 설정값 표 업데이트 (같은 커밋)
 - 용어 추가 → `docs/glossary.md` 업데이트
 - 아키텍처 결정 변경 (트랜잭션, 동시성, 캐싱 등) → `ADR.md` 업데이트
 - **API 엔드포인트 추가/변경 시 보안 체크** → `SECURITY.md` §4 배포 전 체크리스트 + §6 보안 TODO 확인
@@ -88,9 +91,9 @@ MD/TXT/DOCX 원고를 파싱하여 블록 데이터로 변환하는 백엔드 �
 | 프레임워크 | NestJS |
 | 언어 | TypeScript (strict) |
 | ORM | Prisma |
-| DB | PostgreSQL (Azure Database) |
+| DB | PostgreSQL (GCP Cloud SQL, asia-northeast1) |
 | AI | Anthropic Claude API (SDK) |
-| 컨테이너 | Docker (Azure Container Apps) |
+| 컨테이너 | Docker (GCP Cloud Run, asia-northeast1) |
 | Rate Limiting | @nestjs/throttler |
 | DOCX 파싱 | mammoth |
 | 테스트 | Jest |

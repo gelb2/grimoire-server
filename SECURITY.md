@@ -9,11 +9,11 @@
 
 | 변수 | 민감도 | 관리 방식 |
 |------|--------|----------|
-| DATABASE_URL | 높음 | Azure Container Apps env / GitHub Secrets |
-| ANTHROPIC_API_KEY | 높음 | Azure Container Apps env (3환경 공유 중 — 환경별 분리 TODO) |
-| OPENAI_API_KEY | 높음 | Azure Container Apps env (임베딩용) |
-| JWT_SECRET | 높음 | 환경별 별도 값 |
-| POLAR_ACCESS_TOKEN | 높음 | Azure Container Apps env (3환경 공유 — org 단일) |
+| DATABASE_URL | 높음 | Secret Manager (Cloud Run `--set-secrets`) |
+| ANTHROPIC_API_KEY | 높음 | Secret Manager (Cloud Run env, 환경별 분리) |
+| OPENAI_API_KEY | 높음 | Secret Manager (Cloud Run env, 임베딩용) |
+| JWT_SECRET | 높음 | Secret Manager (환경별 별도 값) |
+| POLAR_ACCESS_TOKEN | 높음 | Secret Manager (Cloud Run env, org 단일) |
 | POLAR_WEBHOOK_SECRET | 높음 | **환경별 별도** (endpoint별 고유) |
 | POLAR_PRODUCT_BASIC/POPULAR/BEST | 중간 | Polar product UUID |
 | RECAPTCHA_SECRET_KEY | 중간 | 서버 전용 검증 키 |
@@ -235,25 +235,25 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 
 | 레이어 | 열린 포트 | 비고 |
 |--------|----------|------|
-| Cloudflare (최외곽) | 443 (HTTPS) | DDoS 방어 + CDN + 실제 Azure IP 은닉 |
-| Container Apps | 443만 (리버스 프록시) | 3000/3001은 컨테이너 내부 포트, 인터넷 노출 안 됨 |
-| PostgreSQL | 5432 (방화벽 차단) | AllowAzureServices만 허용, 외부 IP 전부 차단 |
-| ACR | 443 (인증 필요) | pull/push에 ACR_USERNAME/PASSWORD 필수 |
+| Cloudflare (최외곽) | 443 (HTTPS) | DDoS 방어 + CDN + 실제 origin IP 은닉 |
+| Cloud Run | 443만 (Google Frontend) | 컨테이너 내부 포트는 인터넷 노출 안 됨 |
+| Cloud SQL | 5432 | Auth Proxy(Unix socket) 강제, Public IP allowlist 폐기 (메인 IP `/32`만 잔존) |
+| Artifact Registry | 443 (IAM 인증) | pull/push에 GCP IAM(SA) 필수 |
 
 > 인터넷에서 포트 스캔 시 Cloudflare IP의 443만 보인다.
-> 3000, 3001, 5432는 Azure 내부 네트워크에서만 접근 가능.
+> Cloud SQL은 Auth Proxy 경유 외 외부 접근 차단 (Public IP allowlist 폐기).
 
 ### 공격 시나리오별 방어
 
 | 공격 | 방어 | 설정 위치 |
 |------|------|----------|
 | DDoS | Cloudflare Proxy (무료 플랜 자동 방어) | Cloudflare 대시보드 |
-| 포트 스캔 | Container Apps: 443만 노출. DB: 방화벽 차단 | Azure 플랫폼 구조 |
+| 포트 스캔 | Cloud Run: 443만 노출. DB: Auth Proxy 외 차단 | GCP 플랫폼 구조 |
 | SQL 인젝션 | Prisma ORM 파라미터 바인딩. raw SQL 미사용 | 코드 레벨 |
 | Brute force 로그인 | Throttler 전역 + 로그인에 reCAPTCHA v3 | `auth.controller.ts` + `recaptcha.service.ts` |
 | API 남용 | 전 엔드포인트 Throttle (APP_GUARD) | `app.module.ts:141` |
 | CORS 우회 | 환경별 도메인 1개만 허용 (`*` 금지) | `main.ts` enableCors |
-| DB 직접 접근 | 방화벽: Azure 서비스만 허용. 개인 IP 사용 후 즉시 제거 | Azure DB 방화벽 |
+| DB 직접 접근 | Cloud SQL Auth Proxy(IAM) 강제. Public IP allowlist 폐기, 메인 IP `/32`만 잔존 | Cloud SQL Auth Proxy |
 | XSS | CSP(`script-src 'self'`) + HttpOnly Cookie + `dangerouslySetInnerHTML` 0건 | helmet + next.config.ts |
 | CSRF | SameSite=Strict + CORS 단일 origin (CSRF 토큰은 TODO) | cookieOptions |
 | 클릭재킹 | X-Frame-Options: DENY | helmet + next.config.ts |
@@ -261,15 +261,15 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 | 세션 탈취 (XSS) | HttpOnly (JS 접근 불가) + Access 15분 단기 | cookieOptions |
 | 에피소드 크롤링 | 에피소드 상태값(nonPublic) + Throttler + Cloudflare Bot | `content.controller.ts` + DB |
 | 내부 필드 노출 | API 응답에서 rawMd, workId, authorId 제거 완료 | `content.controller.ts`, `theme.controller.ts` |
-| 이미지 저장소 탈취 | ACR 인증 필수 (GitHub Secrets) | Azure ACR |
+| 이미지 저장소 탈취 | Artifact Registry IAM 인증 필수 (SA) | GCP Artifact Registry |
 | 결제 웹훅 위조 | HMAC 서명 검증 + tradeNo 멱등성 | `polar.adapter.ts` |
 | BFF 우회 | Next.js `/api/[...path]/route.ts` + 서버에서 CORS 차단 | BFF 프록시 |
 
-### DB 방화벽 운영 규칙
+### DB 접근 운영 규칙 (Cloud SQL Auth Proxy)
 
-- 평상시: AllowAzureServices(0.0.0.0)만 허용
-- 로컬 DB 직접 접속 필요 시: 개인 IP 방화벽 추가 → 작업 완료 → **즉시 제거**
-- 방화벽 규칙 추가/제거 시 INFRASTRUCTURE.md §9 업데이트
+- 평상시: Public IP allowlist 폐기 — Cloud SQL Auth Proxy(IAM 인증) 경유만. 메인 IP `221.150.30.109/32`만 allowlist 잔존(수동 운영용).
+- 로컬 DB 직접 접속 필요 시: Auth Proxy spawn → 작업 완료 → kill (또는 임시 IP allowlist 추가 후 즉시 제거)
+- allowlist/Auth Proxy 운영 변경 시 INFRASTRUCTURE.md §9 업데이트
 
 ### 비용 폭탄 방지 (보안 관점)
 
@@ -309,7 +309,7 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 |------|------|
 | Rate Limiting IP 기반 강화 | 현재 단순 Throttle → 프록시 뒤 IP 식별 (X-Forwarded-For) 추가 |
 | 크레딧 동시성 | optimistic locking 적용 (동시 좋아요/크레딧 차감 경합 방지) |
-| WAF | Cloudflare WAF 유료 플랜 또는 Azure WAF 검토 |
+| WAF | Cloudflare WAF 유료 플랜 또는 GCP Cloud Armor 검토 |
 
 ### 이미 적용된 항목 (2026-04-17 실측 확인)
 
@@ -325,7 +325,7 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 | NEXT_PUBLIC_ 최소화 | ✅ | API URL 클라이언트 미노출 |
 | Cloudflare DDoS 방어 + Proxy | ✅ | Cloudflare 무료 플랜 |
 | Rate Limiting 전 엔드포인트 | ✅ | ThrottlerGuard APP_GUARD |
-| DB 방화벽 Azure 서비스만 허용 | ✅ | DB firewall rules |
+| DB 접근 Cloud SQL Auth Proxy 강제 | ✅ | Public IP allowlist 폐기, 메인 IP `/32`만 잔존 |
 | helmet (HTTP 헤더) | ✅ | main.ts `app.use(helmet({...}))` — 2026-04-16 커스터마이징 |
 | CSP 헤더 (서버 + 웹) | ✅ | helmet CSP + next.config.ts CSP |
 | HSTS 2년 + preload | ✅ | `max-age=63072000; includeSubDomains; preload` |
@@ -345,7 +345,7 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 
 ## 7. 참조 문서
 
-- `INFRASTRUCTURE.md` — Azure 리소스 구성
+- `INFRASTRUCTURE.md` — GCP 인프라 구성 (Cloud Run + Cloud SQL + Artifact Registry + GCS)
 - `docs/environments.md` — 환경별 설정 (정본)
 - 루트 `CLAUDE.md` §11 — 전수검사 체크리스트
 - `.claude/scripts/sensor-security-gate.sh` — 자동화 보안 게이트

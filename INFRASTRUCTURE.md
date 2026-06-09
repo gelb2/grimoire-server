@@ -4,7 +4,8 @@
 > 참조: `docs/environments.md` (정본), `SECURITY.md`, `docs/DEPLOY.md` (수동 배포 정본)
 >
 > **2026-05-27: Azure → GCP 마이그레이션 완료** (Phase 0~6 + Auth Proxy + Secret Manager).
-> 4 도메인 전부 GCP 운영 정합(200 OK). Azure 리소스는 §12 잔존 영역으로 격리 (Phase 7 정리 대기).
+> 4 도메인 전부 GCP 운영 정합(200 OK).
+> **2026-06-04: Azure decommission 완료** (Phase 7) — `zenith-rg` 18 리소스 전체 삭제(RG NotFound). 현역 인프라는 **GCP 단독**. 마이그레이션 이력은 §12 참조.
 > **2026-04-19: `inhouse` 환경 제거 (3환경 → 2환경).** QA는 dev에서 develop 브랜치로 수행.
 
 ---
@@ -90,9 +91,9 @@
 | openai-api-key-{dev,prod}-an1 | OpenAI API 키 (RAG 임베딩) | 선택 |
 | polar-access-token-{dev,prod}-an1 | Polar 결제 OAT | 필수 |
 | polar-webhook-secret-{dev,prod}-an1 | Polar Webhook 서명 검증 | 필수 |
-| azure-storage-account-key-{dev,prod}-an1 | Azure Blob Storage Key | **§12 잔존** (Phase 7 정리 시 제거) |
+| azure-storage-account-key-{dev,prod}-an1 | (구 Azure Blob Key) **dead** — Cloud Run 참조 0건 (2026-06-10 env 제거). Secret 삭제는 사용자 결정 영역. |
 
-> **잔존 northeast3 region 시크릿 9건**: Phase 5 이전 시도 시 생성. 현재 미사용, 별도 정리 sprint에서 삭제.
+> **잔존 northeast3 region 시크릿 9건**: Phase 5 이전 시도 시 생성. 현재 미사용, 별도 정리 sprint에서 삭제 (ne3 GCP 영역 — 사용자 결정).
 
 ### 3.2 Cloud Run plain env (16건, 공개 안전)
 
@@ -463,13 +464,12 @@ gcloud billing budgets list --billing-account=<billing-id>
 
 ## 8. 보안 체크리스트
 
-- ✅ **Secret Manager 단일 진실**: 모든 비밀값(DATABASE_URL, JWT, API keys, Polar tokens, Azure key 잔존)이 Secret Manager에 보관. Cloud Run env로 `--set-secrets` 바인딩.
+- ✅ **Secret Manager 단일 진실**: 모든 비밀값(DATABASE_URL, JWT, API keys, Polar tokens)이 Secret Manager에 보관. Cloud Run env로 `--set-secrets` 바인딩.
 - ✅ **Cloud SQL Auth Proxy 강제**: Public IP allowlist 제거 (`0.0.0.0/0` 폐기). 메인 IP `221.150.30.109/32`만 잔존 (수동 운영용, 비밀번호 + IAM 이중 보호).
-- ✅ **IAM 최소 권한**: Compute SA에 `cloudsql.client` + `secretmanager.secretAccessor`만 명시 부여 (`editor`는 기본 부여, Phase 7 정리 시 재검토).
+- ✅ **IAM 최소 권한**: Compute SA에 `cloudsql.client` + `secretmanager.secretAccessor`만 명시 부여 (`editor`는 기본 부여, 추후 재검토).
 - ✅ **Cloud Storage 공개**: `allUsers:objectViewer`만 부여 (object read-only, write/list 차단). 업로드는 SA 인증 후 server-side만.
 - ✅ **Cloud Run 인증**: 공개 endpoint (`/api/*`)는 unauthenticated allow + 코드 레벨 `JwtAuthGuard` 강제. 관리자 endpoint는 `AdminGuard` 추가 (PAY-S3 Circuit Breaker 관리자 UI 정합).
 - ✅ **Cloudflare SSL = Google managed cert**: proxied=false로 Google이 SSL 종단. cert 자동 갱신.
-- 🔶 **Azure Storage Key 시크릿**: §12 잔존. Phase 7 정리 시 Secret Manager에서 제거.
 
 상세 보안 정책: `SECURITY.md` 참조.
 
@@ -655,36 +655,32 @@ gcloud beta run domain-mappings delete \
 
 ---
 
-## 12. Azure 잔존 (Phase 7 정리 대기)
+## 12. Azure decommission 이력 (2026-06-04 완료)
 
-> 2026-05-27 시점: GCP 마이그레이션 Phase 0~6 + Auth Proxy + Secret Manager 완료. Azure 리소스는 **모두 사용 중지** 상태이나 미삭제. Phase 7 정리는 ≥1주 안정성 모니터링 후 별도 sprint에서 진행.
+> **현재 인프라는 GCP 단독.** Azure는 2026-06-04 `zenith-rg` 전체 삭제로 완전 decommission 완료(RG NotFound 확정). 본 절은 마이그레이션·삭제 이력 보존용이며, 현역 자원이 아니다.
 
-### Azure 잔존 리소스 (zenith-rg 리소스그룹, Korea Central)
+### 삭제된 Azure 리소스 (구 `zenith-rg`, Korea Central — 2026-06-04 전체 삭제)
 
-| 리소스 | 상태 | Phase 7 정리 |
+2026-05-27 GCP 마이그레이션(Phase 0~6 + Auth Proxy + Secret Manager) 완료 후, ≥1주 안정성 모니터링을 거쳐 2026-06-04 아래 18 리소스를 의존 역순으로 staged 삭제 → RG 일괄 삭제했다. 최종 dump 2건(`gs://grimoire-491708-db-migration/azure-final/`)을 영속 보관(≥30일).
+
+| 구 리소스 | GCP 대체 | 삭제 |
 |---|---|---|
-| Container Apps × 4 (grimoire-server-{dev,prod}, grimoire-web-{dev,prod}) | 사용 중지 (traffic 0) | 삭제 |
-| Postgres Flexible × 2 (grimoire-db-{dev,prod}) | 사용 중지 (Cloud SQL로 데이터 이전 완료) | 삭제 (전수검사 후) |
-| ACR `grimoireacr` | 사용 중지 (이미지 정합 Artifact Registry 이전) | 삭제 |
-| Blob Storage `grimoire0storage` | 사용 중지 (`GcsStorageService` 교체 완료) | 삭제 (전수검사 후) |
-| Log Analytics | 사용 중지 | 삭제 |
-| Secret Manager `azure-storage-account-key-{dev,prod}-an1` | Cloud Run env에서 미사용 | Secret 삭제 |
-| `Makefile` Azure 의존 logs/rollback 타깃 | 미사용 (gcloud로 갱신 완료) | 본 문서 일치 |
-| `docs/DEPLOY.md` Azure 영역 일부 | 본 sprint Phase 8에서 GCP 정합 갱신 | Phase 8 종료 후 일치 |
+| Container Apps × 4 (grimoire-server-{dev,prod}, grimoire-web-{dev,prod}) | Cloud Run × 4 (asia-northeast1) | ✅ 삭제 완료 |
+| Postgres Flexible × 2 (grimoire-db-{dev,prod}) | Cloud SQL × 2 (asia-northeast1) | ✅ 삭제 완료 (최종 dump 보관) |
+| ACR `grimoireacr` | Artifact Registry `cloud-run-source-deploy` | ✅ 삭제 완료 |
+| Blob Storage `grimoire0storage` | GCS `grimoire-blob-{prod,dev}` (`GcsStorageService`) | ✅ 삭제 완료 |
+| Log Analytics × 3 | Cloud Logging | ✅ 삭제 완료 |
+| Managed Environment + Managed Certificate × 6 | Cloud Run Domain Mapping × 4 (Google managed cert) | ✅ 삭제 완료 |
 
-### 정리 sprint 진행 절차 (Phase 7)
+### Azure 흔적 정리 후속 (2026-06-10)
 
-1. GCP 운영 ≥1주 안정성 모니터링 (cron + reconciliation + 결제 webhook 영향 0 확인)
-2. Azure Container Apps 4개 삭제 (`az containerapp delete`)
-3. Azure Postgres Flexible 2개 삭제 (snapshot 우선 보관)
-4. ACR + Blob + Log Analytics 삭제
-5. Secret Manager `azure-storage-account-key-*` 삭제
-6. zenith-rg 리소스 정리 (다른 Zenith 프로젝트 공유 리소스 제외)
-7. 정리 sprint 후 본 문서 §12 영역 전체 제거
+- **`AZURE_STORAGE_*` dead env 제거**: Cloud Run `grimoire-server-{prod,dev}`에서 `AZURE_STORAGE_ACCOUNT_NAME`(plain) + `AZURE_STORAGE_ACCOUNT_KEY`(secretRef) 제거 — DI가 `BlobStoragePort → GcsStorageService`로 대체된 dead env(런타임 read 없음). prod rev `00006-rd9` / dev rev `00006-m9d` Healthy, 4 도메인 health 무영향.
+- **Secret Manager `azure-storage-account-key-{dev,prod}-an1`**: Cloud Run 참조 0건 (dead). Secret 삭제는 사용자 결정 영역으로 보류.
 
 ### 모든 Azure 트래픽이 GCP로 전환된 시점
 
 - 2026-05-27: 4 도메인 (api / dev-api / dev / apex) 200 OK 정합 + Polar webhook 정합 + Cron 정합
+- 2026-06-04: Azure `zenith-rg` 완전 삭제 후에도 4 도메인 307/200/307/200 동일 = Azure↔GCP 독립 입증
 
 ---
 

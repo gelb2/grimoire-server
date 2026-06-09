@@ -114,10 +114,10 @@
 |------|------|------|
 | Docker | Dockerfile 작성 완료 | 멀티스테이지 빌드 + docker-entrypoint.sh |
 | CI/CD | GitHub Actions 설정 완료 | `.github/workflows/` 확인 |
-| Azure Container Apps | 3환경 배포 완료 | 서버 호스팅 |
-| Azure Database for PostgreSQL | 3환경 설정 완료 | DB |
-| Azure Container Registry | 설정 완료 | Docker 이미지 |
-| Azure Blob Storage | 설정 완료 | grimoire0storage (커버 + 테마 CSS) |
+| GCP Cloud Run | 2환경(dev/prod) 배포 완료 | 서버 호스팅 (asia-northeast1). 2026-05-27 Azure Container Apps에서 이전 |
+| GCP Cloud SQL (PostgreSQL) | 2환경 설정 완료 | DB (Auth Proxy 강제). Azure Postgres에서 이전 |
+| GCP Artifact Registry | 설정 완료 | Docker 이미지 (`cloud-run-source-deploy`). Azure ACR에서 이전 |
+| GCS | 설정 완료 | `grimoire-blob-{prod,dev}` 커버 + 테마 CSS (`GcsStorageService`). Azure Blob에서 이전 |
 | Rate Limiting | 적용 완료 | NestJS Throttler 전면 적용 |
 | 파일 업로드 | 적용 완료 | Multer (md/txt/docx/hwp/hwpx) |
 
@@ -156,4 +156,4 @@
 - `docs/api-contract.md` — API 엔드포인트 명세 (정본)
 - `TODO.md` — 남은 작업
 - `TESTING.md` — 테스트 전략
-- `INFRASTRUCTURE.md` — Azure 구성
+- `INFRASTRUCTURE.md` — GCP 인프라 구성

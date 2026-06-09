@@ -1,7 +1,9 @@
 # MIGRATION.md — 마이그레이션 규칙
 
 > Prisma 마이그레이션 + 데이터 백필 규칙.
-> 참조: `SCHEMA.md` (스키마 상세), `INFRASTRUCTURE.md` (환경별 실행), `docs/environments.md` (4단계 환경)
+> 참조: `SCHEMA.md` (스키마 상세), `INFRASTRUCTURE.md` (환경별 실행), `docs/environments.md` (2환경: dev/prod)
+
+> ⚠️ **2026-06-04 Azure decommission 완료**: 본 문서의 일부 **실행 절차(§4 DB 접속·§6 스냅샷·§7 트러블슈팅)는 Azure CLI(`az postgres ...`) + Azure DB host(`*.postgres.database.azure.com`) 기반 stale**이다. 현재 DB는 **GCP Cloud SQL (Auth Proxy 강제, asia-northeast1)**. 마이그레이션 실행 시 Azure 절차 대신 **Cloud SQL Auth Proxy**(`INFRASTRUCTURE.md §13.2 / §네트워크 접근` 참조: Auth Proxy spawn → `localhost:port` 바인딩 → `prisma migrate deploy`)를 사용할 것. 백업은 Azure Portal 스냅샷이 아닌 **Cloud SQL 자동 백업 / `pg_dump`**. (절차 전면 갱신은 별도 처리 예정 — 현 stale 명령은 실행 불가.)
 
 ---
 
