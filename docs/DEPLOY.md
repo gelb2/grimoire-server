@@ -8,7 +8,14 @@
 > **2026-06-04: Azure decommission 완료** (`zenith-rg` 삭제). 현역 인프라 = GCP 단독.
 > **2026-04-19: `inhouse` 환경 제거 (3환경 → 2환경).** QA는 dev에서 develop 브랜치로 수행.
 
-> 🚨 **배포 스크립트 미전환 결함 (2026-06-10 발견)**: 아래 §1 매트릭스는 GCP 실측이나, **실제 배포 스크립트 `scripts/deploy-common.sh`(+`deploy-{dev,prod}.sh`/`preflight.sh`)는 여전히 `az containerapp` 호출 기반**이다. Azure가 2026-06-04 삭제됐으므로 **현재 `make deploy-dev`/`make deploy-prod`는 무력화 상태**(스크립트가 삭제된 Azure 리소스를 호출). `make logs`/`make rollback` 등 일부 운영 타깃만 gcloud로 갱신됨. 스크립트 Azure→gcloud(Cloud Run) 전환은 코드/배포 경로 변경이라 별도 sprint + 사용자 검증 필요.
+> ✅ **배포 스크립트 GCP 전환 완료 (2026-06-10)**: `scripts/deploy-common.sh`(+`deploy-{dev,prod}.sh`/`preflight.sh`)를 `az containerapp`/ACR/zenith-rg → **gcloud(Cloud Run + Artifact Registry + Cloud SQL)** 기반으로 전환했다(2026-06-04 Azure decommission으로 무력화돼 있던 것을 복구). `make deploy-dev`/`make deploy-prod`가 다시 동작한다.
+>
+> 잔여 정직 박제:
+> - **배포 방식** = `docker build` + `docker push` → Artifact Registry `grimoire-docker` repo + `gcloud run deploy --image {prefix}-{SHA}` (명시 태그 컨벤션 — 구 ACR `az containerapp update --image` 방식 이식).
+> - **Docker daemon 필요** — `preflight.sh` 6/8 단계가 `docker info`로 검사한다(미실행 시 배포 중단).
+> - **첫 `make deploy-{env}`가 비어 있는 `grimoire-docker` AR repo를 채운다** — 5/27~현재 실제 배포는 모두 `cloud-run-source-deploy` repo(Cloud Build source deploy)를 사용했으므로 `grimoire-docker`에는 수동 푸시 이미지가 아직 없을 수 있다.
+> - **두 배포 방식 공존 가능**: 5/27~현재 실배포는 `gcloud run deploy --source`(Cloud Build 자동 빌드, `cloud-run-source-deploy` repo)였고, 본 전환은 명시-태그(`--image {prefix}-{SHA}`) 방식으로 복원한 것이다. 같은 `Dockerfile`을 쓰므로 두 방식이 공존한다.
+> - **end-to-end 검증은 실 배포로 확정 필요** — 본 전환은 **정적 안전성 검증**(db-sync 유틸 보존 / preflight·매트릭스 재현 / live az 호출 0 / 라이브 배포 0)까지다. `make deploy-dev` 실 1회로 빌드→푸시→revision Ready→endpoint 200 흐름이 최종 확정된다.
 
 ---
 
@@ -164,10 +171,10 @@ grimoire-web/
 make preflight ENV=dev         # 배포 전수검사만 (배포 안 함)
 make preflight ENV=prod
 
-make deploy-dev                # preflight + 이미지 빌드 + 푸시 + Container App 업데이트 + purge
+make deploy-dev                # preflight + 이미지 빌드 + 푸시 + Cloud Run 업데이트 + revision Ready 검증 + purge
 make deploy-prod
 
-make logs ENV=dev              # Container App 로그 tail
+make logs ENV=dev              # Cloud Run 로그 tail
 make logs ENV=prod
 
 make rollback ENV=prod SHA=<sha>   # 특정 SHA로 되돌림

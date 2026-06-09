@@ -4,21 +4,35 @@
 # 정본: docs/DEPLOY.md §1 환경 매트릭스
 #
 # 이 파일을 변경하면 반드시 docs/DEPLOY.md §1 매트릭스를 함께 갱신한다.
+#
+# 2026-06-10 GCP 전환: Azure(az containerapp / ACR / zenith-rg) → GCP(Cloud Run / Artifact
+#   Registry / grimoire-491708). 5/27 GCP 마이그레이션 당시 deploy 경로(이 파일 +
+#   deploy-{dev,prod}.sh + preflight.sh)는 Azure 그대로 남아 있었고, 6/4 Azure decommission
+#   (zenith-rg 삭제)으로 무력화 → 본 전환으로 복구. db-sync-remote.sh가 의존하는 로깅
+#   유틸 5종(info/ok/warn/fail/step)은 시그니처·동작 무변경(이 파일에서 db-sync로 source됨).
 
 set -u   # 미정의 변수 참조 시 에러
 # set -e는 스크립트 본체에서 켠다 (함수 실패 처리 세밀화 위해 여기선 꺼둠)
 
 # ─────────────────────────────────────────────────────────────
-# 공통 상수 (매트릭스)
+# 공통 상수 (매트릭스) — GCP (docs/DEPLOY.md §1 실측 기준)
 # ─────────────────────────────────────────────────────────────
-readonly RESOURCE_GROUP="zenith-rg"
-readonly ACR_NAME="grimoireacr"
-readonly ACR_LOGIN_SERVER="grimoireacr.azurecr.io"
+readonly GCP_PROJECT_ID="grimoire-491708"
+readonly GCP_PROJECT_NUMBER="23295981916"
+readonly GCP_REGION="asia-northeast1"
+readonly ARTIFACT_REGISTRY_HOST="asia-northeast1-docker.pkg.dev"
+readonly ARTIFACT_REPO="grimoire-docker"
+readonly ARTIFACT_REPO_FQ="${ARTIFACT_REGISTRY_HOST}/${GCP_PROJECT_ID}/${ARTIFACT_REPO}"
 readonly IMAGE_REPO="grimoire-server"
 readonly BUILD_PLATFORM="linux/amd64"
-readonly FQDN_SUFFIX="salmonsmoke-9e462011.koreacentral.azurecontainerapps.io"
+# Cloud Run 공개 URL pattern: https://grimoire-{server,web}-{env}-tolwmynw6a-an.a.run.app
+readonly CLOUD_RUN_URL_SUFFIX="tolwmynw6a-an.a.run.app"
 readonly IMAGE_KEEP_COUNT=5
-readonly EXPECTED_AZURE_USER="rainmaker8492@gmail.com"
+readonly EXPECTED_GCP_ACCOUNT="rainmaker8492@gmail.com"
+# Cloud Run 서비스 계정 (기본 compute SA)
+readonly CLOUD_RUN_SA="${GCP_PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+# Cloud Run 컨테이너 포트 (server)
+readonly CONTAINER_PORT=3000
 
 # ─────────────────────────────────────────────────────────────
 # 색상 출력 유틸
@@ -61,7 +75,7 @@ env_to_branch() {
   esac
 }
 
-# ENV → Container App 이름 (server)
+# ENV → Cloud Run 서비스 이름 (server)
 env_to_app_name() {
   case "$1" in
     dev) echo "grimoire-server-dev" ;;
@@ -70,11 +84,11 @@ env_to_app_name() {
   esac
 }
 
-# ENV → Container App FQDN
-env_to_fqdn() {
+# ENV → Cloud Run 자동 발급 공개 URL (도메인 매핑 외 직접 접근용)
+env_to_run_url() {
   case "$1" in
-    dev) echo "grimoire-server-dev.${FQDN_SUFFIX}" ;;
-    prod) echo "grimoire-server-prod.${FQDN_SUFFIX}" ;;
+    dev) echo "https://grimoire-server-dev-${CLOUD_RUN_URL_SUFFIX}" ;;
+    prod) echo "https://grimoire-server-prod-${CLOUD_RUN_URL_SUFFIX}" ;;
     *) return 1 ;;
   esac
 }
@@ -84,6 +98,15 @@ env_to_public_api_url() {
   case "$1" in
     dev) echo "https://dev-api.grimoire-book.com" ;;
     prod) echo "https://api.grimoire-book.com" ;;
+    *) return 1 ;;
+  esac
+}
+
+# ENV → Cloud SQL connection name
+env_to_cloudsql_instance() {
+  case "$1" in
+    dev) echo "${GCP_PROJECT_ID}:${GCP_REGION}:grimoire-db-dev" ;;
+    prod) echo "${GCP_PROJECT_ID}:${GCP_REGION}:grimoire-db-prod" ;;
     *) return 1 ;;
   esac
 }
@@ -115,33 +138,38 @@ current_branch() {
 print_matrix() {
   local env="$1"
   info "대상 환경: $env"
-  info "  브랜치:       $(env_to_branch "$env")"
-  info "  Container App: $(env_to_app_name "$env")"
-  info "  FQDN:         https://$(env_to_fqdn "$env")"
-  info "  공개 API URL: $(env_to_public_api_url "$env")"
+  info "  브랜치:        $(env_to_branch "$env")"
+  info "  Cloud Run:     $(env_to_app_name "$env")"
+  info "  공개 URL(run): $(env_to_run_url "$env")"
+  info "  공개 API URL:  $(env_to_public_api_url "$env")"
+  info "  Cloud SQL:     $(env_to_cloudsql_instance "$env")"
   info "  태그 prefix:   $(env_to_tag_prefix "$env")-"
 }
 
 # 이미지 FQ 태그 (SHA)
 image_fq_sha() {
   local env="$1" sha="$2"
-  echo "${ACR_LOGIN_SERVER}/${IMAGE_REPO}:$(env_to_tag_prefix "$env")-${sha}"
+  echo "${ARTIFACT_REPO_FQ}/${IMAGE_REPO}:$(env_to_tag_prefix "$env")-${sha}"
 }
 
 # 이미지 FQ 태그 (latest)
 image_fq_latest() {
   local env="$1"
-  echo "${ACR_LOGIN_SERVER}/${IMAGE_REPO}:$(env_to_tag_prefix "$env")-latest"
+  echo "${ARTIFACT_REPO_FQ}/${IMAGE_REPO}:$(env_to_tag_prefix "$env")-latest"
 }
 
 # ─────────────────────────────────────────────────────────────
 # 배포 액션 함수 (스크립트에서 호출)
 # ─────────────────────────────────────────────────────────────
 
+# Artifact Registry Docker 인증.
+# 기존 az acr login 대체. ADC 위임 — 만료 자동 갱신.
+# docs/DEPLOY.md §3.1 (osxkeychain credsStore 전제).
 action_acr_login() {
-  step "ACR 로그인"
-  az acr login --name "$ACR_NAME" >/dev/null 2>&1 || fail "ACR 로그인 실패. 'az login' 후 재시도."
-  ok "ACR 로그인 완료"
+  step "Artifact Registry Docker 인증"
+  gcloud auth configure-docker "$ARTIFACT_REGISTRY_HOST" --quiet >/dev/null 2>&1 \
+    || fail "Artifact Registry 인증 실패. 'gcloud auth login' 후 재시도."
+  ok "Artifact Registry 인증 완료 ($ARTIFACT_REGISTRY_HOST)"
 }
 
 action_docker_build_push() {
@@ -166,35 +194,48 @@ action_docker_build_push() {
   ok "푸시 완료"
 }
 
-# Container App 업데이트.
-# 업데이트 직후 생성된 신규 revision 이름을 전역 변수 DEPLOYED_REVISION 에 박제한다.
-# (revision-aware healthcheck 가 이 값을 사용 — endpoint 200 ≠ 신규 revision Healthy 차단)
+# Cloud Run 서비스 업데이트 (이미지 교체).
+# 기존 az containerapp update 대체.
+# gcloud run deploy --image 는 env/secret/scale 등 기존 revision 템플릿 형상을 보존하고
+#   이미지만 교체한다(Azure containerapp update --image 와 동일 동작). cloudsql/SA/port 는
+#   안전을 위해 명시적으로 재지정한다(Step1 실측 형상 재현).
+# 배포 직후 생성된 신규 revision 이름을 전역 변수 DEPLOYED_REVISION 에 박제한다.
+# (revision-aware healthcheck 가 이 값을 사용 — endpoint 200 ≠ 신규 revision Ready 차단)
 action_containerapp_update() {
   local env="$1" sha="$2"
-  local app tag_sha
+  local app tag_sha cloudsql
   app="$(env_to_app_name "$env")"
   tag_sha="$(image_fq_sha "$env" "$sha")"
+  cloudsql="$(env_to_cloudsql_instance "$env")"
 
-  step "Container App 업데이트: $app"
+  step "Cloud Run 업데이트: $app"
   info "  이미지: $tag_sha"
-  # update 응답 JSON 에서 latestRevisionName 캡처 (-o none 대신 -o json)
-  local update_out
-  update_out=$(az containerapp update \
-    --name "$app" \
-    --resource-group "$RESOURCE_GROUP" \
+  info "  Cloud SQL: $cloudsql"
+  # deploy 응답 JSON 에서 신규 revision 이름 캡처.
+  # --image 만 주면 기존 env/secret/scale 형상 보존. cloudsql/SA/port 는 명시 재지정.
+  local deploy_out
+  deploy_out=$(gcloud run deploy "$app" \
     --image "$tag_sha" \
-    -o json 2>/dev/null) || fail "Container App 업데이트 실패"
+    --region "$GCP_REGION" \
+    --project "$GCP_PROJECT_ID" \
+    --service-account "$CLOUD_RUN_SA" \
+    --add-cloudsql-instances "$cloudsql" \
+    --port "$CONTAINER_PORT" \
+    --quiet \
+    --format json 2>/dev/null) || fail "Cloud Run 업데이트 실패"
 
-  DEPLOYED_REVISION=$(printf "%s" "$update_out" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin).get('properties',{}).get('latestRevisionName',''))" 2>/dev/null || echo "")
+  DEPLOYED_REVISION=$(printf "%s" "$deploy_out" \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',{}).get('latestCreatedRevisionName',''))" 2>/dev/null || echo "")
 
-  # update 응답에서 못 얻으면 revision list 로 폴백 (최신 createdTime 기준)
+  # deploy 응답에서 못 얻으면 revisions list 로 폴백 (최신 createTimestamp 기준)
   if [ -z "$DEPLOYED_REVISION" ]; then
-    DEPLOYED_REVISION=$(az containerapp revision list \
-      --name "$app" \
-      --resource-group "$RESOURCE_GROUP" \
-      --query "sort_by([], &properties.createdTime)[-1].name" \
-      -o tsv 2>/dev/null || echo "")
+    DEPLOYED_REVISION=$(gcloud run revisions list \
+      --service "$app" \
+      --region "$GCP_REGION" \
+      --project "$GCP_PROJECT_ID" \
+      --sort-by="~metadata.creationTimestamp" \
+      --limit 1 \
+      --format="value(metadata.name)" 2>/dev/null || echo "")
   fi
 
   if [ -z "$DEPLOYED_REVISION" ]; then
@@ -205,17 +246,15 @@ action_containerapp_update() {
   ok "업데이트 완료"
 }
 
-# revision-aware healthcheck — 신규 revision 의 runningState/healthState 직접 검증.
-# 배경: Azure Container Apps single revision mode 에서 신규 revision 이 ActivationFailed 면
-#       직전 revision 이 트래픽을 유지 → endpoint 는 200(구 코드 fallback)이지만 신규 revision 은 죽음.
-#       endpoint curl 만으로는 이 사고(2026-05-15 server-dev revision 159)를 잡지 못한다.
-# 판정:
-#   - runningState == ActivationFailed         → 실패 (비0 exit)
-#   - healthState  == Unhealthy                → 실패 (비0 exit)
-#   - runningState ∈ {Running, RunningAtMaxScale} && healthState ∈ {Healthy, None} → 성공
-#   - runningState == ScaledToZero (replicas 0) → 정상 (idle, 통과)
-#   - runningState == Activating / healthState == None → 안정화 대기 (polling 계속)
-# polling: 30s 간격 최대 5회 (총 ~150s) — Activating 이 끝날 때까지 대기.
+# revision-aware healthcheck — 신규 revision 의 Ready 컨디션 직접 검증.
+# 배경: 신규 revision 이 startup 실패하면 Cloud Run 은 직전 healthy revision 으로 트래픽을
+#       유지(rollback) → endpoint 는 200(구 코드)이지만 신규 revision 은 죽음.
+#       endpoint curl 만으로는 이 사고를 잡지 못한다(Azure 시절 2026-05-15 server-dev rev159 동형).
+# 판정 (Cloud Run revision status.conditions[type=Ready]):
+#   - Ready == True                          → 성공
+#   - Ready == False                         → 실패 (비0 exit) — startup/health 실패
+#   - Ready == Unknown (reason=Deploying 등)  → 안정화 대기 (polling 계속)
+# polling: 30s 간격 최대 5회 (총 ~150s).
 action_post_deploy_revision_check() {
   local env="$1"
   local app
@@ -226,11 +265,13 @@ action_post_deploy_revision_check() {
   local rev="${DEPLOYED_REVISION:-}"
   if [ -z "$rev" ]; then
     # update 단계에서 캡처 실패 → 폴백: 최신 revision 재조회
-    rev=$(az containerapp revision list \
-      --name "$app" \
-      --resource-group "$RESOURCE_GROUP" \
-      --query "sort_by([], &properties.createdTime)[-1].name" \
-      -o tsv 2>/dev/null || echo "")
+    rev=$(gcloud run revisions list \
+      --service "$app" \
+      --region "$GCP_REGION" \
+      --project "$GCP_PROJECT_ID" \
+      --sort-by="~metadata.creationTimestamp" \
+      --limit 1 \
+      --format="value(metadata.name)" 2>/dev/null || echo "")
     if [ -z "$rev" ]; then
       fail "신규 revision 이름을 확정할 수 없음 — 배포 검증 불가."
     fi
@@ -238,14 +279,14 @@ action_post_deploy_revision_check() {
   fi
   info "  검증 대상 revision: $rev"
 
-  local i=0 max=5 health="" running="" rev_json=""
+  local i=0 max=5 ready="" reason="" rev_json=""
   while [ "$i" -lt "$max" ]; do
-    rev_json=$(az containerapp revision show \
-      --name "$app" \
-      --resource-group "$RESOURCE_GROUP" \
-      --revision "$rev" \
-      --query "{health:properties.healthState, running:properties.runningState}" \
-      -o json 2>/dev/null || echo "")
+    # status.conditions 에서 type=Ready 의 status/reason 추출
+    rev_json=$(gcloud run revisions describe "$rev" \
+      --service "$app" \
+      --region "$GCP_REGION" \
+      --project "$GCP_PROJECT_ID" \
+      --format=json 2>/dev/null || echo "")
 
     if [ -z "$rev_json" ]; then
       info "  revision 조회 실패. 30초 후 재시도 ($((i+1))/$max)"
@@ -254,69 +295,71 @@ action_post_deploy_revision_check() {
       continue
     fi
 
-    health=$(printf "%s" "$rev_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('health',''))" 2>/dev/null || echo "")
-    running=$(printf "%s" "$rev_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('running',''))" 2>/dev/null || echo "")
-    info "  revision 상태: running=$running health=$health ($((i+1))/$max)"
+    ready=$(printf "%s" "$rev_json" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+for c in d.get('status',{}).get('conditions',[]):
+    if c.get('type')=='Ready':
+        print(c.get('status','')); break
+" 2>/dev/null || echo "")
+    reason=$(printf "%s" "$rev_json" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+for c in d.get('status',{}).get('conditions',[]):
+    if c.get('type')=='Ready':
+        print(c.get('reason','') or c.get('message','')[:80]); break
+" 2>/dev/null || echo "")
+    info "  revision 상태: Ready=$ready reason=$reason ($((i+1))/$max)"
 
     # 즉시 실패 판정 — polling 중단
-    case "$running" in
-      ActivationFailed|Failed|Degraded)
-        fail "신규 revision '$rev' runningState=$running — 배포 실패. (endpoint 200 은 직전 revision fallback)
-  → 회복: az containerapp update -n $app -g $RESOURCE_GROUP --image <last-healthy-image>
+    if [ "$ready" = "False" ]; then
+      fail "신규 revision '$rev' Ready=False (reason=$reason) — 배포 실패. (endpoint 200 은 직전 revision fallback)
+  → 회복: make rollback ENV=$env SHA=<last-healthy-sha>
+  → 또는: gcloud run services update-traffic $app --region $GCP_REGION --to-revisions <last-healthy-revision>=100
   → 또는: rollback-revision skill 호출"
-        ;;
-    esac
-    if [ "$health" = "Unhealthy" ]; then
-      fail "신규 revision '$rev' healthState=Unhealthy — 배포 실패.
-  → 회복: az containerapp update -n $app -g $RESOURCE_GROUP --image <last-healthy-image>"
     fi
 
-    # 성공 판정 — Running 계열 + (Healthy 또는 None)
-    case "$running" in
-      Running|RunningAtMaxScale)
-        if [ "$health" = "Healthy" ] || [ "$health" = "None" ]; then
-          ok "신규 revision '$rev' 정상 (running=$running health=$health)"
-          return 0
-        fi
-        ;;
-      ScaledToZero)
-        # replicas 0 은 idle 정상 — ActivationFailed 가 아니므로 통과
-        ok "신규 revision '$rev' ScaledToZero (idle 정상, ActivationFailed 아님)"
-        return 0
-        ;;
-    esac
+    # 성공 판정
+    if [ "$ready" = "True" ]; then
+      ok "신규 revision '$rev' 정상 (Ready=True)"
+      return 0
+    fi
 
-    # Activating / health=None 등 — 안정화 대기
+    # Unknown(Deploying 등) — 안정화 대기
     info "  안정화 대기 중. 30초 후 재검증 ($((i+1))/$max)"
     sleep 30
     i=$((i+1))
   done
 
-  # max 회 polling 후에도 Running/ScaledToZero 미도달
-  fail "신규 revision '$rev' 가 ${max}회 polling(약 150s) 후에도 안정화 실패 (최종: running=$running health=$health) — 배포 실패."
+  # max 회 polling 후에도 Ready=True 미도달
+  fail "신규 revision '$rev' 가 ${max}회 polling(약 150s) 후에도 Ready 미도달 (최종: Ready=$ready reason=$reason) — 배포 실패."
 }
 
+# 오래된 이미지 정리 (Artifact Registry).
+# 기존 az acr repository delete 대체.
+# {prefix}-{sha} 태그를 시간 오름차순으로 보고 최근 IMAGE_KEEP_COUNT 개만 유지.
+# {prefix}-latest 편의 태그는 건너뜀.
 action_purge_old_images() {
   local env="$1"
   local prefix
   prefix="$(env_to_tag_prefix "$env")-"
 
   step "오래된 이미지 정리 ($prefix 최근 $IMAGE_KEEP_COUNT 개만 유지)"
-  # 시간 오름차순(오래된 것부터). *-latest 태그는 건너뜀.
-  local tags total_count delete_count
-  tags=$(az acr repository show-tags \
-    --name "$ACR_NAME" \
-    --repository "$IMAGE_REPO" \
-    --orderby time_asc \
-    --query "[?starts_with(@, '${prefix}') && @!='${prefix}latest']" \
-    -o tsv 2>/dev/null || echo "")
+  # 시간 오름차순(오래된 것부터). prefix 매칭 + latest 제외.
+  local image_path tags total_count delete_count
+  image_path="${ARTIFACT_REPO_FQ}/${IMAGE_REPO}"
+  tags=$(gcloud artifacts docker tags list "$image_path" \
+    --project "$GCP_PROJECT_ID" \
+    --sort-by="CREATE_TIME" \
+    --format="value(TAG)" 2>/dev/null \
+    | grep "^${prefix}" | grep -v "^${prefix}latest$" || echo "")
 
   if [ -z "$tags" ]; then
     info "  태그 없음. 스킵."
     return 0
   fi
 
-  total_count=$(printf "%s\n" "$tags" | wc -l | tr -d ' ')
+  total_count=$(printf "%s\n" "$tags" | grep -c . | tr -d ' ')
   delete_count=$((total_count - IMAGE_KEEP_COUNT))
 
   if [ "$delete_count" -le 0 ]; then
@@ -328,27 +371,27 @@ action_purge_old_images() {
   printf "%s\n" "$tags" | head -n "$delete_count" | while read -r TAG; do
     [ -z "$TAG" ] && continue
     info "  삭제: $TAG"
-    az acr repository delete \
-      --name "$ACR_NAME" \
-      --image "${IMAGE_REPO}:${TAG}" \
-      --yes >/dev/null 2>&1 || warn "삭제 실패: $TAG"
+    # 태그 삭제 (이미지 매니페스트가 다른 태그에서 안 쓰이면 GC 대상)
+    gcloud artifacts docker tags delete "${image_path}:${TAG}" \
+      --project "$GCP_PROJECT_ID" \
+      --quiet >/dev/null 2>&1 || warn "삭제 실패: $TAG"
   done
   ok "정리 완료"
 }
 
 # endpoint curl healthcheck — 보조 검증.
-# 주의: 이 검증만으로는 신규 revision ActivationFailed 를 잡지 못한다 (직전 revision fallback 200).
+# 주의: 이 검증만으로는 신규 revision startup 실패를 잡지 못한다 (직전 revision fallback 200).
 #       반드시 action_post_deploy_revision_check 를 먼저 통과시킨 뒤 보조로 호출할 것.
 action_post_deploy_healthcheck() {
   local env="$1"
-  local fqdn
-  fqdn="$(env_to_fqdn "$env")"
+  local url
+  # 커스텀 도메인(api.grimoire-book.com)으로 보조 검증
+  url="$(env_to_public_api_url "$env")/api/health"
 
   step "Healthcheck (endpoint 보조 검증)"
-  local url="https://${fqdn}/api/health"
   info "  GET $url"
 
-  # Container App cold start 감안 — 최대 60초 대기
+  # Cloud Run cold start 감안 — 최대 60초 대기
   local i=0 status=""
   while [ "$i" -lt 12 ]; do
     status=$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")

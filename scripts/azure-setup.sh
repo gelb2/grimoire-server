@@ -2,6 +2,17 @@
 # Grimoire Azure 인프라 초기 세팅 스크립트
 # projectZenith 패턴 그대로 적용
 #
+# ⚠️⚠️⚠️ DEAD — 실행 금지 (2026-06-04 Azure decommission) ⚠️⚠️⚠️
+#   이 스크립트는 Azure(zenith-rg / Container Apps / ACR / flexible-server)를 생성한다.
+#   2026-06-04 Azure decommission으로 zenith-rg 18 리소스 전체 삭제됨(RG NotFound).
+#   현역 인프라는 GCP 단독 — 이 스크립트를 실행해도 폐기된 Azure에 리소스를 만들 뿐이며,
+#   비용 발생/혼선 위험만 있다. 보존 이유는 마이그레이션 이력 참조용.
+#   GCP 인프라 재현은 INFRASTRUCTURE.md §13 (초기 세팅) 참조.
+#   현역 배포 경로: scripts/deploy-{dev,prod}.sh (gcloud Cloud Run) + Makefile.
+echo "[DEAD] azure-setup.sh 는 2026-06-04 Azure decommission으로 폐기되었습니다 — 실행 금지." >&2
+echo "       GCP 인프라 재현은 INFRASTRUCTURE.md §13 (초기 세팅)을 참조하세요." >&2
+exit 1
+#
 # 2026-04-19 변경:
 #   - dev/prod 2환경만 생성 (inhouse 제거)
 #   - Container App: min-replicas=0, cpu=0.25, memory=0.5Gi (비용 절감)
