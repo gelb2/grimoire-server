@@ -282,8 +282,10 @@ action_post_deploy_revision_check() {
   local i=0 max=5 ready="" reason="" rev_json=""
   while [ "$i" -lt "$max" ]; do
     # status.conditions 에서 type=Ready 의 status/reason 추출
+    # gcloud run revisions describe 는 revision 이름만으로 조회한다.
+    # --service 플래그 미지원 (gcloud: unrecognized arguments) → rev_json 공백 → 거짓 FAIL.
+    # (revisions list 는 --service 정상 지원하므로 별개로 유지.)
     rev_json=$(gcloud run revisions describe "$rev" \
-      --service "$app" \
       --region "$GCP_REGION" \
       --project "$GCP_PROJECT_ID" \
       --format=json 2>/dev/null || echo "")
