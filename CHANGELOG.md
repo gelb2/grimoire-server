@@ -1,5 +1,27 @@
 # Changelog — grimoire-server
 
+## [Unreleased] - 2026-06-10
+
+### Remove — 죽은 Azure Blob 어댑터 + `@azure/storage-blob` 의존 정리
+
+> 정본: Azure decommission 완료(2026-06-04, `INFRASTRUCTURE.md §12`). Blob Storage는 2026-05-27 GCP `GcsStorageService`로 대체됨 — DI `app.module.ts { provide: 'BlobStoragePort', useClass: GcsStorageService }`.
+> 어댑터 교체 이후 잔존하던 구 Azure 어댑터/의존성/셋업 스크립트를 코드에서 안전 제거.
+
+#### Removed
+- `src/infrastructure/storage/blob-storage.service.ts` — 구 Azure Blob 어댑터(`@azure/storage-blob` 사용, `AZURE_STORAGE_*` env 의존). `BlobStoragePort` 구현은 `GcsStorageService` 단일.
+- `@azure/storage-blob` dependency (package.json) — 전이 의존성 포함 15개 패키지 제거(`npm uninstall`). `@azure` 잔존 0건.
+- `scripts/azure-setup.sh` — 죽은 Azure CLI 인프라 셋업 스크립트(이미 exit 1 가드됨). GCP 셋업 정본은 `INFRASTRUCTURE.md §13`.
+
+#### Changed
+- `work-management.controller.ts` — 구상 클래스 `BlobStorageService` 직접 주입 → `@Inject('BlobStoragePort')` 토큰 주입(헥사고날 DIP 복원). 커버 업로드 가드 `isEnabled` → `isEnabled()` 호출 정정(구 Azure 어댑터에서는 항상 비활성이라 가려졌던 함수참조 truthy 버그).
+- `app.module.ts` — `BlobStorageService` import + provider 등록 제거(컨트롤러가 더 이상 구상 클래스에 의존하지 않음). `'BlobStoragePort' → GcsStorageService` 바인딩 유지.
+- `scripts/README.md` — 죽은 `azure-setup.sh` 항목 제거.
+
+#### Notes
+- **마이그레이션 0건 / env 신설 0건 / API 계약 변경 0건** — 순수 죽은 코드 정리. `AZURE_STORAGE_*` env는 이 어댑터 삭제로 코드에서 읽는 곳 0건.
+- **보존(무해 이력)** — 주석 내 "Azure" 언급(`ip-extractor.ts` "Azure App Service" / `gcs-storage.service.ts`·spec "Azure Blob 대체" 등)은 이력이라 보존.
+- 검증: `tsc --noEmit` PASS / `npm run build` PASS / jest 84 suites 1174 tests PASS / `docker build` PASS / DI `BlobStoragePort` 단일 구현(`GcsStorageService`) 무결성 확인.
+
 ## [0.38.0] - 2026-05-22
 
 ### Add — 크레딧 개편 CC-5: Polar 구독 정기결제 연동 (PAY-P1-4) + HIGH-1 案 B

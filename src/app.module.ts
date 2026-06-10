@@ -6,7 +6,6 @@ import { ScheduleModule } from '@nestjs/schedule'
 
 // 인프라
 import { PrismaService } from '@infrastructure/prisma/prisma.service'
-import { BlobStorageService } from '@infrastructure/storage/blob-storage.service'
 import { GcsStorageService } from '@infrastructure/storage/gcs-storage.service'
 import { SemanticCacheService } from '@lib/semantic-cache'
 // EMAIL-POLAR-READY Phase B (2026-05-27) — Email 어댑터 factory.
@@ -145,7 +144,6 @@ import { AdminGuard } from '@adapter/inbound/http/guard/admin.guard'
   providers: [
     // 인프라
     PrismaService,
-    BlobStorageService,
     GcsStorageService,
     SemanticCacheService,
 

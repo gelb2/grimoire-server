@@ -42,7 +42,6 @@ DATABASE_URL="postgresql://..." npx tsx scripts/seed-all.ts --skip-classics
 | `reparse-deerdevil.ts` | DeerDevil 블록 재파싱 | O (덮어쓰기) |
 | `fix-deerdevil-episodes.ts` | DeerDevil slug/type 수정 | O (변경 없으면 스킵) |
 | `update-deerdevil-theme.ts` | DeerDevil 테마 완전 교체 | O (upsert) |
-| `azure-setup.sh` | Azure CLI 인프라 설정 | - |
 
 ---
 
