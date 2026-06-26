@@ -35,7 +35,7 @@
 | Payment PG↔DB 정합성 검증 cron (PAY-P0-2, 10분 주기) | 구현 완료 (2026-05-03) |
 | Payment 환불 정밀 처리 (PAY-P1-1, RefundLog + 크레딧 환수 트랜잭션 + deficit 분기) | 구현 완료 (2026-05-03) |
 | Admin (통계/사용자/콘텐츠/제재/신고/댓글/결제/접근로그/설정/감사로그 — 개수는 `docs/api-contract.md` 참조) | 구현 완료 |
-| Analysis (RAG 인덱싱/일관성 체크) | 구현 완료 |
+| Analysis (RAG 인덱싱/일관성·톤·캐릭터 체크 — `POST /analysis/index`·`/analysis/check` + `GET /analysis/status/:workId`·`/analysis/reports`·`/analysis/reports/:id`, 리포트 DB 영구 저장 `analysis_reports`) | 구현 완료 |
 | Chat (AI 어시스턴트 — 세션/메시지/RAG) | 구현 완료 |
 | Chat 4구간 사후 차감 (크레딧 개편 I Phase, ADR-012) | 코드 구현 완료 (2026-05-17) — dev/prod migration apply 대기 (§7 키워드 게이트) |
 | 크레딧 디노미네이션 1:1,000 + 포인트 출처 4종 분리 회계 (CreditLedger 원장, ADR-012) | 코드 구현 완료 (2026-05-17) — dev/prod migration apply 대기 |

@@ -604,11 +604,15 @@ Azure 방화벽 임시 추가/제거 폐기 — Cloud SQL Auth Proxy spawn/kill�
 
 ### 동기화 대상 테이블
 
-Prisma 모델 24개 중 **17개** 복사. 나머지는 환경별 독립이 합리적이라 제외.
+> 2026-06-27 `scripts/db-sync.ts` 실측 재집계. 모델 총 개수는 하드코딩하지 않는다(`grep -c '^model ' prisma/schema.prisma`). 아래는 `db-sync.ts`가 source에서 읽어 target에 **복사(create)** 하는 모델 집합.
 
-**포함 (17)**: Author, Theme, Work, Episode, SocialAccount, SignupHistory, CreditLog, Bookmark, ReadingProgress, Like, Subscription, Comment, Payment, DailyView, **Announcement, FeaturedWork, SystemSetting**
+**복사 (16)**: Author, Theme, Work, Episode, SocialAccount, SignupHistory, Bookmark, ReadingProgress, Like, Subscription, Comment, Payment, DailyView, **Announcement, FeaturedWork, SystemSetting**
 
-**제외 (7, 환경별 독립)**: AccessLog, AdminAuditLog, ChatSession, ChatMessage, RefreshToken, Report, UserSanction
+> **CreditLog 제거 (CC-4 Phase 3, 2026-05-21)**: 구 `creditLog` 모델 폐기(`DROP TABLE credit_logs`)로 동기화 대상에서 제외. 신 `CreditLedger`(원장 정본)는 작가별 회계 데이터로 환경별 독립이 합리적이라 **복사 제외**(target wipe만).
+
+**복사 제외 (환경별 독립 — target에서 wipe만, 재삽입 0)**: AccessLog, AdminAuditLog, ChatSession, ChatMessage, RefreshToken, Report, UserSanction, **CreditLedger, MembershipPlan, AnalysisReport, RefundLog, WebhookEvent, WebhookRetryQueue, ReconciliationCheckpoint, EmailVerificationToken**
+
+> wipe 대상(FK 정합 위해 삭제)이 복사 대상보다 넓다 — `db-sync.ts §2(초기화)`는 FK 자식(refund_logs/webhook_*/credit_ledgers/membership_plans/chat_* 등)을 모두 삭제하나, §3(삽입)은 위 16개만 재생성한다.
 
 ---
 
