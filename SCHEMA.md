@@ -27,7 +27,7 @@
 | name | name | String | - | 작가명 |
 | email | email | String | unique | 이메일 |
 | passwordHash | password_hash | String? | - | 비밀번호 해시 (bcryptjs) |
-| credits | credits | Int | default(0) | **[DEPRECATED — 크레딧 개편 I Phase]** points_* 4 필드로 이행. 1 sprint 유예 후 DROP |
+| ~~credits~~ | ~~credits~~ | — | — | **[DROP 완료 — CC-4 Phase 3, 2026-05-21]** 구 단일 Int 컬럼 물리 DROP (마이그레이션 `20260521_author_credits_drop_credit_log_phase3`). `points_*` 4 필드 + `deficit_points` 단일 정본으로 이행. 응답 키 `credits`(/auth/me 등)는 controller가 `CreditLedgerPort.getBalance().total` 매핑으로 보존(案 P3-Y 옵션 A) |
 | pointsFree | points_free | Int | default(0) | **크레딧 개편 I Phase** — 무료 적립 포인트 잔액 캐시 (CAC) |
 | pointsSubscription | points_subscription | Int | default(0) | **크레딧 개편 I Phase** — 구독 월 풀 포인트 잔액 캐시 (이월 금지) |
 | pointsGift | points_gift | Int | default(0) | **크레딧 개편 I Phase** — 응원 선물 수령 포인트 잔액 캐시 |
