@@ -39,12 +39,12 @@ export class UserHardDeleteJob {
   ) {}
 
   /**
-   * cron 진입점 — 매일 새벽 4시 KST ('0 4 * * *' 영역 영역 영역 옵션 A 정합).
+   * cron 진입점 — 매일 새벽 4시 KST ('0 0 4 * * *', timeZone: 'Asia/Seoul', 옵션 A 정합).
    *
-   * 정합 박제: NestJS @Cron 영역 영역 영역 영역 영역 영역 영역 영역 영역 ('s m h d M dow' 영역) — '0 0 4 * * *' = 매일 새벽 4시.
-   * 환경변수 영역 영역 영역 영역 — process.env.USER_SOFT_DELETE_CRON_TIME 영역 영역 영역 영역 영역 영역 영역 영역 영역.
+   * 정합 박제: NestJS @Cron 6-field 표현 ('s m h d M dow') — '0 0 4 * * *' = 매일 새벽 4시.
+   * PAY-S7: Cloud Run은 UTC 기준이라 timeZone 미명시 시 KST 새벽 4시가 9시간 어긋남 → Asia/Seoul 명시.
    */
-  @Cron('0 0 4 * * *')
+  @Cron('0 0 4 * * *', { timeZone: 'Asia/Seoul' })
   async hardDeleteExpiredUsers(): Promise<void> {
     if (process.env.USER_HARD_DELETE_DISABLED === '1') {
       this.logger.warn('USER_HARD_DELETE_DISABLED=1 — user-hard-delete cron 비활성화 (skip)')

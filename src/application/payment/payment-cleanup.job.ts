@@ -39,10 +39,11 @@ export class PaymentCleanupJob {
   ) {}
 
   /**
-   * cron 진입점 — 매일 새벽 4시 (cron expression: '0 0 4 * * *').
+   * cron 진입점 — 매일 새벽 4시 KST (cron expression: '0 0 4 * * *', timeZone: 'Asia/Seoul').
    * PAY-P0-2 reconciliation cron은 10분 주기 — 본 cleanup은 일 1회만 (시간대/주기 분리).
+   * PAY-S7: Cloud Run은 UTC 기준이라 timeZone 미명시 시 KST 새벽 4시가 UTC 4시(=KST 13시)로 어긋남 → Asia/Seoul 명시.
    */
-  @Cron('0 0 4 * * *')
+  @Cron('0 0 4 * * *', { timeZone: 'Asia/Seoul' })
   async cleanupExpiredPendingPayments(): Promise<void> {
     if (process.env.PAYMENT_CLEANUP_DISABLED === '1') {
       this.logger.warn('PAYMENT_CLEANUP_DISABLED=1 — cleanup cron 비활성화 (skip)')
