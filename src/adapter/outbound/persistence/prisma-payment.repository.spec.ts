@@ -177,7 +177,9 @@ describe('PrismaPaymentRepository.completePaymentWithPoints — 충전 적립 �
       // $queryRawUnsafe — FOR UPDATE 잠금. [lockedRow] 배열 반환 (어댑터가 구조분해)
       $queryRawUnsafe: jest.fn().mockImplementation(async () => [lockedRow]),
       payment: {
-        update: jest.fn().mockResolvedValue(undefined),
+        // R1 — Payment 완료는 status CAS(updateMany WHERE status='pending').
+        // 기본 count=1 (승자 경로). 동시성 패자(count=0)는 개별 it 에서 덮어쓴다.
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       author: {
         update: jest.fn().mockResolvedValue(undefined),
@@ -197,9 +199,9 @@ describe('PrismaPaymentRepository.completePaymentWithPoints — 충전 적립 �
 
     const result = await repo.completePaymentWithPoints('pay-1', 'author-1', 25000, 'credit-starter', 'pay-1')
 
-    // Payment 완료
-    expect(txMock.payment.update).toHaveBeenCalledWith({
-      where: { id: 'pay-1' },
+    // Payment 완료 — status CAS (updateMany WHERE status='pending')
+    expect(txMock.payment.updateMany).toHaveBeenCalledWith({
+      where: { id: 'pay-1', status: 'pending' },
       data: expect.objectContaining({ status: 'completed' }),
     })
     // creditLedger — earn row 1건만 (deficit 0 → deficit_settle 미박제)
@@ -299,7 +301,7 @@ describe('PrismaPaymentRepository.completePaymentWithPoints — 충전 적립 �
     ).rejects.toThrow('작가를 찾을 수 없습니다')
 
     // Payment 완료/ledger 박제 0건
-    expect(txMock.payment.update).not.toHaveBeenCalled()
+    expect(txMock.payment.updateMany).not.toHaveBeenCalled()
     expect(txMock.creditLedger.create).not.toHaveBeenCalled()
   })
 
@@ -308,6 +310,93 @@ describe('PrismaPaymentRepository.completePaymentWithPoints — 충전 적립 �
       repo.completePaymentWithPoints('pay-1', 'author-1', 0, 'credit-starter'),
     ).rejects.toThrow('충전 포인트는 양의 정수여야 합니다')
     expect(mockPrisma.$transaction).not.toHaveBeenCalled()
+  })
+
+  // ==========================================================================
+  // R1 (2026-06-27) — status CAS 이중적립 race 봉합.
+  // 진단: reports/PAYMENT_DATA_PROCESSING_AUDIT_20260627 §2 #2 (R1).
+  //
+  // 서로 다른 Polar 이벤트(order.paid/order.updated/checkout.updated)가 모두 success 로
+  // 정규화되되 eventId 가 달라 webhook 멱등 게이트를 둘 다 통과 → 두 worker 가 동시에
+  // pending 을 읽고 둘 다 적립하면 충전 pt 2배. status CAS(updateMany WHERE status='pending')
+  // 가 유일한 동시성 방어 — count===0(패자)이면 적립/잔액 갱신 0회 멱등 no-op.
+  //
+  // 기존 mock-순차 케이스는 "단일 호출" 만 검증해 진짜 parallel 패자 경로를 입증하지 못했음.
+  // 본 describe 는 CAS 0-row 분기를 직접 강제해 "적립 0회 + no-op 반환" 을 단언한다.
+  // ==========================================================================
+  describe('R1 — status CAS 이중적립 race 봉합 (동시성 패자 = no-op)', () => {
+    it('status 가 이미 pending 이 아닐 때(CAS count=0) earn/deficit 적립을 0회 수행하고 no-op 반환', async () => {
+      // 동시성 패자 시뮬 — 다른 트랜잭션이 이미 pending→completed 전이시킨 상태.
+      // deficit/charged 잔액이 있어도(상계·적립 대상이어도) CAS 0-row 면 일절 손대지 않아야 한다.
+      lockedRow.deficit_points = 4000
+      lockedRow.points_charged = 1000
+      txMock.payment.updateMany.mockResolvedValueOnce({ count: 0 })
+
+      const result = await repo.completePaymentWithPoints(
+        'pay-dup',
+        'author-1',
+        25000,
+        'credit-starter',
+        'pay-dup',
+      )
+
+      // CAS 시도는 1회 (WHERE status='pending')
+      expect(txMock.payment.updateMany).toHaveBeenCalledTimes(1)
+      expect(txMock.payment.updateMany).toHaveBeenCalledWith({
+        where: { id: 'pay-dup', status: 'pending' },
+        data: expect.objectContaining({ status: 'completed' }),
+      })
+      // 핵심 — 적립(earn/deficit_settle) ledger 0건, 잔액(author) 갱신 0건 (중복적립 0)
+      expect(txMock.creditLedger.create).not.toHaveBeenCalled()
+      expect(txMock.author.update).not.toHaveBeenCalled()
+      // 멱등 no-op 반환 (throw 금지 — 이미 처리됨=성공)
+      expect(result).toEqual({ settledDeficit: 0, chargedPoints: 0 })
+    })
+
+    it('CAS count=1(승자)일 때만 정상 1회 적립 — 회귀 단언 (deficit 0 → earn 1건)', async () => {
+      lockedRow.points_charged = 10000
+      // 기본 mock 이 count=1 이지만 명시적으로 승자 경로를 박제 (회귀 가드)
+      txMock.payment.updateMany.mockResolvedValueOnce({ count: 1 })
+
+      const result = await repo.completePaymentWithPoints(
+        'pay-win',
+        'author-1',
+        25000,
+        'credit-starter',
+        'pay-win',
+      )
+
+      // 정확히 1회 적립 (earn row 1건) — 이중적립 없음
+      expect(txMock.creditLedger.create).toHaveBeenCalledTimes(1)
+      expect(txMock.creditLedger.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          source: 'charged',
+          type: 'earn',
+          amount: 25000,
+        }),
+      })
+      expect(result).toEqual({ settledDeficit: 0, chargedPoints: 25000 })
+    })
+
+    it('순차 2회 호출 시뮬 — 1회차 승자(적립 1건) + 2회차 패자(적립 0건) = 누적 earn 1건 (이중적립 0)', async () => {
+      // 같은 paymentId 로 두 이벤트가 도달하는 상황을 순차로 재현:
+      // 1회차는 pending→completed 전이 성공(count=1), 2회차는 이미 completed 라 count=0.
+      lockedRow.points_charged = 0
+      txMock.payment.updateMany
+        .mockResolvedValueOnce({ count: 1 }) // 1회차 승자
+        .mockResolvedValueOnce({ count: 0 }) // 2회차 패자
+
+      const first = await repo.completePaymentWithPoints('pay-x', 'author-1', 25000, 'credit-starter')
+      const second = await repo.completePaymentWithPoints('pay-x', 'author-1', 25000, 'credit-starter')
+
+      // earn ledger 누적 1건만 (2회차는 0건) → 충전 pt 2배 방지 입증
+      const earnCalls = txMock.creditLedger.create.mock.calls.filter(
+        (c: any[]) => c[0].data.type === 'earn',
+      )
+      expect(earnCalls).toHaveLength(1)
+      expect(first).toEqual({ settledDeficit: 0, chargedPoints: 25000 })
+      expect(second).toEqual({ settledDeficit: 0, chargedPoints: 0 })
+    })
   })
 })
 
