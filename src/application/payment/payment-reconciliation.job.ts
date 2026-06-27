@@ -18,11 +18,18 @@ import { AuditLogService } from '@application/admin/audit-log.service'
  * - Polar API rate limit 분당 500회 default 그룹 → 10분 cron 사용률 1% 미만, 안전 마진 100배+
  *
  * 4 시나리오:
- * - S1 PG=succeeded + DB=pending → completePaymentAtomically + AuditLog `reconciliation_boost`
+ * - S1 PG=succeeded + DB=pending → completePaymentWithPoints + AuditLog `reconciliation_boost`
  * - S2 PG=refunded + DB=completed → logger.warn + AuditLog `reconciliation_refund_mismatch` (실제 환수 0건, P1-1 위임)
  * - S3 PG=NotFound + DB=pending(24h 경과) → expirePayment + AuditLog `reconciliation_expire`
  * - S4 PG ↔ DB 정합 → skip
  *
+ * amount 안전망 (R2, 2026-06-27 — 진단 §2 #2):
+ * - status 조합만 비교하면 R1류 이중적립(같은 status, 잔액만 2배)을 사후에 탐지하지 못한다.
+ * - 매 PG↔DB 매칭 row 마다 `pgCheckout.amount` vs `dbPayment.amount` 를 비교 →
+ *   불일치 시 logger.warn + AuditLog `reconciliation_amount_mismatch` (탐지·기록만, 자동
+ *   환수 0건 — S2 와 동일 "기록 후 운영자 위임" 정책). 운영자가 R1류를 사후 인지 가능.
+ *
+
  * 동시 cron 차단:
  * - in-memory `isRunning` 플래그 + try-finally lock 해제
  * - replicas ≥2 시점에는 advisory_lock 보강 (PAY-P1)
@@ -75,6 +82,8 @@ export class PaymentReconciliationJob {
     let boostCount = 0
     let mismatchCount = 0
     let expireCount = 0
+    // R2 — PG↔DB 금액 불일치 탐지 건수 (status mismatch 와 별도 집계).
+    let amountMismatchCount = 0
     let errorMessage: string | null = null
     const startedAt = new Date()
 
@@ -124,6 +133,17 @@ export class PaymentReconciliationJob {
           continue
         }
 
+        // R2 안전망: PG↔DB 금액 정합성 검사 (status 분기와 독립).
+        // status 만 비교하면 R1류 이중적립(동일 status, 잔액만 2배)을 사후 탐지하지 못한다.
+        // 금액 불일치 시 탐지·기록만 (자동 환수 0건 — S2 와 동일 운영자 위임 정책).
+        // boost/mismatch 분기보다 먼저 검사해 매칭된 모든 row 에서 무결성 흔적을 박제.
+        if (pgCheckout.amount !== dbPayment.amount) {
+          await this.handleAmountMismatch(pgCheckout, dbPayment)
+          amountMismatchCount += 1
+          // continue 하지 않음 — 동일 row 가 status mismatch(S2)·boost(S1) 대상일 수 있어
+          // 기존 status 분기도 그대로 통과시킨다 (탐지는 누적, 보정 로직은 독립).
+        }
+
         // S1: PG=succeeded + DB=pending → boost
         if (pgCheckout.status === 'succeeded' && dbPayment.status === 'pending') {
           await this.handleBoost(dbPayment)
@@ -161,7 +181,8 @@ export class PaymentReconciliationJob {
       }
 
       this.logger.log(
-        `PaymentReconciliationJob 완료 — processed=${processedCount} boost=${boostCount} mismatch=${mismatchCount} expire=${expireCount}`,
+        `PaymentReconciliationJob 완료 — processed=${processedCount} boost=${boostCount} ` +
+          `mismatch=${mismatchCount} amountMismatch=${amountMismatchCount} expire=${expireCount}`,
       )
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -174,7 +195,9 @@ export class PaymentReconciliationJob {
           lastRunAt: startedAt,
           processedCount,
           boostCount,
-          mismatchCount,
+          // R2 — 정합 이상 탐지 합산 (status refund mismatch + amount mismatch).
+          // 세부 구분은 AuditLog action 으로 조회 (port 주석 참조).
+          mismatchCount: mismatchCount + amountMismatchCount,
           expireCount,
           errorMessage,
         })
@@ -254,6 +277,39 @@ export class PaymentReconciliationJob {
         authorId: payment.authorId,
         // [CC-4 Phase 2 rename] audit meta 키도 points 로 통일 (운영 모니터링 정합)
         points: payment.points,
+      },
+    )
+  }
+
+  /**
+   * R2 amount mismatch — PG↔DB 금액 불일치: 데이터 무결성 이상 (탐지·기록만).
+   *
+   * R1류 이중적립(동일 status, 잔액만 2배)이나 PG/DB 금액 괴리를 운영자가 사후 인지하도록
+   * AuditLog 에 박제한다. S2 refund mismatch 와 동일한 "기록 후 운영자 위임" 정책 —
+   * 자동 환수/보정은 하지 않는다 (오탐 시 잘못된 환수를 막기 위함).
+   * - AuditLog operator='system_reconciliation' action='reconciliation_amount_mismatch'
+   */
+  private async handleAmountMismatch(
+    pgCheckout: NormalizedCheckout,
+    payment: PaymentRecord,
+  ): Promise<void> {
+    this.logger.warn(
+      `[amount_mismatch] paymentId=${payment.id} authorId=${payment.authorId} ` +
+        `pgAmount=${pgCheckout.amount} dbAmount=${payment.amount} ` +
+        `pgStatus=${pgCheckout.status} dbStatus=${payment.status} — 데이터 무결성 점검 필요 (R2)`,
+    )
+    await this.auditLog.log(
+      PaymentReconciliationJob.RECONCILIATION_OPERATOR,
+      'reconciliation_amount_mismatch',
+      payment.id,
+      {
+        reason: 'pg_db_amount_mismatch',
+        pgAmount: pgCheckout.amount,
+        dbAmount: payment.amount,
+        pgStatus: pgCheckout.status,
+        dbStatus: payment.status,
+        requiresManualReview: true,
+        authorId: payment.authorId,
       },
     )
   }
