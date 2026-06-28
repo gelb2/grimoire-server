@@ -221,7 +221,7 @@ describe('PrismaPaymentRepository.completePaymentWithPoints — 충전 적립 �
       where: { id: 'author-1' },
       data: { pointsCharged: 35000 },
     })
-    expect(result).toEqual({ settledDeficit: 0, chargedPoints: 25000 })
+    expect(result).toEqual({ settledDeficit: 0, chargedPoints: 25000, alreadyCompleted: false })
   })
 
   it('deficit < 충전액 — 외상 전액 상계 + 남은 충전액 적립 (deficit_settle + earn 양쪽 박제)', async () => {
@@ -257,7 +257,7 @@ describe('PrismaPaymentRepository.completePaymentWithPoints — 충전 적립 �
       where: { id: 'author-1' },
       data: { pointsCharged: 22000 },
     })
-    expect(result).toEqual({ settledDeficit: 4000, chargedPoints: 21000 })
+    expect(result).toEqual({ settledDeficit: 4000, chargedPoints: 21000, alreadyCompleted: false })
   })
 
   it('deficit ≥ 충전액 — 충전액 전부 외상 상계, charged earn row 0건 (C-6 부분 상계)', async () => {
@@ -280,7 +280,9 @@ describe('PrismaPaymentRepository.completePaymentWithPoints — 충전 적립 �
       where: { id: 'author-1' },
       data: { deficitPoints: 15000 },
     })
-    expect(result).toEqual({ settledDeficit: 25000, chargedPoints: 0 })
+    // 승자이지만 충전액 전부 외상 상계 → chargedPoints:0. alreadyCompleted:false 가
+    // {0,0} 암묵 신호와 승자/패자를 분리하는 핵심 (settledDeficit>0 이므로 패자 아님).
+    expect(result).toEqual({ settledDeficit: 25000, chargedPoints: 0, alreadyCompleted: false })
   })
 
   it('FOR UPDATE 잠금 raw query 를 호출한다 (동시 차감/적립 직렬화)', async () => {
@@ -349,8 +351,9 @@ describe('PrismaPaymentRepository.completePaymentWithPoints — 충전 적립 �
       // 핵심 — 적립(earn/deficit_settle) ledger 0건, 잔액(author) 갱신 0건 (중복적립 0)
       expect(txMock.creditLedger.create).not.toHaveBeenCalled()
       expect(txMock.author.update).not.toHaveBeenCalled()
-      // 멱등 no-op 반환 (throw 금지 — 이미 처리됨=성공)
-      expect(result).toEqual({ settledDeficit: 0, chargedPoints: 0 })
+      // 멱등 no-op 반환 (throw 금지 — 이미 처리됨=성공). R1-notify 잔여갭: alreadyCompleted=true
+      // 로 패자를 명시 식별 → 호출처가 알림 skip + 멱등 응답을 분기할 수 있다.
+      expect(result).toEqual({ settledDeficit: 0, chargedPoints: 0, alreadyCompleted: true })
     })
 
     it('CAS count=1(승자)일 때만 정상 1회 적립 — 회귀 단언 (deficit 0 → earn 1건)', async () => {
@@ -375,7 +378,7 @@ describe('PrismaPaymentRepository.completePaymentWithPoints — 충전 적립 �
           amount: 25000,
         }),
       })
-      expect(result).toEqual({ settledDeficit: 0, chargedPoints: 25000 })
+      expect(result).toEqual({ settledDeficit: 0, chargedPoints: 25000, alreadyCompleted: false })
     })
 
     it('순차 2회 호출 시뮬 — 1회차 승자(적립 1건) + 2회차 패자(적립 0건) = 누적 earn 1건 (이중적립 0)', async () => {
@@ -394,8 +397,9 @@ describe('PrismaPaymentRepository.completePaymentWithPoints — 충전 적립 �
         (c: any[]) => c[0].data.type === 'earn',
       )
       expect(earnCalls).toHaveLength(1)
-      expect(first).toEqual({ settledDeficit: 0, chargedPoints: 25000 })
-      expect(second).toEqual({ settledDeficit: 0, chargedPoints: 0 })
+      // 1회차 승자(적립) / 2회차 패자(no-op) — alreadyCompleted 로 호출처가 분기 가능.
+      expect(first).toEqual({ settledDeficit: 0, chargedPoints: 25000, alreadyCompleted: false })
+      expect(second).toEqual({ settledDeficit: 0, chargedPoints: 0, alreadyCompleted: true })
     })
   })
 })

@@ -145,9 +145,11 @@ export class PaymentReconciliationJob {
         }
 
         // S1: PG=succeeded + DB=pending → boost
+        // R1-notify 잔여갭: 동시성 패자(이미 webhook 승자가 완료)면 handleBoost 가 false 반환
+        // → boostCount 증가 skip (이중집계 차단). 실 boost(승자)일 때만 카운트.
         if (pgCheckout.status === 'succeeded' && dbPayment.status === 'pending') {
-          await this.handleBoost(dbPayment)
-          boostCount += 1
+          const boosted = await this.handleBoost(dbPayment)
+          if (boosted) boostCount += 1
           continue
         }
 
@@ -218,11 +220,18 @@ export class PaymentReconciliationJob {
    * 구 `completePaymentAtomically`(`Author.credits` Int)를 쓰면 보정된 충전이 신
    * 원장에 안 박혀 CRITICAL-2 충전분이 reconciliation 경로로 새어나간다 (진단 §1-A).
    * - AuditLog operator='system_reconciliation' action='reconciliation_boost'
+   *
+   * R1-notify 잔여갭 (2026-06-28): S1 탐지(PG=succeeded·DB=pending)와 본 boost 사이에
+   * 동시 webhook 승자가 pending→completed 를 전이시키면 `completePaymentWithPoints` 가
+   * 동시성 패자(`alreadyCompleted=true`)로 멱등 no-op 을 반환한다. 이때 `reconciliation_boost`
+   * AuditLog 를 박제하면 "보정 안 했는데 보정함"으로 이중집계되므로, 패자면 AuditLog·boostCount
+   * 증가를 건너뛴다. 반환값으로 실 boost 여부를 호출처(`boostCount`)에 알린다.
+   * @returns true = 실제 boost 수행(승자), false = 동시성 패자(이미 완료 — no-op)
    */
-  private async handleBoost(payment: PaymentRecord): Promise<void> {
+  private async handleBoost(payment: PaymentRecord): Promise<boolean> {
     try {
       // [CC-4 Phase 2 rename] payment.points = 충전 총 pt (구 컬럼명 credits)
-      const { settledDeficit, chargedPoints } =
+      const { settledDeficit, chargedPoints, alreadyCompleted } =
         await this.paymentRepo.completePaymentWithPoints(
           payment.id,
           payment.authorId,
@@ -230,6 +239,13 @@ export class PaymentReconciliationJob {
           payment.productId,
           payment.id,
         )
+      if (alreadyCompleted) {
+        // 동시성 패자 — webhook 승자가 이미 완료. AuditLog/boostCount 이중집계 차단.
+        this.logger.warn(
+          `[boost] paymentId=${payment.id} — 동시성 패자(이미 완료) → 보정 skip (멱등 no-op)`,
+        )
+        return false
+      }
       await this.auditLog.log(
         PaymentReconciliationJob.RECONCILIATION_OPERATOR,
         'reconciliation_boost',
@@ -248,6 +264,7 @@ export class PaymentReconciliationJob {
         `[boost] paymentId=${payment.id} totalPoints=${payment.points} ` +
           `charged=${chargedPoints} settledDeficit=${settledDeficit} authorId=${payment.authorId}`,
       )
+      return true
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error(`[boost] paymentId=${payment.id} 실패 — ${msg}`)

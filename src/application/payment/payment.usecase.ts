@@ -378,7 +378,7 @@ export class PaymentUseCase {
       // + 충전 적립)을 원자 처리한다. settleDeficit 가 처음으로 실 충전 경로에 연결되어
       // C-6(충전해도 deficit 미상계 → 채팅 영구 차단) 해소.
       // [CC-4 Phase 2 rename] payment.points = 충전 총 pt (initiatePayment 에서 product.points 저장, 구 credits 컬럼).
-      let chargeResult: { settledDeficit: number; chargedPoints: number }
+      let chargeResult: { settledDeficit: number; chargedPoints: number; alreadyCompleted: boolean }
       try {
         chargeResult = await this.paymentRepo.completePaymentWithPoints(
           payment.id,
@@ -407,6 +407,30 @@ export class PaymentUseCase {
           errorMessage: `polar_${polarError.errorClass}: ${polarError.message.slice(0, 480)}`,
         })
         throw e
+      }
+
+      // R1-notify 잔여갭 (2026-06-28) — 동시성 패자 멱등 분기.
+      // 서로 다른 Polar 이벤트(order.paid/order.updated/checkout.updated)가 eventId 가 달라
+      // eventId 게이트(L305)와 약식 status 게이트(L325 TOCTOU)를 둘 다 통과해 동시에
+      // completePaymentWithPoints 로 진입할 수 있다. status CAS 가 적립 이중화(돈)는 이미
+      // 닫았으나(R1), 패자도 아래 ① payment_completed AuditLog ② notifyChargeSuccess
+      // ③ { processed:true } 응답을 그대로 수행해 "성공 알림 2통 + 응답 비멱등"이 남아 있었다.
+      // alreadyCompleted=true(패자)면 알림·성공 박제를 건너뛰고 L325 약식 게이트와 동일한
+      // 멱등 응답(skipped/already_completed → { processed:false })을 반환한다(순차=동시 멱등 통일).
+      if (chargeResult.alreadyCompleted) {
+        this.logger.warn(
+          `[PaymentRaceCondition] 충전 success 동시성 패자 (eventId=${event.eventId} ` +
+            `paymentId=${payment.id}) — 이미 다른 트랜잭션이 완료. 알림 skip + 멱등 응답.`,
+        )
+        await this.webhookEventRepo.createIfAbsent({
+          eventId: event.eventId,
+          source: 'polar',
+          eventType: event.type,
+          payload: event as unknown as object,
+          status: 'skipped',
+          errorMessage: 'already_completed',
+        })
+        return { processed: false, reason: 'already_completed' }
       }
 
       // PAY-P2-4: payment_completed audit log 박제 (트랜잭션 외 후행)

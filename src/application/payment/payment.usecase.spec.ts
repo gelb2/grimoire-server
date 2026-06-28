@@ -72,7 +72,8 @@ describe('PaymentUseCase', () => {
       // (CC-4 P1 — 구 completePaymentAtomically port 시그니처 자체 제거)
       completePaymentWithPoints: jest
         .fn()
-        .mockResolvedValue({ settledDeficit: 0, chargedPoints: 25000 }),
+        // 기본 = 승자(alreadyCompleted:false). 동시성 패자 case 는 개별 it 에서 덮어쓴다.
+        .mockResolvedValue({ settledDeficit: 0, chargedPoints: 25000, alreadyCompleted: false }),
       updateStatus: jest.fn().mockResolvedValue(undefined),
       // CC-2b — 신 환불 신 경로 (4 출처 환수 + 이중 외상 통합)
       // (CC-4 P1 — 구 refundPaymentAtomically port 시그니처 자체 제거)
@@ -617,6 +618,94 @@ describe('PaymentUseCase', () => {
           errorMessage: expect.stringContaining('refund_db_lost'),
         }),
       )
+    })
+
+    // ============================================================================
+    // R1-notify 잔여갭 (2026-06-28) — 충전 success 동시성 패자의 알림·응답 멱등.
+    //
+    // R1(돈 이중적립)은 status CAS 로 닫힘(`bf7c8fc`). 남은 갭 = CAS 패자가 멱등 no-op
+    // (`alreadyCompleted:true`)을 반환해도 호출처(success 분기)가 분기하지 않아 ① 충전 성공
+    // 알림(notifyChargeSuccess)을 또 보내고 ② { processed:true } 를 반환하던 문제.
+    // 이메일 SaaS 개통 시 동시 webhook race → 성공메일 2통. 본 describe 가 그 분기를 박제.
+    // ============================================================================
+    describe('R1-notify: 충전 success 동시성 패자 알림·응답 멱등', () => {
+      // notify mock 을 9번째 인자로 주입한 별도 useCase (beforeEach 기본은 notify 미주입).
+      const makeNotifyMock = () => ({
+        notifyChargeSuccess: jest.fn().mockResolvedValue(undefined),
+        notifyRefundProcessed: jest.fn().mockResolvedValue(undefined),
+        notifyChargeFailed: jest.fn().mockResolvedValue(undefined),
+      })
+
+      const makeUseCaseWithNotify = (notify: ReturnType<typeof makeNotifyMock>) =>
+        new PaymentUseCase(
+          mockPrisma as any,
+          mockPaymentGateway,
+          mockWebhookEventRepo,
+          mockRefundPaymentUseCase,
+          mockAuthorRepo,
+          mockAuditLog,
+          undefined, // retryQueueRepo
+          undefined, // subscriptionWebhookUseCase
+          notify as any, // notificationUseCase (9번째)
+        )
+
+      it('동시성 패자(alreadyCompleted=true) — notifyChargeSuccess 미호출 + 멱등 응답({processed:false, already_completed}) 반환', async () => {
+        const notify = makeNotifyMock()
+        const useCaseWithNotify = makeUseCaseWithNotify(notify)
+        mockPrisma.findByExternalTransactionId.mockResolvedValue({
+          ...mockPayment,
+          status: 'pending', // L325 약식 게이트는 통과 (CAS 패자는 트랜잭션 내부에서만 판별)
+          externalTransactionId: 'TRADE-001',
+        })
+        // CAS 패자 시뮬 — completePaymentWithPoints 가 멱등 no-op 반환
+        mockPrisma.completePaymentWithPoints.mockResolvedValueOnce({
+          settledDeficit: 0,
+          chargedPoints: 0,
+          alreadyCompleted: true,
+        })
+
+        const result = await useCaseWithNotify.processWebhook(dummyBody, dummyHeaders)
+
+        // ① 핵심 — 성공 알림 미발송 (이메일 SaaS 개통 시 성공메일 2통 차단)
+        expect(notify.notifyChargeSuccess).not.toHaveBeenCalled()
+        // ② L325 약식 게이트와 동일한 멱등 응답 (순차=동시 멱등 의미 통일)
+        expect(result).toEqual({ processed: false, reason: 'already_completed' })
+        // ③ 성공 박제(processed)가 아니라 skipped/already_completed 로 박제
+        expect(mockWebhookEventRepo.createIfAbsent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventId: 'evt_test_001',
+            status: 'skipped',
+            errorMessage: 'already_completed',
+          }),
+        )
+        // ④ 패자는 payment_completed AuditLog 도 박제하지 않음 (이중집계 차단)
+        expect(mockAuditLog.log).not.toHaveBeenCalled()
+      })
+
+      it('승자(alreadyCompleted=false) — notifyChargeSuccess 1회 + 정상 응답({processed:true}) (회귀)', async () => {
+        const notify = makeNotifyMock()
+        const useCaseWithNotify = makeUseCaseWithNotify(notify)
+        mockPrisma.findByExternalTransactionId.mockResolvedValue({
+          ...mockPayment,
+          status: 'pending',
+          externalTransactionId: 'TRADE-001',
+        })
+        // 기본 mock = 승자(alreadyCompleted:false, chargedPoints:25000)
+
+        const result = await useCaseWithNotify.processWebhook(dummyBody, dummyHeaders)
+
+        // 알림 정확히 1회 (승자 회귀)
+        expect(notify.notifyChargeSuccess).toHaveBeenCalledTimes(1)
+        expect(notify.notifyChargeSuccess).toHaveBeenCalledWith(
+          expect.objectContaining({
+            paymentId: 'pay-1',
+            authorId: 'author-1',
+            credits: 25000,
+          }),
+        )
+        // 정상 응답
+        expect(result).toEqual(expect.objectContaining({ processed: true, credits: 25000 }))
+      })
     })
 
     // ============================================================================
