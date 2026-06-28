@@ -141,12 +141,17 @@ class FakePaymentRepository {
     totalPoints: number,
     productId: string,
     relatedId?: string,
-  ): Promise<{ settledDeficit: number; chargedPoints: number }> {
+  ): Promise<{ settledDeficit: number; chargedPoints: number; alreadyCompleted: boolean }> {
     const p = this.payments.get(paymentId)
     if (!p) throw new Error(`Payment not found: ${paymentId}`)
     const bal = this.store.balanceOf(authorId)
 
-    // Payment 완료
+    // R1-notify 잔여갭 정합 — status CAS 패자 시뮬: 이미 completed 면 적립 0건 멱등 no-op.
+    if (p.status === 'completed') {
+      return { settledDeficit: 0, chargedPoints: 0, alreadyCompleted: true }
+    }
+
+    // Payment 완료 (pending→completed 전이 승자)
     p.status = 'completed'
     p.completedAt = new Date()
 
@@ -183,7 +188,7 @@ class FakePaymentRepository {
       })
     }
 
-    return { settledDeficit, chargedPoints: remainingCharge }
+    return { settledDeficit, chargedPoints: remainingCharge, alreadyCompleted: false }
   }
 }
 

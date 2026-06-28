@@ -1,5 +1,29 @@
 # Changelog — grimoire-server
 
+## [Unreleased] - 2026-06-28
+
+### Fix — 충전 success 동시성 패자 알림·응답 멱등 (R1-notify 잔여갭)
+
+> 정본: `reports/PAYMENT_DATA_PROCESSING_AUDIT_20260627` §2 #2(R1-notify 잔여) + `.claude/shared-contracts.md` §13.
+> R1(돈 이중적립)은 status CAS 로 종결(develop `bf7c8fc`). 남은 갭 = CAS **패자**(동시성 패자) 경로의 알림·응답 멱등.
+
+#### 배경 (갭)
+- 서로 다른 Polar 이벤트(order.paid/order.updated/checkout.updated)는 모두 success 로 정규화되되 `eventId` 가 달라 webhook 멱등 게이트를 둘 다 통과 → 동시에 `completePaymentWithPoints` 진입.
+- status CAS(`updateMany WHERE status='pending'`)가 **적립 이중화(돈)**는 이미 차단(승자 1건만 적립). 그러나 패자가 반환하던 `{settledDeficit:0, chargedPoints:0}` 멱등 no-op 을 **호출처가 분기하지 못해** 패자도 ① `notifyChargeSuccess` 재발송 ② `{processed:true}` 반환 ③ reconciliation S1 boost 의 `reconciliation_boost` AuditLog·boostCount 이중집계를 유발 → 이메일 SaaS 개통 시 **성공메일 2통**(현재 NullAdapter 라 실발송 0, #2 개통 전 선행 보강).
+
+#### Changed
+- `PaymentRepositoryPort.completePaymentWithPoints` 반환 타입에 `alreadyCompleted: boolean` 추가 (인터페이스 변경) — 승자=`false` / 동시성 패자=`true`(멱등 no-op). 암묵 `{0,0}` 신호 의존 회피(도메인상 승자는 totalPoints>0 보장으로 `{settledDeficit,chargedPoints}` 동시 0 불가하나, 명시 플래그로 향후 적립 로직 변경에도 분기 안전).
+- `prisma-payment.repository.completePaymentWithPoints` — CAS count===0 패자 return `{...,alreadyCompleted:true}` / 승자 return `{...,alreadyCompleted:false}`.
+- `payment.usecase` success 분기 — `chargeResult.alreadyCompleted` 시 `notifyChargeSuccess`·`payment_completed` AuditLog skip + L325 약식 게이트와 동일한 멱등 응답(webhookEvent `skipped`/`already_completed` 박제 + `{processed:false, reason:'already_completed'}`) 반환. 승자 경로 무변경.
+- `payment-reconciliation.job.handleBoost` 반환 `Promise<void>` → `Promise<boolean>`(패자=false) — 패자면 `reconciliation_boost` AuditLog·`boostCount++` skip(이중집계 차단). 호출처는 `if (boosted) boostCount += 1`.
+
+#### Tests
+- 신설 it 3 — usecase 패자 알림 skip+멱등 응답 / usecase 승자 알림 1회+정상 응답 회귀 / reconciliation boost 패자 AuditLog·boostCount skip. repo spec R1 describe + 통합 spec 2 Fake `alreadyCompleted` 정합. `npx jest` 1180→1183 PASS / `npx tsc --noEmit` 0 / `npm run build` PASS.
+
+#### Notes
+- HTTP 응답 schema 무변경(`{processed:false, reason:'already_completed'}` 는 기존 약식 게이트가 이미 반환). `docs/api-contract.md` webhook 응답 주석 정합 + web 미러 동기화.
+- cost-accountant/visual-canon-keeper 게이트 불요(신규 AI 0건, UI 영향 0건, 결제 역방향 금액 무변경). **prod 배포 보류** — 메인이 R1/R2 와 묶어 별도 배포.
+
 ## [Unreleased] - 2026-06-10
 
 ### Remove — 죽은 Azure Blob 어댑터 + `@azure/storage-blob` 의존 정리

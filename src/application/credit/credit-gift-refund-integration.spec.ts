@@ -364,10 +364,14 @@ class FakePaymentRepository {
     totalPoints: number,
     productId: string,
     relatedId?: string,
-  ): Promise<{ settledDeficit: number; chargedPoints: number }> {
+  ): Promise<{ settledDeficit: number; chargedPoints: number; alreadyCompleted: boolean }> {
     const p = this.payments.get(paymentId)
     if (!p) throw new Error(`Payment not found: ${paymentId}`)
     const bal = this.store.balanceOf(authorId)
+    // R1-notify 잔여갭 정합 — status CAS 패자 시뮬: 이미 completed 면 멱등 no-op.
+    if (p.status === 'completed') {
+      return { settledDeficit: 0, chargedPoints: 0, alreadyCompleted: true }
+    }
     p.status = 'completed'
     p.completedAt = new Date()
     const { settledDeficit, remainingCharge, remainingDeficit, newChargedCache } =
@@ -397,7 +401,7 @@ class FakePaymentRepository {
         relatedId: relatedId ?? paymentId,
       })
     }
-    return { settledDeficit, chargedPoints: remainingCharge }
+    return { settledDeficit, chargedPoints: remainingCharge, alreadyCompleted: false }
   }
 
   /** CC-2b — 案 R1: prisma-payment.repository.refundPaymentWithPoints 와 동일 회계 */
