@@ -1,7 +1,9 @@
 # MIGRATION.md — 마이그레이션 규칙
 
 > Prisma 마이그레이션 + 데이터 백필 규칙.
-> 참조: `SCHEMA.md` (스키마 상세), `INFRASTRUCTURE.md` (환경별 실행), `docs/environments.md` (4단계 환경)
+> 참조: `SCHEMA.md` (스키마 상세), `INFRASTRUCTURE.md` (환경별 실행), `docs/environments.md` (2환경: dev/prod)
+
+> ✅ **2026-06-27 GCP 전면 갱신 완료**: 본 문서의 실행 절차(§3-4 수동 적용·§5 상태 확인·§6 스냅샷·§7 트러블슈팅·§9 긴급 롤백)를 Azure CLI(`az postgres ...`) + Azure DB host(`*.postgres.database.azure.com`)에서 **GCP Cloud SQL (Auth Proxy 강제, asia-northeast1)** 절차로 전면 교체했다. Azure decommission(2026-06-04, `zenith-rg` 전체 삭제)으로 구 Azure 명령은 실행 불가. DB 직접 접속은 **Cloud SQL Auth Proxy**(spawn → `localhost:port` 바인딩 → `prisma migrate deploy`), 백업은 **Cloud SQL 자동 백업 / `pg_dump`**. 상세 운영 명령은 `INFRASTRUCTURE.md §5`(운영 명령어) / `§10`(DB 동기화) 참조.
 
 ---
 
@@ -61,26 +63,26 @@ ls prisma/migrations/
 - development: 코드 push → 컨테이너 재배포 → 자동 적용
 - production: 컨테이너 환경변수에 `RUN_MIGRATION=true` 설정 후 배포
 
-### 3-4. 수동 적용 (긴급 시)
+### 3-4. 수동 적용 (긴급 시) — Cloud SQL Auth Proxy
+
+> Public IP allowlist는 폐기됐다(메인 IP `/32`만 잔존). DB 직접 접속은 Auth Proxy 경유만 가능.
 
 ```bash
-# 방화벽 열기
-az postgres flexible-server firewall-rule create \
-  --resource-group zenith-rg \
-  --name grimoire-db-{env} \
-  --rule-name AllowMyIP \
-  --start-ip-address {MY_IP} --end-ip-address {MY_IP}
+# 1. Cloud SQL Auth Proxy spawn (background) — localhost:5433 에 바인딩
+#    connection name = grimoire-491708:asia-northeast1:grimoire-db-{env}
+cloud-sql-proxy --port 5433 \
+  grimoire-491708:asia-northeast1:grimoire-db-{env} &
+PROXY_PID=$!
 
-# 마이그레이션 실행
-DATABASE_URL="postgresql://grimoireadmin:{PW}@grimoire-db-{env}.postgres.database.azure.com:5432/grimoire?sslmode=require" \
+# 2. 마이그레이션 실행 (Proxy 경유 → localhost)
+DATABASE_URL="postgresql://grimoireadmin:{PW}@localhost:5433/grimoire" \
 npx prisma migrate deploy
 
-# 방화벽 닫기
-az postgres flexible-server firewall-rule delete \
-  --resource-group zenith-rg \
-  --name grimoire-db-{env} \
-  --rule-name AllowMyIP --yes
+# 3. Proxy 종료 (반드시)
+kill $PROXY_PID
 ```
+
+> DB 비밀번호는 Secret Manager(`database-url-{env}-an1`)에 박제. 평문 노출 금지. 상세 Auth Proxy 운영은 `INFRASTRUCTURE.md §5`/`§6` 참조.
 
 ---
 
@@ -98,7 +100,7 @@ az postgres flexible-server firewall-rule delete \
 
 1. SQL 파일 작성 → `prisma/` 또는 `scripts/` 폴더에 보관
 2. localhost에서 먼저 실행 + 검증
-3. 원격 DB에 방화벽 열고 → psql로 실행 → 방화벽 닫기
+3. Cloud SQL Auth Proxy spawn → psql(localhost:5433)로 실행 → Proxy kill
 4. 실행 완료 후 SQL 파일은 git에 남겨둔다 (이력 추적)
 
 ---
@@ -109,8 +111,9 @@ az postgres flexible-server firewall-rule delete \
 # 현재 적용된 마이그레이션 목록 + 미적용 마이그레이션 확인
 npx prisma migrate status
 
-# 원격 DB 상태 확인 (방화벽 열린 상태에서)
-DATABASE_URL="postgresql://grimoireadmin:{PW}@grimoire-db-{env}.postgres.database.azure.com:5432/grimoire?sslmode=require" \
+# 원격 DB 상태 확인 (Cloud SQL Auth Proxy spawn 후 localhost 경유)
+cloud-sql-proxy --port 5433 grimoire-491708:asia-northeast1:grimoire-db-{env} &
+DATABASE_URL="postgresql://grimoireadmin:{PW}@localhost:5433/grimoire" \
 npx prisma migrate status
 ```
 
@@ -130,28 +133,34 @@ npx prisma migrate status
 
 ```
 [ ] 1. dev(development) 환경에서 동일 마이그레이션이 문제 없이 적용됐는지 확인
-[ ] 2. 프로덕션 DB 스냅샷 생성 (Azure Portal → grimoire-db-prod → 백업)
+[ ] 2. 프로덕션 DB 백업 생성 (Cloud SQL on-demand 백업 또는 pg_dump — 아래 참조)
 [ ] 3. prisma migrate status 로 현재 상태 확인
 [ ] 4. 마이그레이션 실행 (컨테이너 RUN_MIGRATION=true 배포 또는 수동)
 [ ] 5. 애플리케이션 기동 정상 확인
 [ ] 6. RUN_MIGRATION 환경변수 제거 (다음 배포에서 불필요 재실행 방지)
 ```
 
-### Azure DB 스냅샷 생성 (수동)
+### Cloud SQL 백업 생성 (수동)
 
 ```bash
-# 온디맨드 백업 생성
-az postgres flexible-server backup create \
-  --resource-group zenith-rg \
-  --name grimoire-db-prod \
-  --backup-name "pre-migration-$(date +%Y%m%d)"
+# 방법 A — Cloud SQL on-demand 백업 (인스턴스 차원, 빠름)
+gcloud sql backups create \
+  --instance grimoire-db-prod \
+  --project grimoire-491708 \
+  --description "pre-migration-$(date +%Y%m%d)"
 
 # 백업 목록 확인
-az postgres flexible-server backup list \
-  --resource-group zenith-rg \
-  --name grimoire-db-prod \
-  -o table
+gcloud sql backups list \
+  --instance grimoire-db-prod \
+  --project grimoire-491708
+
+# 방법 B — pg_dump (논리 백업, 특정 테이블만 가능, Auth Proxy 경유)
+cloud-sql-proxy --port 5433 grimoire-491708:asia-northeast1:grimoire-db-prod &
+pg_dump "postgresql://grimoireadmin:{PW}@localhost:5433/grimoire" \
+  > grimoire-prod-pre-migration-$(date +%Y%m%d).sql
 ```
+
+> Cloud SQL은 자동 백업도 활성(`INFRASTRUCTURE.md §9` 설정값 표 참조). 위는 마이그레이션 직전 안전망용 추가 백업.
 
 ---
 
@@ -161,24 +170,31 @@ az postgres flexible-server backup list \
 
 ```bash
 # 원인: DB 사용자 권한 부족
-# 확인: psql로 접속 후 권한 확인
-psql "postgresql://grimoireadmin:{PW}@grimoire-db-{env}.postgres.database.azure.com:5432/grimoire?sslmode=require" \
+# 확인: Auth Proxy spawn 후 psql 접속하여 권한 확인
+cloud-sql-proxy --port 5433 grimoire-491708:asia-northeast1:grimoire-db-{env} &
+psql "postgresql://grimoireadmin:{PW}@localhost:5433/grimoire" \
   -c "\du grimoireadmin"
 
 # 해결: schema public 권한 부여
-psql ... -c "GRANT ALL ON SCHEMA public TO grimoireadmin;"
-psql ... -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO grimoireadmin;"
+psql "postgresql://grimoireadmin:{PW}@localhost:5433/grimoire" \
+  -c "GRANT ALL ON SCHEMA public TO grimoireadmin;"
+psql "postgresql://grimoireadmin:{PW}@localhost:5433/grimoire" \
+  -c "GRANT ALL ON ALL TABLES IN SCHEMA public TO grimoireadmin;"
 ```
 
-### "firewall rule" 접속 오류
+### Auth Proxy 접속 오류
 
 ```bash
-# 원인: 현재 IP가 방화벽에 없음
-# 현재 IP 확인
-curl -s https://api.ipify.org
+# 원인: Cloud SQL Auth Proxy 미실행 또는 IAM 권한 부족
+# 1. gcloud 인증 확인 (cloudsql.client 권한 필요)
+gcloud auth list --filter=status:ACTIVE --format="value(account)"
 
-# 방화벽 규칙 추가 (INFRASTRUCTURE.md §8 참조)
-az postgres flexible-server firewall-rule create ...
+# 2. 인스턴스 state 확인 (RUNNABLE 인지)
+gcloud sql instances describe grimoire-db-{env} \
+  --project grimoire-491708 --format="value(state)"
+
+# 3. Auth Proxy 재실행 (connection name 오타 주의)
+cloud-sql-proxy --port 5433 grimoire-491708:asia-northeast1:grimoire-db-{env}
 ```
 
 ### 마이그레이션 파일과 DB 불일치
@@ -427,19 +443,19 @@ git add prisma/migrations/ && git commit -m "fix: {원래_마이그레이션명}
 > **반드시 사용자 확인 후 진행.**
 
 ```bash
-# 1. Azure DB 스냅샷 복원 (데이터 포함 완전 복원)
-#    Azure Portal → PostgreSQL Flexible Server → 복원
-#    또는:
-az postgres flexible-server restore \
-  --resource-group zenith-rg \
-  --name grimoire-db-prod-restored \
-  --source-server grimoire-db-prod \
-  --restore-time "2026-01-01T12:00:00Z"
+# 1. Cloud SQL PITR (point-in-time recovery) — 새 인스턴스로 복원
+gcloud sql instances clone grimoire-db-prod grimoire-db-prod-restored \
+  --project grimoire-491708 \
+  --point-in-time "2026-01-01T12:00:00Z"
+
+#    또는 특정 백업 ID로 복원:
+#    gcloud sql backups restore {BACKUP_ID} \
+#      --restore-instance grimoire-db-prod-restored --project grimoire-491708
 
 # 2. 애플리케이션 코드도 해당 시점으로 revert
 git revert {마이그레이션_커밋_SHA}
 
-# 3. 배포 (main → 컨테이너 업데이트)
+# 3. 배포 (main → Cloud Run 업데이트 / make deploy-prod)
 ```
 
 ### 롤백 판단 기준
@@ -449,7 +465,7 @@ git revert {마이그레이션_커밋_SHA}
 | 로컬에서만 테스트 중 | `migrate reset` |
 | development 환경 | 역방향 마이그레이션 생성 + 배포 |
 | production — 데이터 무결성 이상 없음 | 역방향 마이그레이션 생성 + 배포 |
-| production — 데이터 손상 발생 | Azure 스냅샷 복원 (사용자 확인 필수) |
+| production — 데이터 손상 발생 | Cloud SQL PITR / 백업 복원 (사용자 확인 필수) |
 
 ---
 

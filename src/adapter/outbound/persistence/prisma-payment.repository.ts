@@ -40,7 +40,7 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
    * CLAUDE.md §9 결제 원자성 — 아래 전부를 단일 `$transaction`으로 묶는다
    * ("돈은 냈는데 포인트 없음"은 §0·§9상 절대 불가):
    *   ① authors row FOR UPDATE 잠금 — 동시 차감/적립 직렬화 (`prisma-credit-ledger.repository` 패턴)
-   *   ② Payment status='completed' + completedAt
+   *   ② Payment status='completed' + completedAt — **status CAS** (`updateMany WHERE status='pending'`)
    *   ③ deficit 우선 상계 (settledDeficit > 0) — `CreditLedger` type='deficit_settle' row
    *      + `Author.deficitPoints` = remainingDeficit (§8-4 — 충전 즉시 최우선 외상 상계)
    *   ④ 남은 충전 적립 (remainingCharge > 0) — `CreditLedger` source='charged' type='earn' row
@@ -51,6 +51,31 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
    *
    * balanceAfter 회계: earn row 는 적립 후 4 출처 총 잔액, deficit_settle row 는 잔액 변동
    * 없으므로(외상 감소만) 현 charged 캐시 — `prisma-credit-ledger.repository`의 회계와 동일.
+   *
+   * --- 이중적립 race 봉합 (R1, 2026-06-27 — 진단 §2 #2 / reports/PAYMENT_DATA_PROCESSING_AUDIT_20260627) ---
+   * 서로 다른 Polar 이벤트(order.paid / order.updated / checkout.updated)는 모두 success 로
+   * 정규화되지만 **eventId 가 서로 달라** webhook eventId 멱등 게이트(payment.usecase §1차 게이트)를
+   * 둘 다 통과한다. `payment.status === COMPLETED` 약식 게이트(usecase L325)도 TOCTOU —
+   * 두 worker 가 거의 동시에 `findByExternalTransactionId` 로 `pending` 을 읽으면 둘 다 통과해
+   * 본 메서드로 진입한다. 과거 `tx.payment.update` 는 status 를 무조건 'completed' 로 덮어써
+   * 두 트랜잭션 모두 earn ledger 를 박제 → **충전 pt 2배** (만료 `expirePayment`·환불은 이미 CAS
+   * 보유, 충전 success 만 비대칭이었음).
+   *
+   * 봉합 = ② 를 status CAS 로 교체: `updateMany WHERE id AND status='pending'`.
+   *   - count === 1 → 이 트랜잭션이 pending→completed 전이의 **승자**. 적립/잔액 갱신 진행.
+   *   - count === 0 → 다른 트랜잭션이 이미 completed 로 전이시킨 **패자(동시성 패자)**.
+   *     적립(CreditLedger earn)·잔액(pointsCharged/deficitPoints) 갱신을 **절대 실행하지 않고**
+   *     `{ settledDeficit: 0, chargedPoints: 0, alreadyCompleted: true }` 멱등 no-op 으로 정상
+   *     반환(throw 금지 — "이미 처리됨 = 성공", usecase L325 게이트의 멱등 의미와 일관). FOR UPDATE
+   *     락은 이미 획득한 상태이므로 패자는 0-row CAS 확인 후 추가 쓰기 없이 commit(no-op) → 데드락 없음.
+   *
+   * --- 패자 명시 식별 (R1-notify 잔여갭, 2026-06-28) ---
+   * 반환에 `alreadyCompleted` 플래그를 추가한다. 과거 패자는 `{0,0}` 만 반환해 호출처가 이를
+   * 분기하지 못했고(승자도 `{0,0}` 가 도메인상 불가능하지만 암묵 신호 의존은 모호), 그 결과
+   * payment.usecase success 분기가 패자에게도 `notifyChargeSuccess` 를 또 보내고
+   * `{ processed:true }` 를 반환했다(이메일 SaaS 개통 시 동시 webhook race → 성공메일 2통).
+   * 명시 플래그로 호출처가 패자를 분기해 알림 skip + 멱등 응답(usecase L325 게이트와 동일)을
+   * 반환하게 한다. reconciliation S1 boost 도 동일 플래그로 이중집계(AuditLog/boostCount)를 막는다.
    */
   async completePaymentWithPoints(
     paymentId: string,
@@ -58,7 +83,7 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
     totalPoints: number,
     productId: string,
     relatedId?: string,
-  ): Promise<{ settledDeficit: number; chargedPoints: number }> {
+  ): Promise<{ settledDeficit: number; chargedPoints: number; alreadyCompleted: boolean }> {
     if (!Number.isInteger(totalPoints) || totalPoints <= 0) {
       throw new Error(`충전 포인트는 양의 정수여야 합니다: ${totalPoints}`)
     }
@@ -79,11 +104,21 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
       )
       if (!locked) throw new Error('작가를 찾을 수 없습니다')
 
-      // ② Payment 완료 처리
-      await tx.payment.update({
-        where: { id: paymentId },
+      // ② Payment 완료 처리 — status CAS (R1 이중적립 race 봉합).
+      //    `updateMany WHERE id AND status='pending'` 으로 pending→completed 전이를 원자화.
+      //    count===0 = 다른 트랜잭션이 이미 completed 로 전이시킨 동시성 패자 → 적립/잔액
+      //    갱신 일절 없이 멱등 no-op 반환 (throw 금지 — 이미 처리됨=성공). 승자(count===1)만
+      //    아래 deficit 상계/충전 적립을 진행한다. (expirePayment·refundPaymentWithPoints 의
+      //    기존 CAS 와 동일 패턴 — 충전 success 만 비대칭이었던 누락을 대칭화.)
+      const completion = await tx.payment.updateMany({
+        where: { id: paymentId, status: 'pending' },
         data: { status: 'completed', completedAt: new Date() },
       })
+      if (completion.count === 0) {
+        // 동시성 패자 — 적립/잔액 갱신 0건. alreadyCompleted=true 로 호출처가 알림 skip +
+        // 이중집계 차단을 분기 (R1-notify 잔여갭). throw 금지 (이미 처리됨=성공).
+        return { settledDeficit: 0, chargedPoints: 0, alreadyCompleted: true }
+      }
 
       // 충전 적립 ledger 계획 — deficit 우선 상계 + 남은 충전액 (도메인 순수 함수)
       const currentDeficit = Number(locked.deficit_points)
@@ -135,7 +170,8 @@ export class PrismaPaymentRepository implements PaymentRepositoryPort {
         })
       }
 
-      return { settledDeficit, chargedPoints: remainingCharge }
+      // 승자 — pending→completed 전이 성공 + 적립 완료. alreadyCompleted=false.
+      return { settledDeficit, chargedPoints: remainingCharge, alreadyCompleted: false }
     })
   }
 

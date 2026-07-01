@@ -27,7 +27,7 @@
 | name | name | String | - | 작가명 |
 | email | email | String | unique | 이메일 |
 | passwordHash | password_hash | String? | - | 비밀번호 해시 (bcryptjs) |
-| credits | credits | Int | default(0) | **[DEPRECATED — 크레딧 개편 I Phase]** points_* 4 필드로 이행. 1 sprint 유예 후 DROP |
+| ~~credits~~ | ~~credits~~ | — | — | **[DROP 완료 — CC-4 Phase 3, 2026-05-21]** 구 단일 Int 컬럼 물리 DROP (마이그레이션 `20260521_author_credits_drop_credit_log_phase3`). `points_*` 4 필드 + `deficit_points` 단일 정본으로 이행. 응답 키 `credits`(/auth/me 등)는 controller가 `CreditLedgerPort.getBalance().total` 매핑으로 보존(案 P3-Y 옵션 A) |
 | pointsFree | points_free | Int | default(0) | **크레딧 개편 I Phase** — 무료 적립 포인트 잔액 캐시 (CAC) |
 | pointsSubscription | points_subscription | Int | default(0) | **크레딧 개편 I Phase** — 구독 월 풀 포인트 잔액 캐시 (이월 금지) |
 | pointsGift | points_gift | Int | default(0) | **크레딧 개편 I Phase** — 응원 선물 수령 포인트 잔액 캐시 |
@@ -103,7 +103,13 @@
 | sharedExpireAt | shared_expire_at | DateTime? | - | 공유 링크 만료 시각 |
 | createdAt | created_at | DateTime | default(now()) | 생성일 |
 
-### credit_logs
+### ~~credit_logs~~ — **[CC-4 Phase 3 DROP, 2026-05-21]**
+
+> **폐기됨.** `DROP TABLE IF EXISTS "credit_logs" CASCADE` (마이그레이션 `20260521_author_credits_drop_credit_log_phase3`).
+> 신 `credit_ledgers`(원장 정본 — `source`/`type`/`balanceAfter`/`expiresAt`/`relatedId` 5필드 확장)가 단일 정본.
+> 적립/차감 8경로(T1~T8) 전부 신 `CreditLedger` 이행 완료(CC-1·CC-2a·CC-2b·CC-3).
+> PAY-P3-E archive `credit_logs_archive_pay_p3_e`(1 row, dev 영역)는 회계/감사 영구 보존 정합 박제(별도 테이블).
+> 아래 필드표는 폐기 전 구조 이력 보존용. 정본 동기: `docs/data-model.md`.
 
 | Prisma 필드 | DB 컬럼 | 타입 | 제약 | 설명 |
 |-------------|---------|------|------|------|
@@ -375,7 +381,7 @@ Polar 환불 webhook 시 크레딧 환수 트랜잭션의 영구 박제. CC-2b �
 Author ──1:N── Theme
 Author ──1:N── Work ──1:N── Episode
 Author ──1:N── SocialAccount
-Author ──1:N── CreditLog
+// [CC-4 Phase 3 DROP, 2026-05-21] Author ──1:N── CreditLog — 테이블/모델 폐기. 신 CreditLedger 단일 정본.
 ChatSession ──1:N── ChatMessage (cascade delete) (비정규화 — FK 없음, 감사용)
 SignupHistory (독립 — 재가입 방지 전용)
 Bookmark (authorId + episodeId — FK 없음, 독자 행위 기록)

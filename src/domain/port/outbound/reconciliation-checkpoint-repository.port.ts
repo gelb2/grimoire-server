@@ -14,7 +14,11 @@ export interface ReconciliationCheckpointRecord {
   processedCount: number
   /** 자동 보정한 row 수 (S1 boost) */
   boostCount: number
-  /** refund mismatch 발견 row 수 (S2 mismatch) */
+  /**
+   * 정합 이상 탐지 row 수 — S2 refund mismatch + R2 amount mismatch 합산.
+   * (스키마 무변경 최소 변경 — 세부 구분은 AuditLog action
+   *  `reconciliation_refund_mismatch` / `reconciliation_amount_mismatch` 로 조회.)
+   */
   mismatchCount: number
   /** pending 만료 처리 row 수 (S3 expire) */
   expireCount: number

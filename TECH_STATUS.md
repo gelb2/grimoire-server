@@ -35,7 +35,7 @@
 | Payment PG↔DB 정합성 검증 cron (PAY-P0-2, 10분 주기) | 구현 완료 (2026-05-03) |
 | Payment 환불 정밀 처리 (PAY-P1-1, RefundLog + 크레딧 환수 트랜잭션 + deficit 분기) | 구현 완료 (2026-05-03) |
 | Admin (통계/사용자/콘텐츠/제재/신고/댓글/결제/접근로그/설정/감사로그 — 개수는 `docs/api-contract.md` 참조) | 구현 완료 |
-| Analysis (RAG 인덱싱/일관성 체크) | 구현 완료 |
+| Analysis (RAG 인덱싱/일관성·톤·캐릭터 체크 — `POST /analysis/index`·`/analysis/check` + `GET /analysis/status/:workId`·`/analysis/reports`·`/analysis/reports/:id`, 리포트 DB 영구 저장 `analysis_reports`) | 구현 완료 |
 | Chat (AI 어시스턴트 — 세션/메시지/RAG) | 구현 완료 |
 | Chat 4구간 사후 차감 (크레딧 개편 I Phase, ADR-012) | 코드 구현 완료 (2026-05-17) — dev/prod migration apply 대기 (§7 키워드 게이트) |
 | 크레딧 디노미네이션 1:1,000 + 포인트 출처 4종 분리 회계 (CreditLedger 원장, ADR-012) | 코드 구현 완료 (2026-05-17) — dev/prod migration apply 대기 |
@@ -52,6 +52,8 @@
 | 다중 부분환불 누적 한도 검증 (PAY-S2 — HIGH-1 해소, depth-in-defense) | 구현 완료 (2026-05-22) — 마이그레이션 0건. `refundPaymentWithPoints` `$transaction` 내부 누적 검증으로 게이트 우회 경로 적자 차단 |
 | Circuit Breaker 운영자 admin UI (PAY-S3 — ADR-009 §"잔존 영역" 4번째 항목 해소) | 구현 완료 (2026-05-23) — 마이그레이션 0건. admin endpoint 3 (`GET /admin/circuit-breaker/state` · `POST /reset` · `POST /trip`) + DTO 3종 + AuditLog 신 2 action(`circuit_breaker.manual_trip`/`manual_reset` dual박제) + web `CircuitBreakerPanel`(SettingsTab "결제 인프라" sub-section). VCK PASS 4/4 / qa 8/8 PASS / sensor 10/10 회귀 0 |
 
+> **결제 충전 R1-notify 잔여갭 (2026-06-28)**: R1(돈 이중적립)은 status CAS 로 종결(develop `bf7c8fc`). 남은 갭 = CAS **동시성 패자** 경로의 알림·응답 멱등. `completePaymentWithPoints` 반환에 `alreadyCompleted: boolean` 추가(승자=false / 패자=true 멱등 no-op — 암묵 `{0,0}` 신호 의존 회피). `payment.usecase` success 분기가 패자면 `notifyChargeSuccess`·`payment_completed` AuditLog skip + 멱등 응답(`{processed:false, reason:'already_completed'}`, L325 약식 게이트와 동일) 반환. `payment-reconciliation.job.handleBoost` 반환 `Promise<boolean>` 으로 변경 — 패자면 `reconciliation_boost` AuditLog·boostCount 이중집계 skip. 신설 it 3(usecase 패자/승자 + reconciliation boost 패자) + 통합 spec 2 Fake 정합. jest 1183 PASS / tsc 0 / build PASS. 이메일 SaaS(#2) 개통 시 동시 webhook race 의 **성공메일 2통** 차단(현재 NullAdapter 실발송 0, 선행 보강). HTTP schema 무변경(api-contract 주석 정합 + web 미러 sync). **prod 배포 보류**(메인이 R1/R2 와 별도 배포). 정본: `reports/PAYMENT_DATA_PROCESSING_AUDIT_20260627` §2 #2 + `.claude/shared-contracts.md` §13.
+>
 > **크레딧 개편 I Phase (2026-05-17)**: `sprint-credit-overhaul` — 디노미네이션 1:1,000 + 포인트 출처 4종 분리 회계 + 채팅 4구간 사후 차감 코드 구현 완료. schema.prisma 변경 + migration 파일 작성. **로컬 DB는 PAY-S1(2026-05-19)으로 apply 완료**, dev/prod는 §7 단계6/9 사용자 키워드 게이트(`크레딧개편 dev migration 진행` / `크레딧개편 prod migration 진행`) 대기. 정본: ADR-012 + `research/CREDIT_PRICING_OVERHAUL_PLAN.md` §8.
 >
 > **크레딧 개편 CC-1 (2026-05-19)**: 적립 비결제 연동 — I Phase 의 CRITICAL-2(`GrantPointsUseCase` 5메서드 호출처 0건 / `chargeTheme` 미연동) 해소. 비결제 적립 5경로(가입 보너스 / 첫 작품 보너스 / 관리자 수동 지급·차감 / 테마 차감)를 신 `CreditLedger` 원장으로 이행. `auth`/`work-management`/`admin`/`generate-theme` usecase 가 `GrantPointsUseCase`·`ChargePointsUseCase` 를 실제 호출하도록 재배선 + 통합 테스트(`credit-grant-integration.spec.ts`) 신설. 잔여: T3 충전 / T4 선물 / T7 환불 적립 = CC-2 범위. 정본: `reports/CREDIT_CORE_DIAGNOSIS.md` §8.
@@ -114,10 +116,10 @@
 |------|------|------|
 | Docker | Dockerfile 작성 완료 | 멀티스테이지 빌드 + docker-entrypoint.sh |
 | CI/CD | GitHub Actions 설정 완료 | `.github/workflows/` 확인 |
-| Azure Container Apps | 3환경 배포 완료 | 서버 호스팅 |
-| Azure Database for PostgreSQL | 3환경 설정 완료 | DB |
-| Azure Container Registry | 설정 완료 | Docker 이미지 |
-| Azure Blob Storage | 설정 완료 | grimoire0storage (커버 + 테마 CSS) |
+| GCP Cloud Run | 2환경(dev/prod) 배포 완료 | 서버 호스팅 (asia-northeast1). 2026-05-27 Azure Container Apps에서 이전 |
+| GCP Cloud SQL (PostgreSQL) | 2환경 설정 완료 | DB (Auth Proxy 강제). Azure Postgres에서 이전 |
+| GCP Artifact Registry | 설정 완료 | Docker 이미지 (`cloud-run-source-deploy`). Azure ACR에서 이전 |
+| GCS | 설정 완료 | `grimoire-blob-{prod,dev}` 커버 + 테마 CSS (`GcsStorageService`). Azure Blob에서 이전 |
 | Rate Limiting | 적용 완료 | NestJS Throttler 전면 적용 |
 | 파일 업로드 | 적용 완료 | Multer (md/txt/docx/hwp/hwpx) |
 
@@ -156,4 +158,4 @@
 - `docs/api-contract.md` — API 엔드포인트 명세 (정본)
 - `TODO.md` — 남은 작업
 - `TESTING.md` — 테스트 전략
-- `INFRASTRUCTURE.md` — Azure 구성
+- `INFRASTRUCTURE.md` — GCP 인프라 구성

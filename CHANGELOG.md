@@ -1,5 +1,51 @@
 # Changelog — grimoire-server
 
+## [Unreleased] - 2026-06-28
+
+### Fix — 충전 success 동시성 패자 알림·응답 멱등 (R1-notify 잔여갭)
+
+> 정본: `reports/PAYMENT_DATA_PROCESSING_AUDIT_20260627` §2 #2(R1-notify 잔여) + `.claude/shared-contracts.md` §13.
+> R1(돈 이중적립)은 status CAS 로 종결(develop `bf7c8fc`). 남은 갭 = CAS **패자**(동시성 패자) 경로의 알림·응답 멱등.
+
+#### 배경 (갭)
+- 서로 다른 Polar 이벤트(order.paid/order.updated/checkout.updated)는 모두 success 로 정규화되되 `eventId` 가 달라 webhook 멱등 게이트를 둘 다 통과 → 동시에 `completePaymentWithPoints` 진입.
+- status CAS(`updateMany WHERE status='pending'`)가 **적립 이중화(돈)**는 이미 차단(승자 1건만 적립). 그러나 패자가 반환하던 `{settledDeficit:0, chargedPoints:0}` 멱등 no-op 을 **호출처가 분기하지 못해** 패자도 ① `notifyChargeSuccess` 재발송 ② `{processed:true}` 반환 ③ reconciliation S1 boost 의 `reconciliation_boost` AuditLog·boostCount 이중집계를 유발 → 이메일 SaaS 개통 시 **성공메일 2통**(현재 NullAdapter 라 실발송 0, #2 개통 전 선행 보강).
+
+#### Changed
+- `PaymentRepositoryPort.completePaymentWithPoints` 반환 타입에 `alreadyCompleted: boolean` 추가 (인터페이스 변경) — 승자=`false` / 동시성 패자=`true`(멱등 no-op). 암묵 `{0,0}` 신호 의존 회피(도메인상 승자는 totalPoints>0 보장으로 `{settledDeficit,chargedPoints}` 동시 0 불가하나, 명시 플래그로 향후 적립 로직 변경에도 분기 안전).
+- `prisma-payment.repository.completePaymentWithPoints` — CAS count===0 패자 return `{...,alreadyCompleted:true}` / 승자 return `{...,alreadyCompleted:false}`.
+- `payment.usecase` success 분기 — `chargeResult.alreadyCompleted` 시 `notifyChargeSuccess`·`payment_completed` AuditLog skip + L325 약식 게이트와 동일한 멱등 응답(webhookEvent `skipped`/`already_completed` 박제 + `{processed:false, reason:'already_completed'}`) 반환. 승자 경로 무변경.
+- `payment-reconciliation.job.handleBoost` 반환 `Promise<void>` → `Promise<boolean>`(패자=false) — 패자면 `reconciliation_boost` AuditLog·`boostCount++` skip(이중집계 차단). 호출처는 `if (boosted) boostCount += 1`.
+
+#### Tests
+- 신설 it 3 — usecase 패자 알림 skip+멱등 응답 / usecase 승자 알림 1회+정상 응답 회귀 / reconciliation boost 패자 AuditLog·boostCount skip. repo spec R1 describe + 통합 spec 2 Fake `alreadyCompleted` 정합. `npx jest` 1180→1183 PASS / `npx tsc --noEmit` 0 / `npm run build` PASS.
+
+#### Notes
+- HTTP 응답 schema 무변경(`{processed:false, reason:'already_completed'}` 는 기존 약식 게이트가 이미 반환). `docs/api-contract.md` webhook 응답 주석 정합 + web 미러 동기화.
+- cost-accountant/visual-canon-keeper 게이트 불요(신규 AI 0건, UI 영향 0건, 결제 역방향 금액 무변경). **prod 배포 보류** — 메인이 R1/R2 와 묶어 별도 배포.
+
+## [Unreleased] - 2026-06-10
+
+### Remove — 죽은 Azure Blob 어댑터 + `@azure/storage-blob` 의존 정리
+
+> 정본: Azure decommission 완료(2026-06-04, `INFRASTRUCTURE.md §12`). Blob Storage는 2026-05-27 GCP `GcsStorageService`로 대체됨 — DI `app.module.ts { provide: 'BlobStoragePort', useClass: GcsStorageService }`.
+> 어댑터 교체 이후 잔존하던 구 Azure 어댑터/의존성/셋업 스크립트를 코드에서 안전 제거.
+
+#### Removed
+- `src/infrastructure/storage/blob-storage.service.ts` — 구 Azure Blob 어댑터(`@azure/storage-blob` 사용, `AZURE_STORAGE_*` env 의존). `BlobStoragePort` 구현은 `GcsStorageService` 단일.
+- `@azure/storage-blob` dependency (package.json) — 전이 의존성 포함 15개 패키지 제거(`npm uninstall`). `@azure` 잔존 0건.
+- `scripts/azure-setup.sh` — 죽은 Azure CLI 인프라 셋업 스크립트(이미 exit 1 가드됨). GCP 셋업 정본은 `INFRASTRUCTURE.md §13`.
+
+#### Changed
+- `work-management.controller.ts` — 구상 클래스 `BlobStorageService` 직접 주입 → `@Inject('BlobStoragePort')` 토큰 주입(헥사고날 DIP 복원). 커버 업로드 가드 `isEnabled` → `isEnabled()` 호출 정정(구 Azure 어댑터에서는 항상 비활성이라 가려졌던 함수참조 truthy 버그).
+- `app.module.ts` — `BlobStorageService` import + provider 등록 제거(컨트롤러가 더 이상 구상 클래스에 의존하지 않음). `'BlobStoragePort' → GcsStorageService` 바인딩 유지.
+- `scripts/README.md` — 죽은 `azure-setup.sh` 항목 제거.
+
+#### Notes
+- **마이그레이션 0건 / env 신설 0건 / API 계약 변경 0건** — 순수 죽은 코드 정리. `AZURE_STORAGE_*` env는 이 어댑터 삭제로 코드에서 읽는 곳 0건.
+- **보존(무해 이력)** — 주석 내 "Azure" 언급(`ip-extractor.ts` "Azure App Service" / `gcs-storage.service.ts`·spec "Azure Blob 대체" 등)은 이력이라 보존.
+- 검증: `tsc --noEmit` PASS / `npm run build` PASS / jest 84 suites 1174 tests PASS / `docker build` PASS / DI `BlobStoragePort` 단일 구현(`GcsStorageService`) 무결성 확인.
+
 ## [0.38.0] - 2026-05-22
 
 ### Add — 크레딧 개편 CC-5: Polar 구독 정기결제 연동 (PAY-P1-4) + HIGH-1 案 B

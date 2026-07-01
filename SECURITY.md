@@ -2,6 +2,7 @@
 
 > 보안 정책 + 배포 전 체크리스트.
 > **최신 감사일: 2026-04-17** (16항목 전수 실측 기반 최신화)
+> **문서감사 정정 2차 (2026-06-27)**: §3 크레딧/결제 원자성을 크레딧 개편 CC-1~5 + CC-4 Phase 3 코드 실측에 동기화(`credit_logs`·`Author.credits`·`adjustCredits`·`completePaymentAtomically` 폐기 → `completePaymentWithPoints`·`CreditLedger`·`points_charged`·deficit 상계). §4 수동 배포 체크를 Azure→GCP로 전환(preflight.sh 8 step 실측).
 
 ---
 
@@ -9,11 +10,11 @@
 
 | 변수 | 민감도 | 관리 방식 |
 |------|--------|----------|
-| DATABASE_URL | 높음 | Azure Container Apps env / GitHub Secrets |
-| ANTHROPIC_API_KEY | 높음 | Azure Container Apps env (3환경 공유 중 — 환경별 분리 TODO) |
-| OPENAI_API_KEY | 높음 | Azure Container Apps env (임베딩용) |
-| JWT_SECRET | 높음 | 환경별 별도 값 |
-| POLAR_ACCESS_TOKEN | 높음 | Azure Container Apps env (3환경 공유 — org 단일) |
+| DATABASE_URL | 높음 | Secret Manager (Cloud Run `--set-secrets`) |
+| ANTHROPIC_API_KEY | 높음 | Secret Manager (Cloud Run env, 환경별 분리) |
+| OPENAI_API_KEY | 높음 | Secret Manager (Cloud Run env, 임베딩용) |
+| JWT_SECRET | 높음 | Secret Manager (환경별 별도 값) |
+| POLAR_ACCESS_TOKEN | 높음 | Secret Manager (Cloud Run env, org 단일) |
 | POLAR_WEBHOOK_SECRET | 높음 | **환경별 별도** (endpoint별 고유) |
 | POLAR_PRODUCT_BASIC/POPULAR/BEST | 중간 | Polar product UUID |
 | RECAPTCHA_SECRET_KEY | 중간 | 서버 전용 검증 키 |
@@ -104,31 +105,41 @@
 - UseCase 내에서 `user.sub` vs 리소스의 `authorId` 비교 후 일치하지 않으면 예외
 - 자기 리소스만 수정/삭제 가능 (theme, work, episode 등)
 
-### 크레딧 시스템
+### 크레딧 시스템 (크레딧 개편 CC-1~5 + CC-4 Phase 3 반영)
 
-- 크레딧 차감: Prisma 트랜잭션으로 원자적 처리
-- 잔액 음수 방지: 트랜잭션 내 체크 + 에러 throw
-- credit_logs: INSERT only (수정/삭제 불가 — 감사 로그)
+> 디노미네이션 1:1,000 pt + 포인트 출처 4종 분리 회계(1-C 하이브리드). 정본: ADR-012 / `docs/data-model.md` / `.claude/shared-contracts.md §30`.
+
+- **원장 정본 = `credit_ledgers`**: 적립/차감 전부 입출금 원장 row 박제 (`source`/`type`/`balanceAfter`/`expiresAt`/`relatedId`). `authors.points_*` 4 필드(`points_free`/`points_subscription`/`points_gift`/`points_charged`) + `deficit_points`는 **빠른 조회용 잔액 캐시**.
+- **구 `credit_logs` 테이블 폐기 (CC-4 Phase 3, 2026-05-21)**: `DROP TABLE IF EXISTS "credit_logs" CASCADE` (마이그레이션 `20260521_author_credits_drop_credit_log_phase3`). 구 INSERT-only 감사 로그 → 신 `CreditLedger` 원장으로 대체. 회계/감사 영구 보존은 원장 row 불변 정책으로 유지(별도 archive 테이블 `credit_logs_archive_pay_p3_e` 1 row, dev 영역).
+- **구 `Author.credits` Int 컬럼 폐기 (CC-4 Phase 3)**: `ALTER TABLE "authors" DROP COLUMN "credits"`. 응답 키 `credits`(`/auth/me` 등)는 controller 측에서 `CreditLedgerPort.getBalance().total` 매핑으로 보존(案 P3-Y 옵션 A — web 영향 0).
+- 크레딧 차감/적립: Prisma `$transaction`으로 원자적 처리 (캐시 + 원장 동시 갱신)
+- 잔액 음수 방지: 4 출처 차감 + 채팅 사후 차감 시 잔액 부족분은 `deficit_points` 외상으로 박제(상한 -10,000pt), 다음 충전 시 우선 상계
 
 ### 결제 원자성 (Atomicity) — 절대 원칙
 
 > **금융 트랜잭션의 핵심: 전부 성공하거나, 전부 실패하거나. 중간 상태는 존재하지 않는다.**
 
-결제 웹훅 처리 시 아래 3개 작업을 **단일 Prisma `$transaction`** 으로 묶어야 한다:
+충전 결제 webhook(`order.paid`) 처리 시 아래 작업을 **단일 Prisma `$transaction`**(`completePaymentWithPoints`, CC-2a)으로 묶는다:
 
 1. Payment 상태 → `completed` 변경
-2. Author 크레딧 잔액 증가 (`{ increment: N }`)
-3. CreditLog 기록 생성
+2. **deficit 우선 상계** — `authors.deficit_points` 잔액이 있으면 충전분에서 먼저 차감 (구 시스템 영구 외상 자동 해소)
+3. `credit_ledgers` charged earn row 박제 (`source='charged'`, `type='earn'`)
+4. `authors.points_charged` / `deficit_points` 잔액 캐시 갱신
 
 **왜 반드시 원자적이어야 하는가:**
-- Payment만 completed 되고 크레딧이 안 들어가면 → 사용자가 돈만 낸 상황
-- 크레딧만 들어가고 Payment가 pending이면 → 웹훅 재시도 시 크레딧 중복 부여
+- Payment만 completed 되고 포인트가 안 들어가면 → 사용자가 돈만 낸 상황
+- 포인트만 들어가고 Payment가 pending이면 → 웹훅 재시도 시 포인트 중복 부여
 - 어느 한쪽이라도 실패하면 전체 롤백 → 재시도 가능한 안전한 상태 유지
 
+환불 webhook(`order.refunded`)은 대칭 트랜잭션 `refundPaymentWithPoints`(CC-2b): 4 출처(charged→gift→subscription→free) 비례 환수 + 이중 외상 통합 + 다중 부분환불 누적 한도 검증(PAY-S2) + `$executeRawUnsafe` CAS race 차단(PAY-P3-A).
+
 **관련 코드:**
-- `src/application/payment/payment.usecase.ts` — `processWebhook()`
-- `src/adapter/outbound/persistence/prisma-credit.repository.ts` — `adjustCredits()`
-- `src/application/payment/payment.usecase.spec.ts` — 원자성 검증 테스트
+- `src/application/payment/payment.usecase.ts` — `processWebhook()` (라우팅 + 멱등성 게이트)
+- `src/adapter/outbound/persistence/prisma-payment.repository.ts` — `completePaymentWithPoints()` / `refundPaymentWithPoints()`
+- `src/application/credit/charge-points.usecase.ts` / `grant-points.usecase.ts` — 비결제 적립/차감
+- `src/application/payment/payment.usecase.spec.ts` / `payment-charge-credit-integration.spec.ts` — 원자성 검증 테스트
+
+> **구 경로 폐기 박제**: `prisma-credit.repository.ts`(파일 삭제) + `adjustCredits()` + `completePaymentAtomically()` / `refundPaymentAtomically()`는 CC-4에서 완전 제거. 현재 코드 본문 호출 0건(주석/박제 이력만).
 
 ### 결제 보안 (Polar, 2026-04-09 PAYAPP 폐기)
 
@@ -206,13 +217,16 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 ### 수동 배포 시 보안 체크 (2026-04-18 신설)
 
 > GitHub Actions 빌링 이슈 등으로 CI가 막혔을 때 1차 배포 수단이 `make deploy-{env}`가 된다. 관련 정본은 `docs/DEPLOY.md`.
+> **2026-06-10 GCP 전환 완료**: 배포 경로가 Azure(`az account/acr/containerapp`)에서 GCP(`gcloud auth/Artifact Registry/Cloud Run/Cloud SQL`)로 재작성됨. Azure decommission(2026-06-04)으로 구 Azure 절차는 실행 불가.
 
-배포 스크립트(`scripts/deploy-*.sh`)는 `scripts/preflight.sh`를 **반드시 선행 호출**하고, 아래 보안 관련 항목을 자동 검증한다. 하나라도 실패하면 배포 중단.
+배포 스크립트(`scripts/deploy-*.sh`)는 `scripts/preflight.sh`를 **반드시 선행 호출**하고, 아래 보안 관련 항목을 자동 검증(8 step)한다. 하나라도 실패하면 배포 중단. **모든 gcloud 측정은 `--project grimoire-491708 --region asia-northeast1` 명시 강제** (로컬 gcloud 전역 default가 `pr-letter-addr`/ne3일 수 있어 무지정 측정은 거짓 PASS/FAIL 유발).
 
-- [x] Azure CLI 로그인 사용자가 기대 계정(`rainmaker8492@gmail.com`)과 일치 — 잘못된 계정에서 실수 배포 방지
-- [x] 리소스그룹 `zenith-rg` 고정 (다른 RG 접근 불가)
-- [x] Container App FQDN이 매트릭스와 완전 일치 — 오타/잘못된 앱 갱신 방지
-- [x] 필수 환경변수(DATABASE_URL/JWT_SECRET/CORS_ORIGIN/POLAR_*/ANTHROPIC/OPENAI/AZURE_STORAGE_*) 존재 — 값은 출력하지 않고 키만 검증
+- [x] gcloud 활성 계정 존재 + 기대 계정(`rainmaker8492@gmail.com`) 일치 검증 (불일치 시 warn — 배포는 `--project` 명시로 안전 진행)
+- [x] 프로젝트 `grimoire-491708`(project number `23295981916`) 접근 가능 — `--project` 명시로 직접 확인 (전역 default 무관)
+- [x] Artifact Registry repo `grimoire-docker`(asia-northeast1) 존재 검증
+- [x] Cloud Run 서비스 FQDN(`*.run.app`)이 매트릭스와 일치 — 오타/잘못된 서비스 갱신 방지
+- [x] Cloud SQL 인스턴스 `grimoire-db-{env}` state=RUNNABLE 검증
+- [x] 필수 환경변수/Secret 바인딩(DATABASE_URL/JWT_SECRET/CORS_ORIGIN/APP_ENV/POLAR_ACCESS_TOKEN/POLAR_WEBHOOK_SECRET/ANTHROPIC_API_KEY/OPENAI_API_KEY) 존재 — Cloud Run revision의 plain name + secretRef name 모두 검사, 값은 출력하지 않고 키만 검증 (`AZURE_STORAGE_*`는 GCS 전환으로 제거됨)
 - [x] CORS 환경별 기대값 검증 — dev=`*` 경고, prod는 엄격 도메인 매칭
 - [x] git 워킹 트리 클린 + origin/<브랜치> 와 완전 동기화 — 로컬 미커밋/미푸시 상태로 배포하여 재현 불능 이미지 방지
 - [x] 이미지 태그 `{env}-{SHA}` 강제 — `:latest` 태그 노출 금지, 롤백 시 SHA로 역추적 가능
@@ -223,7 +237,7 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 1. 스크립트 stdout에 환경변수 **값**을 출력하지 않는다 (preflight는 "설정됨/누락" 여부만 출력).
 2. `docker build` 시 `--build-arg`로 전달되는 값은 이미지 레이어에 남는다. 현재 web 빌드의 `NEXT_PUBLIC_*` 3개는 **공개 값 전용** (공개 recaptcha site key, Google OAuth client ID). 비밀값을 build-arg로 넘기지 말 것.
 3. Docker 이미지에는 `.env` 파일을 포함하지 않는다. Dockerfile의 `.dockerignore`에 `.env` 포함 여부 확인.
-4. ACR 푸시 자격증명은 `az acr login`이 keychain에 저장하고 stdout에 노출하지 않는다.
+4. Artifact Registry 푸시 자격증명은 `gcloud auth configure-docker asia-northeast1-docker.pkg.dev`(credHelper, keychain)이 관리하고 stdout에 노출하지 않는다. 비밀값 단일 진실은 **Secret Manager** (Cloud Run `--update-secrets` 바인딩).
 
 ---
 
@@ -235,25 +249,25 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 
 | 레이어 | 열린 포트 | 비고 |
 |--------|----------|------|
-| Cloudflare (최외곽) | 443 (HTTPS) | DDoS 방어 + CDN + 실제 Azure IP 은닉 |
-| Container Apps | 443만 (리버스 프록시) | 3000/3001은 컨테이너 내부 포트, 인터넷 노출 안 됨 |
-| PostgreSQL | 5432 (방화벽 차단) | AllowAzureServices만 허용, 외부 IP 전부 차단 |
-| ACR | 443 (인증 필요) | pull/push에 ACR_USERNAME/PASSWORD 필수 |
+| Cloudflare (최외곽) | 443 (HTTPS) | DDoS 방어 + CDN + 실제 origin IP 은닉 |
+| Cloud Run | 443만 (Google Frontend) | 컨테이너 내부 포트는 인터넷 노출 안 됨 |
+| Cloud SQL | 5432 | Auth Proxy(Unix socket) 강제, Public IP allowlist 폐기 (메인 IP `/32`만 잔존) |
+| Artifact Registry | 443 (IAM 인증) | pull/push에 GCP IAM(SA) 필수 |
 
 > 인터넷에서 포트 스캔 시 Cloudflare IP의 443만 보인다.
-> 3000, 3001, 5432는 Azure 내부 네트워크에서만 접근 가능.
+> Cloud SQL은 Auth Proxy 경유 외 외부 접근 차단 (Public IP allowlist 폐기).
 
 ### 공격 시나리오별 방어
 
 | 공격 | 방어 | 설정 위치 |
 |------|------|----------|
 | DDoS | Cloudflare Proxy (무료 플랜 자동 방어) | Cloudflare 대시보드 |
-| 포트 스캔 | Container Apps: 443만 노출. DB: 방화벽 차단 | Azure 플랫폼 구조 |
+| 포트 스캔 | Cloud Run: 443만 노출. DB: Auth Proxy 외 차단 | GCP 플랫폼 구조 |
 | SQL 인젝션 | Prisma ORM 파라미터 바인딩. raw SQL 미사용 | 코드 레벨 |
 | Brute force 로그인 | Throttler 전역 + 로그인에 reCAPTCHA v3 | `auth.controller.ts` + `recaptcha.service.ts` |
 | API 남용 | 전 엔드포인트 Throttle (APP_GUARD) | `app.module.ts:141` |
 | CORS 우회 | 환경별 도메인 1개만 허용 (`*` 금지) | `main.ts` enableCors |
-| DB 직접 접근 | 방화벽: Azure 서비스만 허용. 개인 IP 사용 후 즉시 제거 | Azure DB 방화벽 |
+| DB 직접 접근 | Cloud SQL Auth Proxy(IAM) 강제. Public IP allowlist 폐기, 메인 IP `/32`만 잔존 | Cloud SQL Auth Proxy |
 | XSS | CSP(`script-src 'self'`) + HttpOnly Cookie + `dangerouslySetInnerHTML` 0건 | helmet + next.config.ts |
 | CSRF | SameSite=Strict + CORS 단일 origin (CSRF 토큰은 TODO) | cookieOptions |
 | 클릭재킹 | X-Frame-Options: DENY | helmet + next.config.ts |
@@ -261,15 +275,15 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 | 세션 탈취 (XSS) | HttpOnly (JS 접근 불가) + Access 15분 단기 | cookieOptions |
 | 에피소드 크롤링 | 에피소드 상태값(nonPublic) + Throttler + Cloudflare Bot | `content.controller.ts` + DB |
 | 내부 필드 노출 | API 응답에서 rawMd, workId, authorId 제거 완료 | `content.controller.ts`, `theme.controller.ts` |
-| 이미지 저장소 탈취 | ACR 인증 필수 (GitHub Secrets) | Azure ACR |
+| 이미지 저장소 탈취 | Artifact Registry IAM 인증 필수 (SA) | GCP Artifact Registry |
 | 결제 웹훅 위조 | HMAC 서명 검증 + tradeNo 멱등성 | `polar.adapter.ts` |
 | BFF 우회 | Next.js `/api/[...path]/route.ts` + 서버에서 CORS 차단 | BFF 프록시 |
 
-### DB 방화벽 운영 규칙
+### DB 접근 운영 규칙 (Cloud SQL Auth Proxy)
 
-- 평상시: AllowAzureServices(0.0.0.0)만 허용
-- 로컬 DB 직접 접속 필요 시: 개인 IP 방화벽 추가 → 작업 완료 → **즉시 제거**
-- 방화벽 규칙 추가/제거 시 INFRASTRUCTURE.md §9 업데이트
+- 평상시: Public IP allowlist 폐기 — Cloud SQL Auth Proxy(IAM 인증) 경유만. 메인 IP `221.150.30.109/32`만 allowlist 잔존(수동 운영용).
+- 로컬 DB 직접 접속 필요 시: Auth Proxy spawn → 작업 완료 → kill (또는 임시 IP allowlist 추가 후 즉시 제거)
+- allowlist/Auth Proxy 운영 변경 시 INFRASTRUCTURE.md §9 업데이트
 
 ### 비용 폭탄 방지 (보안 관점)
 
@@ -309,7 +323,7 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 |------|------|
 | Rate Limiting IP 기반 강화 | 현재 단순 Throttle → 프록시 뒤 IP 식별 (X-Forwarded-For) 추가 |
 | 크레딧 동시성 | optimistic locking 적용 (동시 좋아요/크레딧 차감 경합 방지) |
-| WAF | Cloudflare WAF 유료 플랜 또는 Azure WAF 검토 |
+| WAF | Cloudflare WAF 유료 플랜 또는 GCP Cloud Armor 검토 |
 
 ### 이미 적용된 항목 (2026-04-17 실측 확인)
 
@@ -325,7 +339,7 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 | NEXT_PUBLIC_ 최소화 | ✅ | API URL 클라이언트 미노출 |
 | Cloudflare DDoS 방어 + Proxy | ✅ | Cloudflare 무료 플랜 |
 | Rate Limiting 전 엔드포인트 | ✅ | ThrottlerGuard APP_GUARD |
-| DB 방화벽 Azure 서비스만 허용 | ✅ | DB firewall rules |
+| DB 접근 Cloud SQL Auth Proxy 강제 | ✅ | Public IP allowlist 폐기, 메인 IP `/32`만 잔존 |
 | helmet (HTTP 헤더) | ✅ | main.ts `app.use(helmet({...}))` — 2026-04-16 커스터마이징 |
 | CSP 헤더 (서버 + 웹) | ✅ | helmet CSP + next.config.ts CSP |
 | HSTS 2년 + preload | ✅ | `max-age=63072000; includeSubDomains; preload` |
@@ -345,7 +359,7 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 
 ## 7. 참조 문서
 
-- `INFRASTRUCTURE.md` — Azure 리소스 구성
+- `INFRASTRUCTURE.md` — GCP 인프라 구성 (Cloud Run + Cloud SQL + Artifact Registry + GCS)
 - `docs/environments.md` — 환경별 설정 (정본)
 - 루트 `CLAUDE.md` §11 — 전수검사 체크리스트
 - `.claude/scripts/sensor-security-gate.sh` — 자동화 보안 게이트

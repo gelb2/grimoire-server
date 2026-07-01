@@ -34,10 +34,11 @@ export class ResetMonthlyPoolJob {
   ) {}
 
   /**
-   * cron 진입점 — 매일 새벽 4시 ('0 0 4 * * *').
+   * cron 진입점 — 매일 새벽 4시 KST ('0 0 4 * * *', timeZone: 'Asia/Seoul').
    * 매일 실행하되 poolResetAt 경과한 멤버십만 리셋 — 가입일 분산 대응(월초 일괄 X).
+   * PAY-S7: Cloud Run은 UTC 기준이라 timeZone 미명시 시 KST 새벽 4시가 9시간 어긋남 → Asia/Seoul 명시.
    */
-  @Cron('0 0 4 * * *')
+  @Cron('0 0 4 * * *', { timeZone: 'Asia/Seoul' })
   async resetExpiredPools(): Promise<void> {
     if (process.env.MONTHLY_POOL_RESET_DISABLED === '1') {
       this.logger.warn(

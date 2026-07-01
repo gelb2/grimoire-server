@@ -38,12 +38,23 @@ export interface PaymentRepositoryPort {
    * 어댑터와 동일 회계(상계분은 캐시 적립 제외). 구 `CreditLog` 박제는 하지 않는다
    * (CC-1이 적립을 `CreditLedger`로 완전 이행 — 계획 S0 C1b→C3d 분기).
    *
+   * --- 동시성 패자 식별 (R1-notify 잔여갭, 2026-06-28) ---
+   * status CAS(`updateMany WHERE status='pending'`) count===0 인 동시성 패자는 적립/잔액
+   * 갱신을 일절 하지 않고 멱등 no-op 으로 반환한다. 호출처(payment.usecase success 분기 /
+   * reconciliation S1 boost)가 이 패자를 명시적으로 분기해 충전 성공 알림(notifyChargeSuccess)·
+   * 이중집계(boost AuditLog/boostCount)를 막을 수 있도록 `alreadyCompleted` 플래그를 반환한다.
+   *   - alreadyCompleted=false → 승자: 정상 적립 완료 (settledDeficit/chargedPoints 유의미).
+   *   - alreadyCompleted=true  → 패자: 적립 0건 멱등 no-op (settledDeficit=0, chargedPoints=0).
+   * (도메인상 승자는 totalPoints>0 보장으로 settledDeficit·chargedPoints 가 동시에 0 일 수
+   *  없으나, 암묵 {0,0} 신호 의존을 피하고 향후 적립 로직 변경에도 분기가 깨지지 않도록 명시 플래그.)
+   *
    * @param paymentId 완료 처리할 Payment id
    * @param authorId 적립 대상 Author id
    * @param totalPoints 충전 패키지 총 포인트 (기본 + 보너스 — §8-5, pt 단위. 양수)
    * @param productId 상품 id (감사 reason 박제용)
    * @param relatedId Payment id 약결합 (`CreditLedger.relatedId` — 보통 paymentId 와 동일)
-   * @returns settledDeficit(상계된 외상 pt), chargedPoints(실제 적립된 충전 pt)
+   * @returns settledDeficit(상계된 외상 pt), chargedPoints(실제 적립된 충전 pt),
+   *          alreadyCompleted(동시성 패자 = 이미 다른 트랜잭션이 완료시킴 → 멱등 no-op)
    */
   completePaymentWithPoints(
     paymentId: string,
@@ -51,7 +62,7 @@ export interface PaymentRepositoryPort {
     totalPoints: number,
     productId: string,
     relatedId?: string,
-  ): Promise<{ settledDeficit: number; chargedPoints: number }>
+  ): Promise<{ settledDeficit: number; chargedPoints: number; alreadyCompleted: boolean }>
 
   /** 결제 실패/취소 상태 업데이트 */
   updateStatus(paymentId: string, status: string): Promise<void>

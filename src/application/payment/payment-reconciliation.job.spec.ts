@@ -39,7 +39,8 @@ describe('PaymentReconciliationJob', () => {
       // CC-2a — webhook 누락 보정은 신 충전 적립 트랜잭션 사용 (구 completePaymentAtomically 제거 — CC-4 P1)
       completePaymentWithPoints: jest
         .fn()
-        .mockResolvedValue({ settledDeficit: 0, chargedPoints: 25000 }),
+        // 기본 = 승자(alreadyCompleted:false). 동시성 패자 case 는 개별 it 에서 덮어쓴다.
+        .mockResolvedValue({ settledDeficit: 0, chargedPoints: 25000, alreadyCompleted: false }),
       // CC-2b — 환불 신 경로 mock (구 refundPaymentAtomically 제거 — CC-4 P1)
       refundPaymentWithPoints: jest.fn(),
       updateStatus: jest.fn(),
@@ -151,6 +152,57 @@ describe('PaymentReconciliationJob', () => {
         processedCount: 1,
         mismatchCount: 0,
         expireCount: 0,
+      }),
+    )
+  })
+
+  // R1-notify 잔여갭 (2026-06-28) — S1 boost 동시성 패자.
+  // S1 탐지(PG=succeeded·DB=pending)와 boost 사이에 webhook 승자가 완료시키면
+  // completePaymentWithPoints 가 alreadyCompleted:true 멱등 no-op 반환 → reconciliation_boost
+  // AuditLog/boostCount 이중집계를 막아야 한다.
+  it('S1 boost 동시성 패자(alreadyCompleted=true) → reconciliation_boost AuditLog 미박제 + boostCount 증가 0 (이중집계 차단)', async () => {
+    mockPaymentGateway.listRecentCheckouts.mockResolvedValue([
+      {
+        externalTransactionId: 'checkout-dup',
+        status: 'succeeded',
+        amount: 3000,
+        createdAt: new Date('2026-05-03T12:00:00Z'),
+      },
+    ])
+    mockPaymentRepo.findByExternalTransactionId.mockResolvedValue({
+      id: 'payment-dup',
+      authorId: 'author-1',
+      productId: 'credit-starter',
+      amount: 3000,
+      points: 25000,
+      status: 'pending', // 탐지 시점에는 pending — boost 진입
+      externalTransactionId: 'checkout-dup',
+      createdAt: new Date('2026-05-03T11:00:00Z'),
+      completedAt: null,
+    })
+    // boost 진입 후 CAS 패자 — webhook 승자가 이미 완료시킨 상태
+    mockPaymentRepo.completePaymentWithPoints.mockResolvedValueOnce({
+      settledDeficit: 0,
+      chargedPoints: 0,
+      alreadyCompleted: true,
+    })
+
+    await job.run()
+
+    // completePaymentWithPoints 는 1회 시도됨 (CAS 가 내부에서 패자 판별)
+    expect(mockPaymentRepo.completePaymentWithPoints).toHaveBeenCalledTimes(1)
+    // 핵심 ① — reconciliation_boost AuditLog 미박제 (보정 안 했는데 보정함 = 이중집계 차단)
+    expect(mockAuditLog.log).not.toHaveBeenCalledWith(
+      'system_reconciliation',
+      'reconciliation_boost',
+      expect.anything(),
+      expect.anything(),
+    )
+    // 핵심 ② — boostCount 증가 0 (패자는 카운트하지 않음)
+    expect(mockCheckpointRepo.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        boostCount: 0,
+        processedCount: 1,
       }),
     )
   })
@@ -397,5 +449,144 @@ describe('PaymentReconciliationJob', () => {
         process.env.RECONCILIATION_DISABLED = original
       }
     }
+  })
+
+  // ============================================================================
+  // R2 (2026-06-27) — PG↔DB amount mismatch 탐지 안전망.
+  // 진단: reports/PAYMENT_DATA_PROCESSING_AUDIT_20260627 §2 #2 (R2).
+  // status 조합만 비교하면 R1류 이중적립(동일 status, 잔액만 2배)을 사후 탐지하지 못한다.
+  // → PG↔DB amount 불일치 시 AuditLog reconciliation_amount_mismatch 박제 (자동 환수 0건).
+  // ============================================================================
+  describe('R2 — PG↔DB amount mismatch 탐지', () => {
+    it('amount 불일치 + 정합 status(succeeded/completed) → reconciliation_amount_mismatch 1회 (보정 0건)', async () => {
+      mockPaymentGateway.listRecentCheckouts.mockResolvedValue([
+        {
+          externalTransactionId: 'checkout-amt',
+          status: 'succeeded',
+          amount: 6000, // PG 6,000
+          createdAt: new Date('2026-05-03T12:00:00Z'),
+        },
+      ])
+      mockPaymentRepo.findByExternalTransactionId.mockResolvedValue({
+        id: 'payment-amt',
+        authorId: 'author-amt',
+        productId: 'credit-starter',
+        amount: 3000, // DB 3,000 — 불일치 (R1류 흔적/금액 괴리)
+        points: 25000,
+        status: 'completed', // status 는 정합 → 기존 S1/S2 분기 미발동
+        externalTransactionId: 'checkout-amt',
+        createdAt: new Date('2026-05-03T11:00:00Z'),
+        completedAt: new Date('2026-05-03T11:00:30Z'),
+      })
+
+      await job.run()
+
+      // amount mismatch AuditLog 1회 — pg/db 금액 + requiresManualReview 박제
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'system_reconciliation',
+        'reconciliation_amount_mismatch',
+        'payment-amt',
+        expect.objectContaining({
+          reason: 'pg_db_amount_mismatch',
+          pgAmount: 6000,
+          dbAmount: 3000,
+          requiresManualReview: true,
+          authorId: 'author-amt',
+        }),
+      )
+      // 자동 보정 0건 — 환수/적립/만료 미발동 (탐지·기록만)
+      expect(mockPaymentRepo.completePaymentWithPoints).not.toHaveBeenCalled()
+      expect(mockPaymentRepo.refundPaymentWithPoints).not.toHaveBeenCalled()
+      expect(mockPaymentRepo.expirePayment).not.toHaveBeenCalled()
+      // checkpoint mismatchCount 에 합산 박제 (status mismatch 0 + amount mismatch 1)
+      expect(mockCheckpointRepo.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          processedCount: 1,
+          mismatchCount: 1,
+          boostCount: 0,
+          expireCount: 0,
+        }),
+      )
+    })
+
+    it('amount 불일치 + S1(succeeded/pending) → amount_mismatch 기록 + boost 도 정상 진행 (탐지·보정 독립)', async () => {
+      mockPaymentGateway.listRecentCheckouts.mockResolvedValue([
+        {
+          externalTransactionId: 'checkout-both',
+          status: 'succeeded',
+          amount: 9999, // PG 금액이 DB 와 다름
+          createdAt: new Date('2026-05-03T12:00:00Z'),
+        },
+      ])
+      mockPaymentRepo.findByExternalTransactionId.mockResolvedValue({
+        id: 'payment-both',
+        authorId: 'author-both',
+        productId: 'credit-starter',
+        amount: 3000, // 불일치
+        points: 25000,
+        status: 'pending', // S1 boost 대상
+        externalTransactionId: 'checkout-both',
+        createdAt: new Date('2026-05-03T11:00:00Z'),
+        completedAt: null,
+      })
+
+      await job.run()
+
+      // amount mismatch 기록 (continue 하지 않으므로 boost 분기도 통과)
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'system_reconciliation',
+        'reconciliation_amount_mismatch',
+        'payment-both',
+        expect.objectContaining({ reason: 'pg_db_amount_mismatch' }),
+      )
+      // boost 도 정상 — 적립은 DB payment.points 기준이라 PG amount 괴리와 무관하게 안전
+      expect(mockPaymentRepo.completePaymentWithPoints).toHaveBeenCalledTimes(1)
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'system_reconciliation',
+        'reconciliation_boost',
+        'payment-both',
+        expect.objectContaining({ reason: 'webhook_missed' }),
+      )
+      // mismatchCount(amount 1) + boostCount 1 합산 박제
+      expect(mockCheckpointRepo.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mismatchCount: 1,
+          boostCount: 1,
+        }),
+      )
+    })
+
+    it('amount 일치 시 amount_mismatch 0건 (회귀 — 기존 S4 정합 경로 영향 없음)', async () => {
+      mockPaymentGateway.listRecentCheckouts.mockResolvedValue([
+        {
+          externalTransactionId: 'checkout-ok',
+          status: 'succeeded',
+          amount: 2000,
+          createdAt: new Date('2026-05-03T12:00:00Z'),
+        },
+      ])
+      mockPaymentRepo.findByExternalTransactionId.mockResolvedValue({
+        id: 'payment-ok',
+        authorId: 'author-ok',
+        productId: 'credit-starter',
+        amount: 2000, // 일치
+        points: 25000,
+        status: 'completed',
+        externalTransactionId: 'checkout-ok',
+        createdAt: new Date('2026-05-03T11:00:00Z'),
+        completedAt: new Date('2026-05-03T11:00:30Z'),
+      })
+
+      await job.run()
+
+      // amount mismatch AuditLog 호출 0건
+      const amountMismatchCalls = mockAuditLog.log.mock.calls.filter(
+        (c) => c[1] === 'reconciliation_amount_mismatch',
+      )
+      expect(amountMismatchCalls).toHaveLength(0)
+      expect(mockCheckpointRepo.update).toHaveBeenCalledWith(
+        expect.objectContaining({ mismatchCount: 0 }),
+      )
+    })
   })
 })

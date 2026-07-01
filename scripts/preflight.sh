@@ -2,10 +2,14 @@
 # preflight.sh — 배포 전 전수검사 (grimoire-server)
 # 사용: ./scripts/preflight.sh <env>
 #   <env>: dev | prod
-# 정본: docs/DEPLOY.md §3 preflight 전수검사 항목
+# 정본: docs/DEPLOY.md §4 preflight 전수검사 항목
 #
 # 모든 검사 통과 → exit 0
 # 하나라도 실패 → 검사 목록 출력 후 exit 1
+#
+# 2026-06-10 GCP 전환: Azure(az account/acr/containerapp) → GCP(gcloud auth/config/
+#   Artifact Registry/Cloud Run/Cloud SQL) 검증. 모든 gcloud 측정은 --project 명시 강제
+#   (로컬 gcloud 전역 default 가 pr-letter-addr/ne3 일 수 있음 → 무지정은 거짓 PASS/FAIL).
 
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,10 +23,6 @@ validate_env "$ENV"
 CHECK_FAILED=0
 CHECK_WARNS=0
 
-check_pass() { ok "$*"; }
-check_fail() { fail_check() { printf "%s[FAIL]%s %s\n" "$C_RED" "$C_OFF" "$*" >&2; }; fail_check "$@"; CHECK_FAILED=$((CHECK_FAILED+1)); }
-check_warn() { warn "$*"; CHECK_WARNS=$((CHECK_WARNS+1)); }
-
 # 편의 래퍼
 _fail() { printf "%s[FAIL]%s %s\n" "$C_RED" "$C_OFF" "$*" >&2; CHECK_FAILED=$((CHECK_FAILED+1)); }
 _pass() { printf "%s[PASS]%s %s\n" "$C_GREEN" "$C_OFF" "$*"; }
@@ -31,8 +31,10 @@ _warn() { printf "%s[WARN]%s %s\n" "$C_YELLOW" "$C_OFF" "$*" >&2; CHECK_WARNS=$(
 printf "\n%s╔══ grimoire-server preflight [%s] ══╗%s\n" "$C_BOLD" "$ENV" "$C_OFF"
 print_matrix "$ENV"
 
+APP_NAME=$(env_to_app_name "$ENV")
+
 # ─────────────────────────────────────────────────────────────
-# 1. git 상태
+# 1/8. git 상태
 # ─────────────────────────────────────────────────────────────
 step "1/8: git 상태"
 EXPECTED_BRANCH=$(env_to_branch "$ENV")
@@ -63,52 +65,90 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 2. Azure CLI 상태
+# 2/8. gcloud CLI 상태 (auth + project)
+# 모든 gcloud 측정은 --project 명시 강제 (전역 default 가 pr-letter-addr 일 수 있음).
 # ─────────────────────────────────────────────────────────────
-step "2/8: Azure CLI 로그인 상태"
-if ! az account show -o json >/dev/null 2>&1; then
-  _fail "Azure CLI 로그인되어 있지 않음. 'az login' 실행 필요."
+step "2/8: gcloud CLI 로그인 + 프로젝트 상태"
+ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null || echo "")
+if [ -z "$ACTIVE_ACCOUNT" ]; then
+  _fail "gcloud 활성 계정 없음. 'gcloud auth login' 실행 필요."
+elif [ "$ACTIVE_ACCOUNT" != "$EXPECTED_GCP_ACCOUNT" ]; then
+  _warn "gcloud 활성 계정 '$ACTIVE_ACCOUNT' ≠ 기대 '$EXPECTED_GCP_ACCOUNT' (배포는 --project 명시로 진행)"
 else
-  AZ_USER=$(az account show --query "user.name" -o tsv 2>/dev/null)
-  if [ "$AZ_USER" != "$EXPECTED_AZURE_USER" ]; then
-    _fail "Azure 로그인 사용자 '$AZ_USER' ≠ 기대 '$EXPECTED_AZURE_USER'"
+  _pass "gcloud 활성 계정: $ACTIVE_ACCOUNT"
+fi
+
+# 프로젝트 접근 가능 여부 (전역 default 와 무관하게 --project 명시로 직접 확인)
+if gcloud projects describe "$GCP_PROJECT_ID" --format="value(projectId)" >/dev/null 2>&1; then
+  _pass "프로젝트 접근 가능: $GCP_PROJECT_ID (project number $GCP_PROJECT_NUMBER)"
+else
+  _fail "프로젝트 '$GCP_PROJECT_ID' 접근 불가 (권한 또는 로그인 확인 필요)"
+fi
+
+# 전역 default 가 다른 프로젝트면 안내 (FAIL 아님 — 스크립트는 항상 --project 명시)
+GLOBAL_PROJECT=$(gcloud config get-value project 2>/dev/null || echo "")
+if [ "$GLOBAL_PROJECT" != "$GCP_PROJECT_ID" ]; then
+  _warn "gcloud 전역 default project='$GLOBAL_PROJECT' ≠ '$GCP_PROJECT_ID' (스크립트는 --project 명시로 안전. 'gcloud config set project' 불필요)"
+fi
+
+# ─────────────────────────────────────────────────────────────
+# 3/8. Artifact Registry 접근 (repo 존재 + Docker 인증)
+# ─────────────────────────────────────────────────────────────
+step "3/8: Artifact Registry 접근"
+if gcloud artifacts repositories describe "$ARTIFACT_REPO" \
+    --location "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+    --format="value(name)" >/dev/null 2>&1; then
+  _pass "Artifact Registry repo '$ARTIFACT_REPO' 존재 ($GCP_REGION)"
+else
+  _fail "Artifact Registry repo '$ARTIFACT_REPO' 없음 ($GCP_PROJECT_ID/$GCP_REGION). docs/DEPLOY.md §1 확인."
+fi
+
+# Docker credential helper 등록 여부 (config.json)
+if grep -q "$ARTIFACT_REGISTRY_HOST" "$HOME/.docker/config.json" 2>/dev/null; then
+  _pass "Docker credential helper 등록됨 ($ARTIFACT_REGISTRY_HOST)"
+else
+  _warn "Docker credential helper 미등록. 'gcloud auth configure-docker $ARTIFACT_REGISTRY_HOST' 권장 (배포 시 자동 시도)."
+fi
+
+# ─────────────────────────────────────────────────────────────
+# 4/8. Cloud Run 서비스 존재 + 프로젝트/리전 일치
+# ─────────────────────────────────────────────────────────────
+step "4/8: Cloud Run 서비스 존재 확인"
+SVC_URL=$(gcloud run services describe "$APP_NAME" \
+  --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+  --format="value(status.url)" 2>/dev/null || echo "")
+if [ -z "$SVC_URL" ]; then
+  _fail "Cloud Run 서비스 '$APP_NAME' 이 '$GCP_PROJECT_ID/$GCP_REGION'에 없음"
+else
+  EXPECTED_RUN_URL=$(env_to_run_url "$ENV")
+  if [ "$SVC_URL" != "$EXPECTED_RUN_URL" ]; then
+    _warn "Cloud Run URL '$SVC_URL' ≠ 매트릭스 '$EXPECTED_RUN_URL' (도메인/리비전 차이 가능)"
   else
-    _pass "Azure 로그인: $AZ_USER"
+    _pass "Cloud Run 서비스 '$APP_NAME' (URL: $SVC_URL)"
   fi
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 3. ACR 접근
+# 5/8. Cloud SQL 인스턴스 존재
 # ─────────────────────────────────────────────────────────────
-step "3/8: ACR 접근"
-if ! az acr show --name "$ACR_NAME" -o none 2>/dev/null; then
-  _fail "ACR '$ACR_NAME' 접근 불가 (권한 또는 존재 확인 필요)"
+step "5/8: Cloud SQL 인스턴스 존재 확인"
+CLOUDSQL_INSTANCE=$(env_to_cloudsql_instance "$ENV")
+# connection name 의 마지막 토큰이 인스턴스 ID (project:region:INSTANCE)
+SQL_INSTANCE_ID="${CLOUDSQL_INSTANCE##*:}"
+SQL_STATE=$(gcloud sql instances describe "$SQL_INSTANCE_ID" \
+  --project "$GCP_PROJECT_ID" --format="value(state)" 2>/dev/null || echo "")
+if [ -z "$SQL_STATE" ]; then
+  _fail "Cloud SQL 인스턴스 '$SQL_INSTANCE_ID' 없음 ($GCP_PROJECT_ID)"
+elif [ "$SQL_STATE" != "RUNNABLE" ]; then
+  _warn "Cloud SQL 인스턴스 '$SQL_INSTANCE_ID' 상태=$SQL_STATE (RUNNABLE 아님)"
 else
-  _pass "ACR '$ACR_NAME' 접근 가능"
+  _pass "Cloud SQL 인스턴스 '$SQL_INSTANCE_ID' RUNNABLE"
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 4. Container App 존재 + 리소스그룹 일치
+# 6/8. Docker daemon
 # ─────────────────────────────────────────────────────────────
-step "4/8: Container App 존재 확인"
-APP_NAME=$(env_to_app_name "$ENV")
-APP_INFO=$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" -o json 2>/dev/null || echo "")
-if [ -z "$APP_INFO" ]; then
-  _fail "Container App '$APP_NAME' 이 '$RESOURCE_GROUP'에 없음"
-else
-  ACTUAL_FQDN=$(echo "$APP_INFO" | python3 -c "import sys,json;print(json.load(sys.stdin)['properties']['configuration']['ingress']['fqdn'])" 2>/dev/null || echo "unknown")
-  EXPECTED_FQDN=$(env_to_fqdn "$ENV")
-  if [ "$ACTUAL_FQDN" != "$EXPECTED_FQDN" ]; then
-    _fail "FQDN 불일치: 실제 '$ACTUAL_FQDN' ≠ 기대 '$EXPECTED_FQDN'"
-  else
-    _pass "Container App '$APP_NAME' (FQDN: $EXPECTED_FQDN)"
-  fi
-fi
-
-# ─────────────────────────────────────────────────────────────
-# 5. Docker daemon
-# ─────────────────────────────────────────────────────────────
-step "5/8: Docker daemon"
+step "6/8: Docker daemon"
 if ! docker info >/dev/null 2>&1; then
   _fail "Docker daemon 미실행. Docker Desktop을 실행하세요."
 else
@@ -122,38 +162,46 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────
-# 6. 필수 환경변수 존재 (Container App)
+# 7/8. 필수 환경변수 + Secret 바인딩 존재 (Cloud Run) + CORS/APP_ENV 검증
+# 값은 출력하지 않음 — 존재 여부 + 정책 정합만.
 # ─────────────────────────────────────────────────────────────
-step "6/8: Container App 필수 환경변수 존재 확인"
-REQUIRED_KEYS=("DATABASE_URL" "JWT_SECRET" "CORS_ORIGIN" "APP_ENV" "POLAR_ACCESS_TOKEN" "POLAR_WEBHOOK_SECRET" "ANTHROPIC_API_KEY" "OPENAI_API_KEY" "AZURE_STORAGE_ACCOUNT_NAME" "AZURE_STORAGE_ACCOUNT_KEY")
-ENV_KEYS=$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].env[].name" -o tsv 2>/dev/null || echo "")
+step "7/8: Cloud Run 환경변수 / Secret 바인딩 / CORS / APP_ENV"
+# Cloud Run revision 템플릿의 env 목록 (plain name + secretRef name 모두 포함)
+ENV_KEYS=$(gcloud run services describe "$APP_NAME" \
+  --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+  --format="value(spec.template.spec.containers[0].env[].name)" 2>/dev/null | tr ';' '\n' || echo "")
+
+# 필수 키 (plain + secret 혼합) — docs/DEPLOY.md §4.6
+REQUIRED_KEYS=("DATABASE_URL" "JWT_SECRET" "CORS_ORIGIN" "APP_ENV" "POLAR_ACCESS_TOKEN" "POLAR_WEBHOOK_SECRET" "ANTHROPIC_API_KEY" "OPENAI_API_KEY")
 for key in "${REQUIRED_KEYS[@]}"; do
-  if echo "$ENV_KEYS" | grep -qw "$key"; then
+  if printf "%s\n" "$ENV_KEYS" | grep -qx "$key"; then
     _pass "$key 설정됨"
   else
-    _fail "$key 누락. az containerapp update --set-env-vars 로 설정 필요."
+    _fail "$key 누락. gcloud run services update --update-env-vars / --update-secrets 로 설정 필요."
   fi
 done
 
-# ─────────────────────────────────────────────────────────────
-# 7. CORS 정책 환경별 검증
-# ─────────────────────────────────────────────────────────────
-step "7/8: APP_ENV + CORS_ORIGIN 환경별 검증"
-# APP_ENV 값 검증 (dev → development, prod → production) — 2026-04-19 inhouse 제거
-ACTUAL_APP_ENV=$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].env[?name=='APP_ENV'].value" -o tsv 2>/dev/null || echo "")
+# APP_ENV 값 검증 (dev → development, prod → production)
+ACTUAL_APP_ENV=$(gcloud run services describe "$APP_NAME" \
+  --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+  --format="value(spec.template.spec.containers[0].env)" 2>/dev/null \
+  | tr ';' '\n' | grep -E "^APP_ENV=" | head -1 | cut -d= -f2- || echo "")
 EXPECTED_APP_ENV="$ENV"
 if [ "$ENV" = "dev" ]; then EXPECTED_APP_ENV="development"; fi
 if [ "$ENV" = "prod" ]; then EXPECTED_APP_ENV="production"; fi
 if [ -z "$ACTUAL_APP_ENV" ]; then
-  _fail "APP_ENV 누락. az containerapp update --set-env-vars APP_ENV=${EXPECTED_APP_ENV} 로 설정 필요."
+  _warn "APP_ENV 값 조회 불가 (Secret 바인딩이면 정상 — plain env 만 값 노출)"
 elif [ "$ACTUAL_APP_ENV" != "$EXPECTED_APP_ENV" ]; then
   _fail "APP_ENV 불일치: 실제 '$ACTUAL_APP_ENV' ≠ 기대 '$EXPECTED_APP_ENV'"
 else
   _pass "APP_ENV: $ACTUAL_APP_ENV"
 fi
 
-
-ACTUAL_CORS=$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].env[?name=='CORS_ORIGIN'].value" -o tsv 2>/dev/null || echo "")
+# CORS_ORIGIN 환경별 검증
+ACTUAL_CORS=$(gcloud run services describe "$APP_NAME" \
+  --region "$GCP_REGION" --project "$GCP_PROJECT_ID" \
+  --format="value(spec.template.spec.containers[0].env)" 2>/dev/null \
+  | tr ';' '\n' | grep -E "^CORS_ORIGIN=" | head -1 | cut -d= -f2- || echo "")
 case "$ENV" in
   dev)
     if [ "$ACTUAL_CORS" = "*" ]; then
@@ -174,7 +222,7 @@ case "$ENV" in
 esac
 
 # ─────────────────────────────────────────────────────────────
-# 8. prod 추가 검증 (interactive)
+# 8/8. prod 추가 검증 (interactive)
 # ─────────────────────────────────────────────────────────────
 step "8/8: prod 전용 검증"
 if [ "$ENV" = "prod" ]; then

@@ -3,11 +3,12 @@ import * as path from 'path'
 import {
   Controller, Get, Post, Patch, Delete, Put, Body, Param,
   UseGuards, UseInterceptors, UploadedFile, Req, BadRequestException,
+  Inject,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { Throttle } from '@nestjs/throttler'
 import { WorkManagementUseCase } from '@application/work/work-management.usecase'
-import { BlobStorageService } from '@infrastructure/storage/blob-storage.service'
+import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
 import { CreateWorkDto, UpdateWorkDto, CreateEpisodeDto, UpdateEpisodeStatusDto, CreateShareLinkDto } from '@adapter/inbound/http/dto/work.dto'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 
@@ -19,7 +20,7 @@ const MAX_IMAGE_SIZE = 5 * 1024 * 1024  // 5MB
 export class WorkManagementController {
   constructor(
     private readonly workManagementUseCase: WorkManagementUseCase,
-    private readonly blobStorage: BlobStorageService,
+    @Inject('BlobStoragePort') private readonly blobStorage: BlobStoragePort,
   ) {}
 
   @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
@@ -64,7 +65,7 @@ export class WorkManagementController {
   )
   async uploadCover(@Req() req: AuthenticatedRequest, @Param('id') id: string, @UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('이미지 파일이 첨부되지 않았습니다')
-    if (!this.blobStorage.isEnabled) throw new BadRequestException('커버 이미지 기능이 아직 활성화되지 않았습니다')
+    if (!this.blobStorage.isEnabled()) throw new BadRequestException('커버 이미지 기능이 아직 활성화되지 않았습니다')
 
     return this.workManagementUseCase.uploadCoverImage(req.user.sub, id, file.buffer, file.originalname, file.mimetype)
   }

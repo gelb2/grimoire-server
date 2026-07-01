@@ -18,11 +18,18 @@ import { AuditLogService } from '@application/admin/audit-log.service'
  * - Polar API rate limit 분당 500회 default 그룹 → 10분 cron 사용률 1% 미만, 안전 마진 100배+
  *
  * 4 시나리오:
- * - S1 PG=succeeded + DB=pending → completePaymentAtomically + AuditLog `reconciliation_boost`
+ * - S1 PG=succeeded + DB=pending → completePaymentWithPoints + AuditLog `reconciliation_boost`
  * - S2 PG=refunded + DB=completed → logger.warn + AuditLog `reconciliation_refund_mismatch` (실제 환수 0건, P1-1 위임)
  * - S3 PG=NotFound + DB=pending(24h 경과) → expirePayment + AuditLog `reconciliation_expire`
  * - S4 PG ↔ DB 정합 → skip
  *
+ * amount 안전망 (R2, 2026-06-27 — 진단 §2 #2):
+ * - status 조합만 비교하면 R1류 이중적립(같은 status, 잔액만 2배)을 사후에 탐지하지 못한다.
+ * - 매 PG↔DB 매칭 row 마다 `pgCheckout.amount` vs `dbPayment.amount` 를 비교 →
+ *   불일치 시 logger.warn + AuditLog `reconciliation_amount_mismatch` (탐지·기록만, 자동
+ *   환수 0건 — S2 와 동일 "기록 후 운영자 위임" 정책). 운영자가 R1류를 사후 인지 가능.
+ *
+
  * 동시 cron 차단:
  * - in-memory `isRunning` 플래그 + try-finally lock 해제
  * - replicas ≥2 시점에는 advisory_lock 보강 (PAY-P1)
@@ -75,6 +82,8 @@ export class PaymentReconciliationJob {
     let boostCount = 0
     let mismatchCount = 0
     let expireCount = 0
+    // R2 — PG↔DB 금액 불일치 탐지 건수 (status mismatch 와 별도 집계).
+    let amountMismatchCount = 0
     let errorMessage: string | null = null
     const startedAt = new Date()
 
@@ -124,10 +133,23 @@ export class PaymentReconciliationJob {
           continue
         }
 
+        // R2 안전망: PG↔DB 금액 정합성 검사 (status 분기와 독립).
+        // status 만 비교하면 R1류 이중적립(동일 status, 잔액만 2배)을 사후 탐지하지 못한다.
+        // 금액 불일치 시 탐지·기록만 (자동 환수 0건 — S2 와 동일 운영자 위임 정책).
+        // boost/mismatch 분기보다 먼저 검사해 매칭된 모든 row 에서 무결성 흔적을 박제.
+        if (pgCheckout.amount !== dbPayment.amount) {
+          await this.handleAmountMismatch(pgCheckout, dbPayment)
+          amountMismatchCount += 1
+          // continue 하지 않음 — 동일 row 가 status mismatch(S2)·boost(S1) 대상일 수 있어
+          // 기존 status 분기도 그대로 통과시킨다 (탐지는 누적, 보정 로직은 독립).
+        }
+
         // S1: PG=succeeded + DB=pending → boost
+        // R1-notify 잔여갭: 동시성 패자(이미 webhook 승자가 완료)면 handleBoost 가 false 반환
+        // → boostCount 증가 skip (이중집계 차단). 실 boost(승자)일 때만 카운트.
         if (pgCheckout.status === 'succeeded' && dbPayment.status === 'pending') {
-          await this.handleBoost(dbPayment)
-          boostCount += 1
+          const boosted = await this.handleBoost(dbPayment)
+          if (boosted) boostCount += 1
           continue
         }
 
@@ -161,7 +183,8 @@ export class PaymentReconciliationJob {
       }
 
       this.logger.log(
-        `PaymentReconciliationJob 완료 — processed=${processedCount} boost=${boostCount} mismatch=${mismatchCount} expire=${expireCount}`,
+        `PaymentReconciliationJob 완료 — processed=${processedCount} boost=${boostCount} ` +
+          `mismatch=${mismatchCount} amountMismatch=${amountMismatchCount} expire=${expireCount}`,
       )
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -174,7 +197,9 @@ export class PaymentReconciliationJob {
           lastRunAt: startedAt,
           processedCount,
           boostCount,
-          mismatchCount,
+          // R2 — 정합 이상 탐지 합산 (status refund mismatch + amount mismatch).
+          // 세부 구분은 AuditLog action 으로 조회 (port 주석 참조).
+          mismatchCount: mismatchCount + amountMismatchCount,
           expireCount,
           errorMessage,
         })
@@ -195,11 +220,18 @@ export class PaymentReconciliationJob {
    * 구 `completePaymentAtomically`(`Author.credits` Int)를 쓰면 보정된 충전이 신
    * 원장에 안 박혀 CRITICAL-2 충전분이 reconciliation 경로로 새어나간다 (진단 §1-A).
    * - AuditLog operator='system_reconciliation' action='reconciliation_boost'
+   *
+   * R1-notify 잔여갭 (2026-06-28): S1 탐지(PG=succeeded·DB=pending)와 본 boost 사이에
+   * 동시 webhook 승자가 pending→completed 를 전이시키면 `completePaymentWithPoints` 가
+   * 동시성 패자(`alreadyCompleted=true`)로 멱등 no-op 을 반환한다. 이때 `reconciliation_boost`
+   * AuditLog 를 박제하면 "보정 안 했는데 보정함"으로 이중집계되므로, 패자면 AuditLog·boostCount
+   * 증가를 건너뛴다. 반환값으로 실 boost 여부를 호출처(`boostCount`)에 알린다.
+   * @returns true = 실제 boost 수행(승자), false = 동시성 패자(이미 완료 — no-op)
    */
-  private async handleBoost(payment: PaymentRecord): Promise<void> {
+  private async handleBoost(payment: PaymentRecord): Promise<boolean> {
     try {
       // [CC-4 Phase 2 rename] payment.points = 충전 총 pt (구 컬럼명 credits)
-      const { settledDeficit, chargedPoints } =
+      const { settledDeficit, chargedPoints, alreadyCompleted } =
         await this.paymentRepo.completePaymentWithPoints(
           payment.id,
           payment.authorId,
@@ -207,6 +239,13 @@ export class PaymentReconciliationJob {
           payment.productId,
           payment.id,
         )
+      if (alreadyCompleted) {
+        // 동시성 패자 — webhook 승자가 이미 완료. AuditLog/boostCount 이중집계 차단.
+        this.logger.warn(
+          `[boost] paymentId=${payment.id} — 동시성 패자(이미 완료) → 보정 skip (멱등 no-op)`,
+        )
+        return false
+      }
       await this.auditLog.log(
         PaymentReconciliationJob.RECONCILIATION_OPERATOR,
         'reconciliation_boost',
@@ -225,6 +264,7 @@ export class PaymentReconciliationJob {
         `[boost] paymentId=${payment.id} totalPoints=${payment.points} ` +
           `charged=${chargedPoints} settledDeficit=${settledDeficit} authorId=${payment.authorId}`,
       )
+      return true
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       this.logger.error(`[boost] paymentId=${payment.id} 실패 — ${msg}`)
@@ -254,6 +294,39 @@ export class PaymentReconciliationJob {
         authorId: payment.authorId,
         // [CC-4 Phase 2 rename] audit meta 키도 points 로 통일 (운영 모니터링 정합)
         points: payment.points,
+      },
+    )
+  }
+
+  /**
+   * R2 amount mismatch — PG↔DB 금액 불일치: 데이터 무결성 이상 (탐지·기록만).
+   *
+   * R1류 이중적립(동일 status, 잔액만 2배)이나 PG/DB 금액 괴리를 운영자가 사후 인지하도록
+   * AuditLog 에 박제한다. S2 refund mismatch 와 동일한 "기록 후 운영자 위임" 정책 —
+   * 자동 환수/보정은 하지 않는다 (오탐 시 잘못된 환수를 막기 위함).
+   * - AuditLog operator='system_reconciliation' action='reconciliation_amount_mismatch'
+   */
+  private async handleAmountMismatch(
+    pgCheckout: NormalizedCheckout,
+    payment: PaymentRecord,
+  ): Promise<void> {
+    this.logger.warn(
+      `[amount_mismatch] paymentId=${payment.id} authorId=${payment.authorId} ` +
+        `pgAmount=${pgCheckout.amount} dbAmount=${payment.amount} ` +
+        `pgStatus=${pgCheckout.status} dbStatus=${payment.status} — 데이터 무결성 점검 필요 (R2)`,
+    )
+    await this.auditLog.log(
+      PaymentReconciliationJob.RECONCILIATION_OPERATOR,
+      'reconciliation_amount_mismatch',
+      payment.id,
+      {
+        reason: 'pg_db_amount_mismatch',
+        pgAmount: pgCheckout.amount,
+        dbAmount: payment.amount,
+        pgStatus: pgCheckout.status,
+        dbStatus: payment.status,
+        requiresManualReview: true,
+        authorId: payment.authorId,
       },
     )
   }

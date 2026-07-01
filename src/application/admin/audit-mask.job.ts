@@ -43,9 +43,10 @@ export class AuditMaskJob {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * cron 진입점 — 매일 새벽 3시 KST.
+   * cron 진입점 — 매일 새벽 3시 KST ('0 0 3 * * *', timeZone: 'Asia/Seoul').
+   * PAY-S7: Cloud Run은 UTC 기준이라 timeZone 미명시 시 KST 새벽 3시가 9시간 어긋남 → Asia/Seoul 명시.
    */
-  @Cron('0 0 3 * * *')
+  @Cron('0 0 3 * * *', { timeZone: 'Asia/Seoul' })
   async maskExpiredAuditRows(): Promise<void> {
     if (process.env.AUDIT_MASK_DISABLED === '1') {
       this.logger.warn('AUDIT_MASK_DISABLED=1 — audit-mask cron 비활성화 (skip)')
