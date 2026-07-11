@@ -199,16 +199,17 @@ export class ChargePointsUseCase {
    * 테마 1회 사전 차감 (§8-4 — 정액 590pt, 일일 무료 초과분).
    *
    * @param authorId 차감 대상
+   * @returns SpendResult — 환불 시 출처별 복원을 위해 spentBySource 를 호출자가 보유 (F-9, CC-1 §5-D).
    * @throws BadRequestException 잔액 부족
    */
-  async chargeTheme(authorId: string, relatedId?: string): Promise<void> {
+  async chargeTheme(authorId: string, relatedId?: string): Promise<SpendResult> {
     const balance = await this.ledger.getBalance(authorId)
     if (balance.available < THEME_POINT_COST) {
       throw new BadRequestException(
         `테마 생성은 ${THEME_POINT_COST} 포인트가 필요합니다. 포인트가 부족합니다.`,
       )
     }
-    await this.ledger.spend({
+    return this.ledger.spend({
       authorId,
       amount: THEME_POINT_COST,
       reason: 'theme_generate',
@@ -217,19 +218,44 @@ export class ChargePointsUseCase {
   }
 
   /**
-   * 테마 생성 실패 시 환불 — 차감 포인트(590pt)를 충전 출처로 적립.
+   * 테마 생성 실패 시 환불 — 차감 포인트(590pt)를 출처별로 정확히 복원 (F-9, 2026-07-11).
    *
-   * 크레딧 개편 CC-1 (2026-05-19) — 구 GenerateThemeUseCase 의 'theme_generate_refund'
-   * (Author.credits +1) 환불 동작 보존. refundAnalysis 와 동일 패턴
-   * (project_analysis_refund_gap 정합 — 사전 차감 실패 시 출처 charged 복원).
+   * 크레딧 개편 CC-1 (2026-05-19) — 구 GenerateThemeUseCase 의 'theme_generate_refund' 보존.
+   * 구 구현은 chargeTheme 이 void 라 spentBySource 미보존 → 항상 source='charged' 복원해
+   * subscription/free/gift 차감분이 충전으로 둔갑(§0 COGS/CAC 회계 왜곡 + 만료 정책 불일치).
+   * refundAnalysis §5-D 와 동일 패턴 — chargeTheme 의 SpendResult.spentBySource 를 받아 복원.
+   *
+   * @param spentBySource chargeTheme 의 SpendResult.spentBySource.
+   *        미전달 시(구 호출 호환) 전액 charged 복원으로 폴백.
    */
-  async refundTheme(authorId: string, relatedId?: string): Promise<void> {
-    await this.ledger.earn({
-      authorId,
-      source: 'charged',
-      amount: THEME_POINT_COST,
-      reason: 'theme_generate_refund',
-      relatedId,
-    })
+  async refundTheme(
+    authorId: string,
+    relatedId?: string,
+    spentBySource?: Record<CreditSource, number>,
+  ): Promise<void> {
+    // spentBySource 미전달 → 구 동작 폴백 (전액 charged)
+    if (!spentBySource) {
+      await this.ledger.earn({
+        authorId,
+        source: 'charged',
+        amount: THEME_POINT_COST,
+        reason: 'theme_generate_refund',
+        relatedId,
+      })
+      return
+    }
+    // 출처별 복원 — 차감된 출처에 같은 금액을 되돌린다 (0 인 출처는 skip)
+    for (const source of CREDIT_CONSUMPTION_ORDER) {
+      const amount = spentBySource[source] ?? 0
+      if (amount > 0) {
+        await this.ledger.earn({
+          authorId,
+          source,
+          amount,
+          reason: 'theme_generate_refund',
+          relatedId,
+        })
+      }
+    }
   }
 }

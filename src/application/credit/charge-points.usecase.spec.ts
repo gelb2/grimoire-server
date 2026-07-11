@@ -273,7 +273,7 @@ describe('ChargePointsUseCase', () => {
 
   // 크레딧 개편 CC-1 (2026-05-19) — 테마 생성 실패 환불
   describe('refundTheme — 테마 생성 실패 환불', () => {
-    it('차감 포인트(590pt)를 충전 출처로 적립한다', async () => {
+    it('spentBySource 미전달 시 전액 충전 출처로 적립한다 (구 호환 폴백)', async () => {
       await useCase.refundTheme('author-1', 'theme-1')
       expect(mockLedger.earn).toHaveBeenCalledWith({
         authorId: 'author-1',
@@ -282,6 +282,42 @@ describe('ChargePointsUseCase', () => {
         reason: 'theme_generate_refund',
         relatedId: 'theme-1',
       })
+    })
+
+    // F-9 (2026-07-11) — 출처별 정확 복원 (구독풀 차감분이 charged 로 둔갑하는 회계 왜곡 방지)
+    it('spentBySource 전달 시 차감된 출처별로 복원한다', async () => {
+      // 구독풀 590pt 로 차감된 테마를 환불 → subscription 출처로 복원 (charged 아님)
+      await useCase.refundTheme('author-1', undefined, {
+        free: 0,
+        subscription: 590,
+        gift: 0,
+        charged: 0,
+      })
+      expect(mockLedger.earn).toHaveBeenCalledWith({
+        authorId: 'author-1',
+        source: 'subscription',
+        amount: 590,
+        reason: 'theme_generate_refund',
+        relatedId: undefined,
+      })
+      // charged 로의 둔갑 적립이 없어야 한다 + 0 출처는 skip → 총 1회
+      expect(mockLedger.earn).toHaveBeenCalledTimes(1)
+    })
+
+    it('spentBySource 가 혼합 출처면 출처별로 각각 복원 (0 출처 skip)', async () => {
+      await useCase.refundTheme('author-1', undefined, {
+        free: 300,
+        subscription: 0,
+        gift: 0,
+        charged: 290,
+      })
+      expect(mockLedger.earn).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'free', amount: 300 }),
+      )
+      expect(mockLedger.earn).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'charged', amount: 290 }),
+      )
+      expect(mockLedger.earn).toHaveBeenCalledTimes(2)
     })
   })
 })
