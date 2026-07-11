@@ -111,6 +111,23 @@ describe('ChargePointsUseCase', () => {
       expect(result.tier).toBe('short')
       expect(result.chargedPoints).toBe(190)
     })
+
+    // F-11 (2026-07-11) — 사후 차감(응답 이미 제공) 유실 방지: 일시적 DB 오류 유계 재시도
+    it('일시적 spend 오류를 유계 재시도로 흡수한다 (1회 실패 후 성공)', async () => {
+      mockLedger.spend
+        .mockRejectedValueOnce(new Error('deadlock detected'))
+        .mockResolvedValueOnce(spendResult())
+      const result = await useCase.chargeChatTurn('author-1', 2000)
+      expect(result.chargedPoints).toBe(810)
+      expect(mockLedger.spend).toHaveBeenCalledTimes(2)
+    })
+
+    it('유계 재시도 소진 시 마지막 오류를 throw 한다 (호출자가 AuditLog 재조정)', async () => {
+      mockLedger.spend.mockRejectedValue(new Error('DB down'))
+      await expect(useCase.chargeChatTurn('author-1', 2000)).rejects.toThrow('DB down')
+      // CHAT_CHARGE_MAX_ATTEMPTS = 3 (초기 1 + 재시도 2)
+      expect(mockLedger.spend).toHaveBeenCalledTimes(3)
+    })
   })
 
   describe('isChatBlocked — 외상 상한 사전 차단 (게이트 5(c))', () => {

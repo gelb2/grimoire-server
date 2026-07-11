@@ -41,6 +41,13 @@ import { CreditSource, CREDIT_CONSUMPTION_ORDER } from '@domain/model/credit-sou
 @Injectable()
 export class ChargePointsUseCase {
   private readonly logger = new Logger(ChargePointsUseCase.name)
+  /**
+   * F-11 (2026-07-11) — 채팅 사후 차감 유계 재시도.
+   * 사후 차감(응답 이미 제공)이라 spend 유실 = revenue leak(§0). 일시적 DB 오류
+   * (deadlock/serialization/blip)를 유계 재시도로 흡수해 정규 spend 경로를 유지한다.
+   */
+  private static readonly CHAT_CHARGE_MAX_ATTEMPTS = 3
+  private static readonly CHAT_CHARGE_RETRY_BASE_MS = 50
 
   constructor(
     @Inject('CreditLedgerPort')
@@ -84,12 +91,10 @@ export class ChargePointsUseCase {
     const tiers = loadChatChargeTiers(settings)
     const tierDef = resolveChatChargeTier(inputTokens, tiers)
 
-    const result = await this.ledger.spend({
-      authorId,
-      amount: tierDef.points,
-      reason: `chat_turn:${tierDef.tier}`,
-      relatedId,
-    })
+    // F-11 — 잔액 부족은 spend 내부가 deficit(외상)로 흡수(throw 아님) → 재시도 대상은 DB 오류뿐.
+    // spend 는 단일 $transaction 이라 throw=rollback → 재시도 이중과금 없음(희박한 커밋-ack-loss
+    // 예외만, 소액). 유계 재시도 소진 시 throw → 호출자(chat.usecase)가 durable AuditLog 재조정.
+    const result = await this.spendChatChargeWithRetry(authorId, tierDef, relatedId)
 
     if (result.deficitIncurred > 0) {
       this.logger.warn(
@@ -103,6 +108,41 @@ export class ChargePointsUseCase {
       tier: tierDef.tier,
       chargedPoints: tierDef.points,
     }
+  }
+
+  /**
+   * F-11 — 채팅 사후 차감 spend 를 유계 재시도한다.
+   * 일시적 DB 오류(deadlock/serialization/connection blip)를 흡수 → 정규 spend 경로 유지
+   * (잔액 부족 시 spend 가 deficit 를 정규 생성 = 불변식 보존). 재시도 소진 시 마지막 오류 throw.
+   */
+  private async spendChatChargeWithRetry(
+    authorId: string,
+    tierDef: { tier: string; points: number },
+    relatedId?: string,
+  ): Promise<SpendResult> {
+    let lastErr: unknown
+    for (let attempt = 1; attempt <= ChargePointsUseCase.CHAT_CHARGE_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this.ledger.spend({
+          authorId,
+          amount: tierDef.points,
+          reason: `chat_turn:${tierDef.tier}`,
+          relatedId,
+        })
+      } catch (e: unknown) {
+        lastErr = e
+        if (attempt < ChargePointsUseCase.CHAT_CHARGE_MAX_ATTEMPTS) {
+          this.logger.warn(
+            `채팅 차감 재시도 ${attempt}/${ChargePointsUseCase.CHAT_CHARGE_MAX_ATTEMPTS - 1} ` +
+              `(authorId=${authorId}, tier=${tierDef.tier}): ${e instanceof Error ? e.message : String(e)}`,
+          )
+          await new Promise((r) =>
+            setTimeout(r, ChargePointsUseCase.CHAT_CHARGE_RETRY_BASE_MS * attempt),
+          )
+        }
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
   }
 
   /**
