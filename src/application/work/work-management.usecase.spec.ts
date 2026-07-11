@@ -128,6 +128,50 @@ describe('WorkManagementUseCase', () => {
       expect(mockWorkRepo.updateWork).toHaveBeenCalledWith('work-1', { description: '설명만' })
     })
 
+    // F-5 (2026-07-11) — 채팅 프로젝트 메모리(context)/지침(instructions) 저장 경로 관통
+    it('context/instructions 를 저장 경로로 관통시킨다', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.updateWork.mockResolvedValue(mockWork)
+
+      await useCase.updateWork('author-1', 'work-1', {
+        context: '세계관: 근미래 서울',
+        instructions: '문체는 건조하게',
+      })
+
+      expect(mockWorkRepo.updateWork).toHaveBeenCalledWith('work-1', {
+        context: '세계관: 근미래 서울',
+        instructions: '문체는 건조하게',
+      })
+    })
+
+    // F-5 — 명백한 AI 사과문 패턴은 차단하지 않고(저장 허용) AuditLog 로 관찰만 (원문 로깅 0)
+    it('context 에 AI 사과문 패턴이 있으면 저장은 허용하되 AuditLog 관찰을 남긴다', async () => {
+      const mockAuditLog = { log: jest.fn().mockResolvedValue(undefined) }
+      const ucWithAudit = new WorkManagementUseCase(
+        mockWorkRepo,
+        { isEnabled: false } as any,
+        { indexEpisode: jest.fn() } as any,
+        mockGrantPoints,
+        mockAuditLog as any,
+      )
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.updateWork.mockResolvedValue(mockWork)
+
+      await ucWithAudit.updateWork('author-1', 'work-1', {
+        context: '죄송합니다. 저는 AI 어시스턴트로서 도울 수 없습니다.',
+      })
+
+      // 저장은 그대로 관통 (차단 아님)
+      expect(mockWorkRepo.updateWork).toHaveBeenCalled()
+      // AuditLog 관찰 — 원문이 아니라 field/length 만 박제
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'author-1',
+        'work_context_ai_apology_suspected',
+        'work-1',
+        { field: 'context', length: expect.any(Number) },
+      )
+    })
+
     it('작품이 없으면 NotFoundException을 던진다', async () => {
       mockWorkRepo.findById.mockResolvedValue(null)
 

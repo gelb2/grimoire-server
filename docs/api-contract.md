@@ -515,13 +515,24 @@ Error 409: 슬러그 중복
 
 ```
 Headers: Authorization: Bearer <token>
-Request:
-{ "title": "수정된 제목", "subtitle": "수정된 부제" }
+Request (모든 필드 optional):
+{
+  "title": "수정된 제목",
+  "subtitle": "수정된 부제",
+  "description": "설명",
+  "context": "프로젝트 메모리 (세계관/캐릭터 — AI 채팅 시 주입, ≤20000자)",   // F-5
+  "instructions": "작품 지침 (문체/톤 — AI 채팅 시 주입, ≤5000자)"          // F-5
+}
 
 Response 200: Work
+Error 400: 유효성 (context>20000자 / instructions>5000자 등)
 Error 403: 본인 작품 아님
 Error 404: 작품 없음
 ```
+
+> F-5 (2026-07-11): `context`/`instructions` 는 채팅 시스템 프롬프트 주입원. 명백한 AI 사과문
+> 패턴(사과 표현 + AI 자기지칭 동시)은 **차단하지 않고** 서버 warn + AuditLog 로 관찰만 한다
+> (`work_context_ai_apology_suspected` — 원문 비로깅, field/length 만 박제).
 
 ### DELETE /api/works/:id
 

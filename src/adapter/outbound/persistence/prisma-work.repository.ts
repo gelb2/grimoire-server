@@ -70,7 +70,7 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     return toWorkDomain(row)
   }
 
-  async updateWork(id: string, input: { title?: string; subtitle?: string; description?: string; coverImage?: string | null }): Promise<Work> {
+  async updateWork(id: string, input: { title?: string; subtitle?: string; description?: string; coverImage?: string | null; context?: string | null; instructions?: string | null }): Promise<Work> {
     const row = await this.prisma.work.update({ where: { id }, data: input })
     return toWorkDomain(row)
   }
