@@ -12,6 +12,7 @@ import { EmbeddingPort } from '@domain/port/outbound/embedding.port'
 import { ClaudeApiPort } from '@domain/port/outbound/claude-api.port'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { ChargePointsUseCase } from '@application/credit/charge-points.usecase'
+import { AuditLogService } from '@application/admin/audit-log.service'
 import { guardPromptInjection } from '@lib/prompt-injection-guard'
 
 const CHAT_SYSTEM_PROMPT = `당신은 소설 작가를 돕는 AI 어시스턴트입니다.
@@ -43,6 +44,12 @@ export class ChatUseCase {
      */
     @Optional()
     private readonly chargePoints: ChargePointsUseCase | null = null,
+    /**
+     * F-11 (2026-07-11) — 채팅 사후 차감 유실 시 재조정 근거 박제용 (durable AuditLog).
+     * Optional — 실 운영(app.module)에서는 주입, spec 미주입 시 로그만 (BACKWARD COMPATIBLE).
+     */
+    @Optional()
+    private readonly auditLog: AuditLogService | null = null,
   ) {}
 
   /** 새 채팅 세션 생성 */
@@ -156,7 +163,7 @@ export class ChatUseCase {
 
     // 8. 크레딧 개편 I Phase — 채팅 4구간 사후 차감 (§8-4).
     //    응답은 이미 생성·저장됨 — 차감 실패가 응답을 무효화하지 않음 (사후 차감).
-    //    잔액 부족 시 deficit(외상) 누적은 charge-points.usecase 내부에서 처리.
+    //    잔액 부족 시 deficit(외상) 누적 + 일시적 DB 오류 유계 재시도는 charge-points.usecase 내부 처리.
     if (this.chargePoints) {
       try {
         const charge = await this.chargePoints.chargeChatTurn(
@@ -164,20 +171,47 @@ export class ChatUseCase {
           aiResult.inputTokens,
           assistantMsg.id,
         )
-        // 차감 결과(구간/포인트)를 메시지에 사후 박제 (감사 정합)
-        await this.chatRepo.updateMessageCharge(
-          assistantMsg.id,
-          charge.chargedPoints,
-          charge.tier,
-        )
-        assistantMsg.chargedPoints = charge.chargedPoints
-        assistantMsg.chargeTier = charge.tier
+        // 차감 성공 — 결과(구간/포인트)를 메시지에 사후 박제 (감사 정합).
+        // 라벨 박제 실패는 cosmetic (차감은 이미 성공) → warn 만, 응답 무효화 X.
+        try {
+          await this.chatRepo.updateMessageCharge(
+            assistantMsg.id,
+            charge.chargedPoints,
+            charge.tier,
+          )
+          assistantMsg.chargedPoints = charge.chargedPoints
+          assistantMsg.chargeTier = charge.tier
+        } catch (labelErr: unknown) {
+          this.logger.warn(
+            `채팅 차감 라벨 박제 실패 (assistantMsg=${assistantMsg.id}): ${
+              labelErr instanceof Error ? labelErr.message : String(labelErr)
+            }`,
+          )
+        }
       } catch (e: unknown) {
-        // 차감 실패는 응답 제공을 막지 않음 — 로그만 (사후 차감 — 다음 정합 cron 이 보정)
+        // F-11 — chargeChatTurn 유계 재시도 소진 후에도 실패 = 차감 유실(§0 revenue leak).
+        // 구 주석의 "정합 cron" 은 실재하지 않음(grep 확정) → durable AuditLog 로 재조정 근거를
+        // 박제한다(운영자/후속 자동 보정용). 작가 콘텐츠 보호 — 본문은 로깅하지 않고
+        // 식별자/토큰수/오류만 박제.
         const msg = e instanceof Error ? e.message : String(e)
         this.logger.error(
           `채팅 사후 차감 실패 (authorId=${authorId}, sessionId=${sessionId}): ${msg}`,
         )
+        if (this.auditLog) {
+          await this.auditLog
+            .log(authorId, 'chat_charge_failed', assistantMsg.id, {
+              sessionId,
+              inputTokens: aiResult.inputTokens,
+              error: msg.slice(0, 300),
+            })
+            .catch((auditErr: unknown) =>
+              this.logger.warn(
+                `AuditLog 박제 실패(chat_charge_failed): ${
+                  auditErr instanceof Error ? auditErr.message : String(auditErr)
+                }`,
+              ),
+            )
+        }
       }
     }
 

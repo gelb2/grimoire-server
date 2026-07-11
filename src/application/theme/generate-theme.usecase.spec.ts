@@ -35,9 +35,14 @@ describe('GenerateThemeUseCase', () => {
       findSystemThemeByPreset: jest.fn().mockResolvedValue(mockSystemTheme),
     }
     mockAuthorRepo = { findById: jest.fn().mockResolvedValue(mockAuthor), findBySlug: jest.fn(), findByEmail: jest.fn(), create: jest.fn(), updateCredits: jest.fn(), updatePlan: jest.fn() }
-    // 신 포인트 원장 차감 UseCase mock — chargeTheme(차감) + refundTheme(실패 환불)
+    // 신 포인트 원장 차감 UseCase mock — chargeTheme(차감) + refundTheme(실패 환불).
+    // F-9 — chargeTheme 는 SpendResult 를 반환 (출처별 환불 복원 입력). 기본 = 구독풀 590pt 차감.
     mockChargePoints = {
-      chargeTheme: jest.fn().mockResolvedValue(undefined),
+      chargeTheme: jest.fn().mockResolvedValue({
+        spentBySource: { free: 0, subscription: 590, gift: 0, charged: 0 },
+        deficitIncurred: 0,
+        balanceAfter: 0,
+      }),
       refundTheme: jest.fn().mockResolvedValue(undefined),
     }
 
@@ -98,12 +103,18 @@ describe('GenerateThemeUseCase', () => {
     await expect(useCase.execute('author-1', '테스트')).rejects.toThrow(ForbiddenException)
   })
 
-  it('Claude API 실패 시 포인트를 환불한다 (유료 생성)', async () => {
+  it('Claude API 실패 시 포인트를 출처별로 환불한다 (F-9 — 구독풀 차감분이 charged 로 둔갑 금지)', async () => {
     mockClaudeApi.generateTheme.mockRejectedValue(new Error('API 호출 실패'))
     await expect(useCase.execute('author-1', '테스트 설명')).rejects.toThrow('API 호출 실패')
     // 크레딧 개편 CC-1 — 차감 후 API 실패 → refundTheme 환불
     expect(mockChargePoints.chargeTheme).toHaveBeenCalledTimes(1)
-    expect(mockChargePoints.refundTheme).toHaveBeenCalledWith('author-1')
+    // F-9 — chargeTheme 의 spentBySource(구독풀 590pt)를 그대로 전달해 출처 정확 복원
+    expect(mockChargePoints.refundTheme).toHaveBeenCalledWith('author-1', undefined, {
+      free: 0,
+      subscription: 590,
+      gift: 0,
+      charged: 0,
+    })
   })
 
   // 크레딧 개편 CC-1 — 무료 생성 중 API 실패 시 환불 미발생 (이중 차감/환불 방지)

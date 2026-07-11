@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
+import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestException, Optional, Logger } from '@nestjs/common'
 import { randomBytes } from 'crypto'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
@@ -7,9 +7,13 @@ import { Block } from '@domain/model/block'
 import { normalizeTitle } from '@domain/model/title-normalizer'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
 import { GrantPointsUseCase } from '@application/credit/grant-points.usecase'
+import { AuditLogService } from '@application/admin/audit-log.service'
+import { looksLikeAiApology } from '@lib/ai-apology-heuristic'
 
 @Injectable()
 export class WorkManagementUseCase {
+  private readonly logger = new Logger(WorkManagementUseCase.name)
+
   constructor(
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
     @Inject('BlobStoragePort') private readonly blobStorage: BlobStoragePort,
@@ -17,6 +21,9 @@ export class WorkManagementUseCase {
     // 크레딧 개편 CC-1 (2026-05-19) — 첫 작품 보너스를 신 포인트 원장(CreditLedger)으로 적립.
     // 구 CreditUseCase.grant(Author.credits Int) → GrantPointsUseCase.grantFirstWorkBonus 교체.
     private readonly grantPoints: GrantPointsUseCase,
+    // F-5 (2026-07-11) — context/instructions AI 사과문 오염 관찰용 (관찰 전용, 차단 아님).
+    // Optional — 실 운영(app.module)에서는 주입, spec 미주입 시 관찰 skip (BACKWARD COMPATIBLE).
+    @Optional() private readonly auditLog: AuditLogService | null = null,
   ) {}
 
   /** 작품 생성 */
@@ -39,11 +46,34 @@ export class WorkManagementUseCase {
     return this.workRepo.updateWork(workId, { coverImage })
   }
 
-  /** 작품 수정 (소유권 검증) */
-  async updateWork(authorId: string, workId: string, input: { title?: string; subtitle?: string; description?: string }): Promise<Work> {
+  /** 작품 수정 (소유권 검증) — context/instructions(채팅 프로젝트 메모리·지침) 저장 포함 (F-5) */
+  async updateWork(
+    authorId: string,
+    workId: string,
+    input: { title?: string; subtitle?: string; description?: string; context?: string; instructions?: string },
+  ): Promise<Work> {
     const work = await this.workRepo.findById(workId)
     if (!work) throw new NotFoundException('작품을 찾을 수 없습니다')
     if (work.authorId !== authorId) throw new ForbiddenException('작품 수정 권한이 없습니다')
+
+    // F-5 — context/instructions 는 채팅 시스템 프롬프트 주입원. 명백한 AI 사과문 패턴은
+    // 차단하지 않고(과차단 방지) warn + AuditLog 로 관찰만 한다 (2026-05-30 오염 사건 관측).
+    // 작가 콘텐츠 보호 — 원문은 로깅하지 않고 field/length 만 박제한다.
+    for (const field of ['context', 'instructions'] as const) {
+      const value = input[field]
+      if (value && looksLikeAiApology(value)) {
+        this.logger.warn(
+          `[ai-apology-observe] work=${workId} field=${field} len=${value.length} — AI 사과문 패턴 감지 (저장 허용, 관찰)`,
+        )
+        if (this.auditLog) {
+          await this.auditLog
+            .log(authorId, 'work_context_ai_apology_suspected', workId, { field, length: value.length })
+            .catch((e) =>
+              this.logger.warn(`AuditLog 박제 실패(ai-apology-observe): ${e instanceof Error ? e.message : String(e)}`),
+            )
+        }
+      }
+    }
 
     // title이 전달되면 정규화해서 저장 (Safari Hangul shaping 버그 회피)
     const normalized = input.title !== undefined

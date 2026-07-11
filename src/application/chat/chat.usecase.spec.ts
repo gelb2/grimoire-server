@@ -173,6 +173,60 @@ describe('ChatUseCase', () => {
       const result = await useCase.sendMessage('author-1', 'sess-1', '질문')
       expect(result.assistantMsg.role).toBe('assistant')
     })
+
+    // F-11 (2026-07-11) — 유계 재시도 소진(chargeChatTurn throw) 시 durable AuditLog 재조정 박제
+    it('차감 유실 시 chat_charge_failed AuditLog 를 박제한다 (본문 없이 식별자/토큰수만)', async () => {
+      const mockAuditLog = { log: jest.fn().mockResolvedValue(undefined) }
+      const ucWithAudit = new ChatUseCase(
+        mockChatRepo,
+        mockVectorStore,
+        mockEmbedding,
+        mockClaude,
+        mockWorkRepo,
+        mockChargePoints,
+        mockAuditLog as any,
+      )
+      mockChatRepo.addMessage
+        .mockResolvedValueOnce({ ...mockMessage, role: 'user' })
+        .mockResolvedValueOnce({ ...mockMessage, id: 'msg-2', role: 'assistant' })
+      mockChargePoints.chargeChatTurn.mockRejectedValue(new Error('DB down'))
+
+      const result = await ucWithAudit.sendMessage('author-1', 'sess-1', '질문')
+
+      // 응답은 정상 반환
+      expect(result.assistantMsg.role).toBe('assistant')
+      // durable 재조정 근거 박제 (본문 로깅 0 — sessionId/inputTokens 만)
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'author-1',
+        'chat_charge_failed',
+        'msg-2',
+        expect.objectContaining({ sessionId: 'sess-1', inputTokens: 2000 }),
+      )
+    })
+
+    // F-11 — 차감 성공 후 라벨 박제 실패는 cosmetic (응답 정상 + chat_charge_failed 미박제)
+    it('차감 성공 후 라벨 박제만 실패하면 응답은 정상이고 chat_charge_failed 를 박제하지 않는다', async () => {
+      const mockAuditLog = { log: jest.fn().mockResolvedValue(undefined) }
+      const ucWithAudit = new ChatUseCase(
+        mockChatRepo,
+        mockVectorStore,
+        mockEmbedding,
+        mockClaude,
+        mockWorkRepo,
+        mockChargePoints,
+        mockAuditLog as any,
+      )
+      mockChatRepo.addMessage
+        .mockResolvedValueOnce({ ...mockMessage, role: 'user' })
+        .mockResolvedValueOnce({ ...mockMessage, id: 'msg-2', role: 'assistant' })
+      // chargeChatTurn 성공(기본 mock) + updateMessageCharge 만 실패
+      mockChatRepo.updateMessageCharge.mockRejectedValueOnce(new Error('label db err'))
+
+      const result = await ucWithAudit.sendMessage('author-1', 'sess-1', '질문')
+
+      expect(result.assistantMsg.role).toBe('assistant')
+      expect(mockAuditLog.log).not.toHaveBeenCalled()
+    })
   })
 
   describe('getMessages', () => {

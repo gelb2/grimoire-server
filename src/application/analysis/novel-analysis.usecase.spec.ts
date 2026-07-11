@@ -375,16 +375,37 @@ describe('NovelAnalysisUseCase', () => {
         expect(mockCheckConsistency).not.toHaveBeenCalled()
       })
 
-      it('분석 중 예외가 나면 refundAnalysis 호출 (출처별 복원)', async () => {
+      it('분석 중 예외가 나면 refundAnalysis 호출 (출처별 복원 + deficit 역전)', async () => {
         mockVectorStore.searchSimilar.mockRejectedValue(new Error('벡터 DB 장애'))
 
         await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('벡터 DB 장애')
 
         expect(mockChargePoints.chargeAnalysis).toHaveBeenCalledWith('author-1')
+        // F-10 — spentBySource + deficitIncurred(0) 를 함께 전달
         expect(mockChargePoints.refundAnalysis).toHaveBeenCalledWith(
           'author-1',
           undefined,
           { free: 2440, subscription: 0, gift: 0, charged: 0 },
+          0,
+        )
+      })
+
+      // F-10 — 동시성 race 로 deficit 발생 시, 실패 환불에 deficitIncurred 를 전달해 외상 역전
+      it('chargeAnalysis 가 deficit 을 동반하면 refundAnalysis 에 deficitIncurred 를 전달한다', async () => {
+        mockChargePoints.chargeAnalysis.mockResolvedValueOnce({
+          spentBySource: { free: 0, subscription: 0, gift: 0, charged: 1940 },
+          deficitIncurred: 500,
+          balanceAfter: 0,
+        })
+        mockVectorStore.searchSimilar.mockRejectedValue(new Error('벡터 DB 장애'))
+
+        await expect(useCase.analyzeEpisode('author-1', 'ep-1')).rejects.toThrow('벡터 DB 장애')
+
+        expect(mockChargePoints.refundAnalysis).toHaveBeenCalledWith(
+          'author-1',
+          undefined,
+          { free: 0, subscription: 0, gift: 0, charged: 1940 },
+          500,
         )
       })
 

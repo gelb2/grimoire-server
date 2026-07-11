@@ -4,6 +4,7 @@ import { ThemeRepositoryPort } from '@domain/port/outbound/theme-repository.port
 import { AuthorRepositoryPort } from '@domain/port/outbound/author-repository.port'
 import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
 import { ChargePointsUseCase } from '@application/credit/charge-points.usecase'
+import { SpendResult } from '@domain/port/outbound/credit-ledger.port'
 import { Theme } from '@domain/model/theme'
 import { isMembershipExpired } from '@domain/model/plan'
 import { resolveTierOrFree, MEMBERSHIP_DAILY_FREE_THEME } from '@domain/model/membership-tier'
@@ -51,8 +52,10 @@ export class GenerateThemeUseCase {
 
     // 무료 한도 초과 시 신 포인트 원장에서 590pt 사전 차감.
     // chargeTheme 가 자체 잔액 검증 → 부족 시 BadRequestException throw (구 catch 래핑 불요).
+    // F-9 — SpendResult.spentBySource 를 보유했다가 실패 환불 시 출처별 정확 복원에 전달.
+    let themeSpend: SpendResult | undefined
     if (!isFree) {
-      await this.chargePoints.chargeTheme(authorId)
+      themeSpend = await this.chargePoints.chargeTheme(authorId)
     }
 
     // Claude API로 테마 생성 — 실패 시 포인트 환불 (유료 생성인 경우만)
@@ -61,7 +64,8 @@ export class GenerateThemeUseCase {
       themeData = await this.claudeApi.generateTheme(description)
     } catch (error) {
       if (!isFree) {
-        await this.chargePoints.refundTheme(authorId)
+        // F-9 — 출처별 복원 (subscription/free/gift 차감분이 charged 로 둔갑하는 회계 왜곡 방지)
+        await this.chargePoints.refundTheme(authorId, undefined, themeSpend?.spentBySource)
       }
       throw error
     }

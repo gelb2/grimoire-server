@@ -1,9 +1,10 @@
 import { AuthenticatedRequest } from '@adapter/inbound/http/dto/authenticated-request'
-import { Controller, Get, Post, Body, UseGuards, Req, Headers } from '@nestjs/common'
+import { Controller, Get, Post, Body, UseGuards, Req, Headers, BadRequestException } from '@nestjs/common'
 import { SkipThrottle, Throttle } from '@nestjs/throttler'
 import { PaymentUseCase } from '@application/payment/payment.usecase'
 import { CreditUseCase } from '@application/credit/credit.usecase'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
+import { WebhookVerificationFailedError } from '@domain/model/webhook-verification-error'
 import {
   CreditBalanceResponseDto,
   toCreditBalanceResponse,
@@ -40,7 +41,17 @@ export class PaymentController {
   @Post('webhook')
   async webhook(@Req() req: Request, @Headers() headers: Record<string, string>) {
     const rawBody = (req as Request & { body: Buffer }).body
-    return this.paymentUseCase.processWebhook(rawBody, headers)
+    try {
+      return await this.paymentUseCase.processWebhook(rawBody, headers)
+    } catch (e: unknown) {
+      // F-13 — 서명검증 실패/파싱 불가/eventId 누락은 400(BadRequest)으로 매핑.
+      // Polar 가 실패로 인지(재전송 의미론 정합) — 구 silent 201 ack 마스킹 제거.
+      // 그 외 예외(SDK 처리 오류 등)는 기존대로 전파(GlobalExceptionFilter → 5xx, Polar 재시도).
+      if (e instanceof WebhookVerificationFailedError) {
+        throw new BadRequestException('웹훅 서명 검증에 실패했습니다')
+      }
+      throw e
+    }
   }
 
   /** 결제 내역 조회 (인증 필요) */
