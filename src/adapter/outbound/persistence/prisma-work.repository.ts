@@ -141,7 +141,9 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
 
   async searchByTitle(query: string, limit: number): Promise<Work[]> {
     const rows = await this.prisma.work.findMany({
-      where: { title: { contains: query, mode: 'insensitive' } },
+      // F-8 — soft-delete 작가 제외 (soft-delete extension 은 top-level author op 만 필터,
+      // work 직접 조회는 미적용 → 관계 필터 명시). deleted 작가 작품이 검색에 노출되면 404 dead link.
+      where: { title: { contains: query, mode: 'insensitive' }, author: { is: { deletedAt: null } } },
       take: limit,
       orderBy: { createdAt: 'desc' },
     })
@@ -156,6 +158,9 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
   private async computeRankedWorks(): Promise<(WorkWithMeta & { score: number; lastEpisodeAt: Date | null })[]> {
     const [works, likeAgg, commentAgg, subsAgg] = await Promise.all([
       this.prisma.work.findMany({
+        // F-8 — discovery(popular/recent) 에서 soft-delete 작가 작품 제외 (dead link 방지).
+        // soft-delete extension 은 nested include: { author } 에 미적용 → 관계 필터 명시 필수.
+        where: { author: { is: { deletedAt: null } } },
         include: {
           author: { select: { name: true, slug: true } },
           _count: { select: { episodes: true } },
@@ -265,7 +270,11 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
   }
 
   async findBySharedToken(token: string): Promise<Episode | null> {
-    const row = await this.prisma.episode.findUnique({ where: { sharedToken: token } })
+    // F-8 — soft-delete 작가의 shared 에피소드 토큰 접근 차단. sharedToken 은 @unique 라
+    // findFirst(관계 필터 허용)로 조회 — findUnique 는 unique 필드 외 where 를 못 받는다.
+    const row = await this.prisma.episode.findFirst({
+      where: { sharedToken: token, work: { author: { is: { deletedAt: null } } } },
+    })
     return row ? toEpisodeDomain(row) : null
   }
 
