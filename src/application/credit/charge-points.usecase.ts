@@ -163,14 +163,20 @@ export class ChargePointsUseCase {
    *
    * @param spentBySource chargeAnalysis 의 SpendResult.spentBySource.
    *        미전달 시(구 호출 호환) 전액 charged 복원으로 폴백.
+   * @param deficitIncurred chargeAnalysis 의 SpendResult.deficitIncurred (F-10, 2026-07-11).
+   *        분석 사전 잔액 검증을 통과했으나 동시 요청 race 로 spend 시 deficit(외상)이 발생한
+   *        경우, 실차감 출처 복원만으로는 그 외상이 잔존한다(실패한 분석인데 외상 ≤2,440pt 남음).
+   *        settleDeficit 로 이 트랜잭션이 만든 외상도 역전한다(현재 deficit 상한까지 capped —
+   *        타 트랜잭션 외상 침범 없음, 이중 감액 없음).
    */
   async refundAnalysis(
     authorId: string,
     relatedId?: string,
     spentBySource?: Record<CreditSource, number>,
+    deficitIncurred?: number,
   ): Promise<void> {
-    // spentBySource 미전달 → 구 동작 폴백 (전액 charged)
     if (!spentBySource) {
+      // spentBySource 미전달 → 구 동작 폴백 (전액 charged)
       await this.ledger.earn({
         authorId,
         source: 'charged',
@@ -178,20 +184,25 @@ export class ChargePointsUseCase {
         reason: 'novel_analysis_refund',
         relatedId,
       })
-      return
-    }
-    // 출처별 복원 — 차감된 출처에 같은 금액을 되돌린다 (0 인 출처는 skip)
-    for (const source of CREDIT_CONSUMPTION_ORDER) {
-      const amount = spentBySource[source] ?? 0
-      if (amount > 0) {
-        await this.ledger.earn({
-          authorId,
-          source,
-          amount,
-          reason: 'novel_analysis_refund',
-          relatedId,
-        })
+    } else {
+      // 출처별 복원 — 차감된 출처에 같은 금액을 되돌린다 (0 인 출처는 skip)
+      for (const source of CREDIT_CONSUMPTION_ORDER) {
+        const amount = spentBySource[source] ?? 0
+        if (amount > 0) {
+          await this.ledger.earn({
+            authorId,
+            source,
+            amount,
+            reason: 'novel_analysis_refund',
+            relatedId,
+          })
+        }
       }
+    }
+
+    // F-10 — 이 차감이 동시성으로 만든 deficit(외상)도 역전 (실패 분석의 잔여 외상 제거).
+    if (deficitIncurred && deficitIncurred > 0) {
+      await this.ledger.settleDeficit(authorId, deficitIncurred)
     }
   }
 

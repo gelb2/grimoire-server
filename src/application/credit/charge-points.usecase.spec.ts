@@ -242,6 +242,33 @@ describe('ChargePointsUseCase', () => {
       })
       expect(mockLedger.earn).toHaveBeenCalledTimes(1)
     })
+
+    // F-10 (2026-07-11) — 동시성 race deficit 도 역전 (실패 분석의 잔여 외상 제거)
+    it('deficitIncurred 전달 시 실차감 출처 복원 + settleDeficit 로 외상 역전', async () => {
+      // 실차감 1,940pt + deficit 500pt = 2,440pt 차감된 분석을 환불
+      await useCase.refundAnalysis(
+        'author-1',
+        undefined,
+        { free: 0, subscription: 0, gift: 0, charged: 1940 },
+        500,
+      )
+      // 실차감분 출처 복원
+      expect(mockLedger.earn).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'charged', amount: 1940 }),
+      )
+      // 이 트랜잭션이 만든 외상 500pt 역전
+      expect(mockLedger.settleDeficit).toHaveBeenCalledWith('author-1', 500)
+    })
+
+    it('deficitIncurred 0/미전달 시 settleDeficit 미호출 (정상 케이스)', async () => {
+      await useCase.refundAnalysis('author-1', undefined, {
+        free: 2440,
+        subscription: 0,
+        gift: 0,
+        charged: 0,
+      })
+      expect(mockLedger.settleDeficit).not.toHaveBeenCalled()
+    })
   })
 
   describe('chargeTheme — 테마 사전 차감 (정액 590pt)', () => {
