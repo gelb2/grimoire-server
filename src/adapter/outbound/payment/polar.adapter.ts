@@ -14,6 +14,7 @@ import {
 } from '@domain/port/outbound/payment-gateway.port'
 import { CircuitBreakerPort } from '@domain/port/outbound/circuit-breaker.port'
 import { CREDIT_PRODUCTS } from '@domain/model/config'
+import { WebhookVerificationFailedError } from '@domain/model/webhook-verification-error'
 // PAY-P3-D Status enum mapping (도메인 매핑 함수 영역 정합 — shared-contracts §28 / ADR-010)
 import {
   mapPolarOrderStatus,
@@ -341,10 +342,14 @@ export class PolarAdapter implements PaymentGatewayPort {
     rawBody: Buffer | string,
     headers: Record<string, string>,
   ): NormalizedWebhookEvent | NormalizedSubscriptionEvent | null {
+    // F-13 — 무효(서명검증 실패/파싱 불가/eventId 누락)는 WebhookVerificationFailedError 로 throw
+    // (컨트롤러가 400 매핑 → Polar 가 실패로 인지, silent 201 ack 마스킹 제거). 정상이나 미처리
+    // 대상 이벤트(알 수 없는 type 등)만 null 반환(무시). R1/R2/R1-notify 처리 로직은 미접촉.
     if (!this.webhookSecret) {
       if (isProduction()) {
+        // F-12 로 부팅 차단되나 방어 — prod 시크릿 부재 = 검증 불가 → 4xx surface.
         this.logger.error('POLAR_WEBHOOK_SECRET 미설정 — 프로덕션 웹훅 거부')
-        return null
+        throw new WebhookVerificationFailedError('webhook_secret_missing')
       }
       this.logger.warn('POLAR_WEBHOOK_SECRET 미설정 — dev 환경에서 서명 검증 스킵')
     }
@@ -357,10 +362,10 @@ export class PolarAdapter implements PaymentGatewayPort {
     } catch (e) {
       if (e instanceof WebhookVerificationError) {
         this.logger.warn(`Polar 웹훅 서명 검증 실패: ${e.message}`)
-        return null
+        throw new WebhookVerificationFailedError(`signature_verification_failed: ${e.message}`)
       }
       this.logger.error(`Polar 웹훅 파싱 실패: ${String(e)}`)
-      return null
+      throw new WebhookVerificationFailedError('payload_parse_failed')
     }
 
     // Standard Webhooks 스펙: `webhook-id` (소문자) 헤더가 PG 발급 unique 식별자.
@@ -369,7 +374,7 @@ export class PolarAdapter implements PaymentGatewayPort {
     if (!eventId) {
       // eventId 누락 시 멱등성 게이트가 동작 못함 → 안전 거부 (Polar는 재전송 시 다른 webhook-id 사용 가능).
       this.logger.warn('Polar 웹훅 webhook-id 헤더 누락 — 멱등성 보장 불가, 거부')
-      return null
+      throw new WebhookVerificationFailedError('webhook_id_missing')
     }
 
     // Polar SDK 타입은 camelCase(checkoutId, totalAmount 등) 사용.

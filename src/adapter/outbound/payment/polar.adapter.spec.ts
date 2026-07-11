@@ -4,6 +4,7 @@ import {
   NormalizedSubscriptionEvent,
   isSubscriptionEvent,
 } from '@domain/port/outbound/payment-gateway.port'
+import { WebhookVerificationFailedError } from '@domain/model/webhook-verification-error'
 
 /**
  * CC-5 — verifyAndParseWebhook 반환이 충전/구독 union 으로 확장됨.
@@ -214,12 +215,13 @@ describe('PolarAdapter', () => {
         // webhook-id 누락
       }
 
-      const result = adapter.verifyAndParseWebhook(dummyBody, headersWithoutWebhookId)
-
-      expect(result).toBeNull()
+      // F-13 — eventId 누락은 무효 → throw (컨트롤러 400 매핑). 구 null(201) 마스킹 제거.
+      expect(() =>
+        adapter.verifyAndParseWebhook(dummyBody, headersWithoutWebhookId),
+      ).toThrow(WebhookVerificationFailedError)
     })
 
-    it('PAY-P0-1: webhook-id 헤더가 빈 문자열이면 null 반환', () => {
+    it('PAY-P0-1: webhook-id 헤더가 빈 문자열이면 throw (F-13)', () => {
       mockValidateEvent.mockReturnValue({
         type: 'order.paid',
         data: {
@@ -237,9 +239,10 @@ describe('PolarAdapter', () => {
         'webhook-signature': 'v1,abc',
       }
 
-      const result = adapter.verifyAndParseWebhook(dummyBody, headersEmptyId)
-
-      expect(result).toBeNull()
+      // F-13 — 빈 webhook-id 도 멱등성 보장 불가 → throw
+      expect(() =>
+        adapter.verifyAndParseWebhook(dummyBody, headersEmptyId),
+      ).toThrow(WebhookVerificationFailedError)
     })
 
     it('PAY-P0-1: 대문자 Webhook-Id fallback도 추출 가능 (프록시 정규화 안전망)', () => {
@@ -432,7 +435,7 @@ describe('PolarAdapter', () => {
       expect(result).toBeNull()
     })
 
-    it('서명 검증 실패 시 null 반환 (WebhookVerificationError)', () => {
+    it('서명 검증 실패 시 throw (F-13 — WebhookVerificationError → 400)', () => {
       // 런타임에 mock된 래퍼에서 WebhookVerificationError class를 가져옴
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { WebhookVerificationError } = require('./polar-webhooks')
@@ -440,19 +443,20 @@ describe('PolarAdapter', () => {
         throw new WebhookVerificationError('invalid signature')
       })
 
-      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
-
-      expect(result).toBeNull()
+      // F-13 — 무효 서명은 throw (구 null → 201 silent ack 마스킹 제거)
+      expect(() =>
+        adapter.verifyAndParseWebhook(dummyBody, dummyHeaders),
+      ).toThrow(WebhookVerificationFailedError)
     })
 
-    it('기타 런타임 에러도 null 반환', () => {
+    it('파싱 불가(기타 런타임 에러)도 throw (F-13)', () => {
       mockValidateEvent.mockImplementation(() => {
         throw new Error('unexpected parse error')
       })
 
-      const result = adapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
-
-      expect(result).toBeNull()
+      expect(() =>
+        adapter.verifyAndParseWebhook(dummyBody, dummyHeaders),
+      ).toThrow(WebhookVerificationFailedError)
     })
 
     it('metadata의 authorId가 문자열이 아니면 undefined 반환', () => {
@@ -489,15 +493,17 @@ describe('PolarAdapter', () => {
       expect(result?.amount).toBe(3500) // 250센트 → 고정 환율 폴백 (250/100 * 1400)
     })
 
-    it('프로덕션 환경에서 webhook secret 미설정 시 null 반환', () => {
+    it('프로덕션 환경에서 webhook secret 미설정 시 throw (F-13 — 검증 불가 4xx surface)', () => {
       delete process.env.POLAR_WEBHOOK_SECRET
       const originalEnv = process.env.NODE_ENV
       process.env.NODE_ENV = 'production'
 
       const prodAdapter = new PolarAdapter()
-      const result = prodAdapter.verifyAndParseWebhook(dummyBody, dummyHeaders)
-
-      expect(result).toBeNull()
+      // F-13 — prod 시크릿 부재 = 검증 불가 → throw (구 null → 201 마스킹 제거).
+      // F-12 로 부팅이 먼저 차단되나 런타임 방어.
+      expect(() =>
+        prodAdapter.verifyAndParseWebhook(dummyBody, dummyHeaders),
+      ).toThrow(WebhookVerificationFailedError)
 
       process.env.NODE_ENV = originalEnv
     })

@@ -134,11 +134,16 @@ export interface PaymentGatewayPort {
 
   /**
    * 웹훅 원본을 검증하고 정규화된 이벤트로 반환.
-   * 서명 검증 실패 시 null 반환.
-   * 처리 대상 이벤트가 아닐 경우에도 null 반환 (무시).
+   *
+   * F-13 (2026-07-11):
+   * - 무효(서명검증 실패 / 파싱 불가 / eventId 누락)는 `WebhookVerificationFailedError` throw
+   *   → inbound 컨트롤러가 400 매핑 (silent 201 ack 마스킹 제거, Polar 재전송 의미론 정합).
+   * - 정상이나 **처리 대상이 아닌 이벤트**(알 수 없는 type 등)는 `null` 반환 (무시 = 2xx ack).
    *
    * CC-5 (PAY-P1-4) — 충전(`NormalizedWebhookEvent`) + 구독(`NormalizedSubscriptionEvent`)
    * 양쪽을 반환. 호출자는 `isSubscriptionEvent` 가드로 라우팅 분기.
+   *
+   * @throws WebhookVerificationFailedError 서명검증 실패 / 파싱 불가 / eventId 누락
    */
   verifyAndParseWebhook(
     rawBody: Buffer | string,
