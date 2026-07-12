@@ -99,6 +99,18 @@ describe('PrismaMembershipPlanRepository', () => {
       expect(authorUpdates[0].pointsSubscription).toBe(93000)
     })
 
+    it('expiresAt/planExpireAt 을 nextResetAt 로 미러 갱신 (changeTier 규약 정합 — 표시 stale 방지, S-8)', async () => {
+      await repo.resetMonthlyPool('author-1', new Date('2026-05-17T04:00:00Z'))
+      // 6월 1일 00:00 UTC (nextMonthStart) — poolResetAt 과 동일 미러
+      expect(planUpdates[0].poolResetAt).toBeInstanceOf(Date)
+      expect(planUpdates[0].expiresAt).toBeInstanceOf(Date)
+      expect(planUpdates[0].expiresAt.getTime()).toBe(planUpdates[0].poolResetAt.getTime())
+      expect(planUpdates[0].expiresAt.getUTCMonth()).toBe(5)
+      expect(planUpdates[0].expiresAt.getUTCDate()).toBe(1)
+      expect(authorUpdates[0].planExpireAt).toBeInstanceOf(Date)
+      expect(authorUpdates[0].planExpireAt.getTime()).toBe(planUpdates[0].poolResetAt.getTime())
+    })
+
     it('활성 멤버십이 없으면 throw', async () => {
       const tx = {
         membershipPlan: { findFirst: jest.fn().mockResolvedValue(null) },

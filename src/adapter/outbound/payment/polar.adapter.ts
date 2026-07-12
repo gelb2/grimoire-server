@@ -351,7 +351,10 @@ export class PolarAdapter implements PaymentGatewayPort {
         this.logger.error('POLAR_WEBHOOK_SECRET 미설정 — 프로덕션 웹훅 거부')
         throw new WebhookVerificationFailedError('webhook_secret_missing')
       }
-      this.logger.warn('POLAR_WEBHOOK_SECRET 미설정 — dev 환경에서 서명 검증 스킵')
+      // S-10 (주석-실상 정합, 코드 무변경): 과거엔 시크릿 부재 시 검증을 스킵(무조건 통과)했으나
+      // 현재는 스킵 경로가 없다 — 경고만 남기고, 아래 validateEvent 가 빈 시크릿으로 검증을 시도해
+      // 서명 불일치로 WebhookVerificationFailedError 거부된다(F-13 무효 웹훅 surface 이후 실상).
+      this.logger.warn('POLAR_WEBHOOK_SECRET 미설정 — 검증 계속 진행(빈 시크릿 → 서명 불일치 거부, 스킵 아님)')
     }
 
     // Standard Webhooks 서명 검증
