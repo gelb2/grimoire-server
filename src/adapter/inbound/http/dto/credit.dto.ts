@@ -1,3 +1,5 @@
+import { IsOptional, IsISO8601, IsInt, Min, Max } from 'class-validator'
+import { Type } from 'class-transformer'
 import { CreditBalance } from '@domain/port/outbound/credit-ledger.port'
 
 /**
@@ -28,6 +30,24 @@ export class CreditBalanceResponseDto {
     /** 충전 (Polar 패키지) */
     charged: number
   }
+}
+
+/**
+ * `GET /credits/logs` 쿼리 파라미터 DTO (F-21 — brightMall #1).
+ *
+ * 전부 Optional — 무파라미터 호출 시 기존 동작(최신순 100건) 하위호환.
+ * 전역 ValidationPipe `transform:true` 로 문자열 쿼리를 숫자로 coercion(@Type),
+ * `forbidNonWhitelisted` 로 미허용 쿼리는 400.
+ */
+export class CreditLogsQueryDto {
+  /** 기간 시작 (ISO8601, createdAt gte) */
+  @IsOptional() @IsISO8601() from?: string
+  /** 기간 끝 (ISO8601, createdAt lte) */
+  @IsOptional() @IsISO8601() to?: string
+  /** 페이지 크기 (1~100, 기본 100) */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number
+  /** 오프셋 페이지네이션 (skip, 0 이상) */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) offset?: number
 }
 
 /** 도메인 CreditBalance → `/credits/balance` 응답 DTO */

@@ -1,4 +1,4 @@
-import { IsString, IsOptional, MinLength, IsIn, MaxLength } from 'class-validator'
+import { IsString, IsOptional, MinLength, IsIn, MaxLength, IsArray, ArrayNotEmpty, ArrayMaxSize } from 'class-validator'
 
 export class CreateWorkDto {
   @IsString() @MinLength(1) title!: string
@@ -31,4 +31,15 @@ export class UpdateEpisodeStatusDto {
 
 export class CreateShareLinkDto {
   @IsString() @IsIn(['12h', '24h', '48h', 'never']) expireIn!: '12h' | '24h' | '48h' | 'never'
+}
+
+// F-20 (기획 §13) — 에피소드 순서 변경. episodeIds 는 새 순서대로 나열한 작품 전체 에피소드 id 배열.
+// 집합 일치(개수/중복/소속) 검증은 UseCase 가 수행 — DTO 는 형태(비어있지 않은 문자열 배열)만 강제.
+// ArrayMaxSize — 단일 작품 에피소드 상한(방어적) 초과 페이로드 차단.
+export class ReorderEpisodesDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(1000)
+  @IsString({ each: true })
+  episodeIds!: string[]
 }

@@ -306,6 +306,39 @@ describe('PrismaCreditLedgerRepository', () => {
     })
   })
 
+  describe('findByAuthor — F-21 기간/페이지 필터', () => {
+    it('필터 미전달 시 무필터 최신순 limit 건 (하위호환)', async () => {
+      await repo.findByAuthor('author-1', 100)
+      expect(mockPrisma.creditLedger.findMany).toHaveBeenCalledWith({
+        where: { authorId: 'author-1' },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      })
+    })
+
+    it('from/to 는 createdAt gte/lte, offset 은 skip 으로 적용된다', async () => {
+      const from = new Date('2026-06-01T00:00:00.000Z')
+      const to = new Date('2026-07-01T00:00:00.000Z')
+      await repo.findByAuthor('author-1', 20, { from, to, offset: 40 })
+      expect(mockPrisma.creditLedger.findMany).toHaveBeenCalledWith({
+        where: { authorId: 'author-1', createdAt: { gte: from, lte: to } },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        skip: 40,
+      })
+    })
+
+    it('from 만 지정 시 gte 만 걸고 skip 은 생략된다', async () => {
+      const from = new Date('2026-06-01T00:00:00.000Z')
+      await repo.findByAuthor('author-1', 50, { from })
+      expect(mockPrisma.creditLedger.findMany).toHaveBeenCalledWith({
+        where: { authorId: 'author-1', createdAt: { gte: from } },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      })
+    })
+  })
+
   describe('getGiftRanking — CC-3 (HIGH-3) 신 ledger 기반 선물 랭킹', () => {
     it("source='gift', type='earn' 만 groupBy(authorId) + 누적 sum desc 정렬", async () => {
       mockPrisma.creditLedger.groupBy = jest.fn().mockResolvedValue([

@@ -70,3 +70,49 @@ describe('PrismaWorkRepository — F-8 soft-delete 작가 제외', () => {
     expect(await repo.findBySharedToken('tok_deleted_author')).toBeNull()
   })
 })
+
+/**
+ * F-20 (기획 §13) — 에피소드 순서 원자 재부여 spec.
+ *
+ * usecase spec(repo mock)은 소유권/집합 검증만 잡고 실제 재부여의 원자성(동시성 안전)을 못 잡는다.
+ * 여기서 reorderEpisodes 가 전체 update 를 **단일 $transaction** 으로 묶는지 + 각 update 가
+ * `{id, workId}` 스코프 + `orderNum=index+1` 인지 repo 레벨에서 검증한다.
+ */
+describe('PrismaWorkRepository — reorderEpisodes (F-20 원자 재부여)', () => {
+  let repo: PrismaWorkRepository
+  let mockPrisma: any
+
+  beforeEach(() => {
+    mockPrisma = {
+      episode: { updateMany: jest.fn().mockImplementation((arg) => arg) },
+      $transaction: jest.fn().mockResolvedValue([]),
+    }
+    repo = new PrismaWorkRepository(mockPrisma as any)
+  })
+
+  it('전체 순서를 단일 $transaction 으로 원자 재부여한다 (동시성 안전)', async () => {
+    await repo.reorderEpisodes('work-1', ['ep-c', 'ep-a', 'ep-b'])
+    // 단일 $transaction 호출 — 부분 갱신 불가(원자성/동시성)
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1)
+    // 배열 형태 트랜잭션 — 에피소드 수만큼의 op
+    const ops = mockPrisma.$transaction.mock.calls[0][0]
+    expect(Array.isArray(ops)).toBe(true)
+    expect(ops).toHaveLength(3)
+  })
+
+  it('각 update 는 {id, workId} 스코프 + orderNum=index+1 로 재부여한다 (타 작품 오염 방어)', async () => {
+    await repo.reorderEpisodes('work-1', ['ep-c', 'ep-a', 'ep-b'])
+    expect(mockPrisma.episode.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: 'ep-c', workId: 'work-1' },
+      data: { orderNum: 1 },
+    })
+    expect(mockPrisma.episode.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: 'ep-a', workId: 'work-1' },
+      data: { orderNum: 2 },
+    })
+    expect(mockPrisma.episode.updateMany).toHaveBeenNthCalledWith(3, {
+      where: { id: 'ep-b', workId: 'work-1' },
+      data: { orderNum: 3 },
+    })
+  })
+})

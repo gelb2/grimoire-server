@@ -54,6 +54,7 @@ describe('WorkManagementUseCase', () => {
       updateEpisodeStatus: jest.fn(),
       findBySharedToken: jest.fn(),
       findEpisodesFiltered: jest.fn(),
+      reorderEpisodes: jest.fn(),
     }
     const mockBlobStorage = { isEnabled: false, uploadImage: jest.fn(), deleteImage: jest.fn() } as any
     const mockNovelAnalysis = { indexEpisode: jest.fn().mockResolvedValue({ chunkCount: 0, tokensUsed: 0 }) } as any
@@ -304,6 +305,80 @@ title: "테스트"
           rawContent: '본문',
         }),
       ).rejects.toThrow(ForbiddenException)
+    })
+  })
+
+  describe('reorderEpisodes (F-20 — 에피소드 순서 변경)', () => {
+    const ep1 = { ...mockEpisode, id: 'ep-1', orderNum: 1 }
+    const ep2 = { ...mockEpisode, id: 'ep-2', orderNum: 2 }
+    const ep3 = { ...mockEpisode, id: 'ep-3', orderNum: 3 }
+
+    it('소유자가 전체 에피소드를 재정렬한다 (reorderEpisodes 위임 + 재정렬 목록 반환)', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      // 1회차 = 집합 검증용(원래 순서), 2회차 = 재부여 후 반환용(새 순서)
+      mockWorkRepo.findEpisodesFiltered
+        .mockResolvedValueOnce([ep1, ep2, ep3])
+        .mockResolvedValueOnce([
+          { ...ep3, orderNum: 1 },
+          { ...ep1, orderNum: 2 },
+          { ...ep2, orderNum: 3 },
+        ])
+      mockWorkRepo.reorderEpisodes.mockResolvedValue(undefined)
+
+      const result = await useCase.reorderEpisodes('author-1', 'work-1', ['ep-3', 'ep-1', 'ep-2'])
+
+      expect(mockWorkRepo.reorderEpisodes).toHaveBeenCalledWith('work-1', ['ep-3', 'ep-1', 'ep-2'])
+      // 반환은 orderNum 오름차순(목록 조회와 동일 정렬)
+      expect(result.map((e: any) => e.id)).toEqual(['ep-3', 'ep-1', 'ep-2'])
+    })
+
+    it('작품이 없으면 NotFoundException', async () => {
+      mockWorkRepo.findById.mockResolvedValue(null)
+      await expect(
+        useCase.reorderEpisodes('author-1', 'no-work', ['ep-1']),
+      ).rejects.toThrow(NotFoundException)
+      expect(mockWorkRepo.reorderEpisodes).not.toHaveBeenCalled()
+    })
+
+    it('소유자가 아니면 ForbiddenException (재정렬 미실행)', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      await expect(
+        useCase.reorderEpisodes('other-author', 'work-1', ['ep-1', 'ep-2', 'ep-3']),
+      ).rejects.toThrow(ForbiddenException)
+      expect(mockWorkRepo.reorderEpisodes).not.toHaveBeenCalled()
+    })
+
+    it('빈 배열이면 BadRequestException', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      await expect(
+        useCase.reorderEpisodes('author-1', 'work-1', []),
+      ).rejects.toThrow(BadRequestException)
+    })
+
+    it('중복 id 가 있으면 BadRequestException', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      await expect(
+        useCase.reorderEpisodes('author-1', 'work-1', ['ep-1', 'ep-1', 'ep-2']),
+      ).rejects.toThrow(BadRequestException)
+      expect(mockWorkRepo.reorderEpisodes).not.toHaveBeenCalled()
+    })
+
+    it('작품 전체 에피소드와 개수가 다르면 BadRequestException (불일치 집합)', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.findEpisodesFiltered.mockResolvedValue([ep1, ep2, ep3])
+      await expect(
+        useCase.reorderEpisodes('author-1', 'work-1', ['ep-1', 'ep-2']),
+      ).rejects.toThrow(BadRequestException)
+      expect(mockWorkRepo.reorderEpisodes).not.toHaveBeenCalled()
+    })
+
+    it('작품에 속하지 않은 id 가 포함되면 BadRequestException (불일치 집합)', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.findEpisodesFiltered.mockResolvedValue([ep1, ep2, ep3])
+      await expect(
+        useCase.reorderEpisodes('author-1', 'work-1', ['ep-1', 'ep-2', 'ep-X']),
+      ).rejects.toThrow(BadRequestException)
+      expect(mockWorkRepo.reorderEpisodes).not.toHaveBeenCalled()
     })
   })
 
