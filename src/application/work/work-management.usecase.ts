@@ -2,7 +2,7 @@ import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestEx
 import { randomBytes } from 'crypto'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
-import { Work, Episode, EpisodeStatus } from '@domain/model/work'
+import { Work, Episode, EpisodeStatus, EpisodeSummary } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 import { normalizeTitle } from '@domain/model/title-normalizer'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
@@ -212,6 +212,55 @@ export class WorkManagementUseCase {
     }
 
     return updated
+  }
+
+  /**
+   * 에피소드 순서 변경 (F-20 — 기획 §13, 작가 소유권 검증).
+   *
+   * `orderedEpisodeIds` 는 새 순서대로 나열한 해당 작품의 **전체** 에피소드 id 배열이어야 한다.
+   * 소유권(work.authorId === authorId) 검증 후 집합 일치를 강제한다:
+   *   - 중복 id 불가
+   *   - 작품 전체 에피소드와 개수 일치 (누락/추가 불가)
+   *   - 모든 id 가 해당 작품 소속
+   * 집합이 완전 일치할 때만 `workRepo.reorderEpisodes` 로 `$transaction` 원자 재부여하고,
+   * 재부여 후 orderNum 오름차순 목록(목록 조회와 동일 정렬)을 반환한다.
+   *
+   * @throws NotFoundException 작품 미존재
+   * @throws ForbiddenException 소유자 아님
+   * @throws BadRequestException 빈 배열 / 중복 / 개수 불일치 / 미소속 에피소드 포함
+   */
+  async reorderEpisodes(
+    authorId: string,
+    workId: string,
+    orderedEpisodeIds: string[],
+  ): Promise<EpisodeSummary[]> {
+    const work = await this.workRepo.findById(workId)
+    if (!work) throw new NotFoundException('작품을 찾을 수 없습니다')
+    if (work.authorId !== authorId) throw new ForbiddenException('에피소드 순서 변경 권한이 없습니다')
+
+    if (orderedEpisodeIds.length === 0) {
+      throw new BadRequestException('순서를 지정할 에피소드가 없습니다')
+    }
+    // 중복 검증
+    const uniqueInput = new Set(orderedEpisodeIds)
+    if (uniqueInput.size !== orderedEpisodeIds.length) {
+      throw new BadRequestException('중복된 에피소드가 포함되어 있습니다')
+    }
+
+    // 집합 일치 검증 — 작품의 전체 에피소드와 정확히 동일해야 한다 (부분 재정렬 금지)
+    const existing = await this.workRepo.findEpisodesFiltered(workId, [])
+    if (orderedEpisodeIds.length !== existing.length) {
+      throw new BadRequestException('작품의 전체 에피소드와 개수가 일치하지 않습니다')
+    }
+    const existingIds = new Set(existing.map((e) => e.id))
+    for (const id of orderedEpisodeIds) {
+      if (!existingIds.has(id)) {
+        throw new BadRequestException('작품에 속하지 않은 에피소드가 포함되어 있습니다')
+      }
+    }
+
+    await this.workRepo.reorderEpisodes(workId, orderedEpisodeIds)
+    return this.workRepo.findEpisodesFiltered(workId, [])
   }
 
   /** 에피소드 삭제 (소유권 검증) */

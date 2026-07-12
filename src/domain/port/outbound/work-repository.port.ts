@@ -47,6 +47,15 @@ export interface WorkRepositoryPort {
   findBySharedToken(token: string): Promise<Episode | null>
   /** 특정 에피소드 목록 조회 (status 필터링 포함) */
   findEpisodesFiltered(workId: string, excludeStatuses?: EpisodeStatus[]): Promise<EpisodeSummary[]>
+  /**
+   * 에피소드 순서 일괄 재부여 (F-20 — 기획 §13).
+   *
+   * `orderedEpisodeIds[i]` 의 `orderNum` 을 `i+1` 로 원자 재부여한다.
+   * Episode.orderNum 은 unique 제약이 없어(`@@index([workId, orderNum])` 논유니크 인덱스)
+   * 재부여 중 충돌이 발생하지 않으므로 임시 오프셋 없이 단일 `$transaction` 으로 직접 갱신.
+   * 각 update 는 `{ id, workId }` 로 스코프해 다른 작품 에피소드 오염을 방어(집합 검증은 UseCase).
+   */
+  reorderEpisodes(workId: string, orderedEpisodeIds: string[]): Promise<void>
   /** 에피소드 내용 업데이트 (재업로드) */
   updateEpisodeContent(id: string, data: { title?: string; subtitle?: string; description?: string; blocks?: Block[]; rawMd?: string; sourceFormat?: string }): Promise<Episode>
   /** 작품 테마 배정 */

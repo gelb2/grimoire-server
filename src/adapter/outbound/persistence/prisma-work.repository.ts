@@ -289,6 +289,25 @@ export class PrismaWorkRepository implements WorkRepositoryPort {
     })
     return rows.map((r) => ({ ...r, status: r.status as EpisodeStatus }))
   }
+
+  /**
+   * 에피소드 순서 일괄 재부여 (F-20) — 단일 `$transaction` 원자 갱신.
+   *
+   * orderNum 은 unique 제약이 없어(schema `@@index([workId, orderNum])` 논유니크) 재부여 중
+   * 충돌이 없다 → 임시 오프셋 불필요, 직접 재부여로 충분. `updateMany({ where: { id, workId } })`
+   * 로 스코프해 orderedEpisodeIds 에 타 작품 에피소드가 섞여도 물리적으로 갱신되지 않게 방어한다
+   * (집합 일치 검증은 UseCase 가 선수행 — 여기선 심층 방어).
+   */
+  async reorderEpisodes(workId: string, orderedEpisodeIds: string[]): Promise<void> {
+    await this.prisma.$transaction(
+      orderedEpisodeIds.map((id, index) =>
+        this.prisma.episode.updateMany({
+          where: { id, workId },
+          data: { orderNum: index + 1 },
+        }),
+      ),
+    )
+  }
 }
 
 function toWorkDomain(row: {
