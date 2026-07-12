@@ -252,7 +252,8 @@ HTTP 미노출. NestJS `@Cron('0 0 4 * * *')` 매일 새벽 4시 1회 — PAY-P0
 | POST | `/api/credits/gift` | 응원 선물 (독자 → 작가) — body `{receiverId, amount}` `amount` **단위 pt** (1,000/3,000/5,000pt 3단계, CC-2b §6 결정) | JWT |
 | GET | `/api/credits/ranking` | 응원받는 작가 랭킹 — **CC-3 (HIGH-3) 재작성**: `CreditLedger source='gift', type='earn'` groupBy. 반환 `{authorId, totalGifted}[]` (구 `CreditLog reason='gift_received'` 집계 폐기 — CC-2b 신 선물 정합) | - |
 | GET | `/api/credits/balance` | 4 출처 포인트 잔액 (`CreditBalance` — bySource/total/deficit/available). **CC-3 (CRITICAL-1) lazy 안전망 진입점** — 호출 시 `MembershipPlanPort.checkAndResetExpiredPool` 자동 실행 (poolResetAt 만료 시 풀 리셋). cron 실패 백업 — 이월 금지 코드 강제 | JWT |
-| GET | `/api/credits/logs` | 크레딧 로그 조회 — **CC-3 (HIGH-3) 응답 형태 변경**: `CreditLog[]` → `CreditLedgerEntry[]` (source/type/amount/balanceAfter/expiresAt/relatedId/reason/createdAt). 4 출처 분리 + 만료 + relatedId 까지 노출 | JWT |
+| GET | `/api/credits/logs` | 크레딧 로그 조회 — 응답 `CreditLedgerEntry[]` (source/type/amount/balanceAfter/expiresAt/relatedId/reason/createdAt). **F-21** 쿼리 `?from=ISO8601&to=ISO8601&limit=1..100&offset=0..` (기간 필터 + 오프셋 페이지네이션, 전부 optional — 무파라미터 시 최신순 100건 하위호환). 응답은 배열 유지(web 계약 미파손, hasMore 는 `length===limit` 로 클라 추정) | JWT |
+| GET | `/api/credits/expiring` | **F-21** (brightMall #1) 구독 풀 만료 예정 요약 — 활성 유료 구독의 다음 리셋일 소멸 예정 pt. 응답 `{ expiringAmount, expiresAt } \| null`(free/미구독/잔액0 시 null). 구독 풀은 이월 금지(매월 리셋)라 현재 구독 잔액 전액이 poolResetAt 에 소멸 | JWT |
 
 ### Stats
 
