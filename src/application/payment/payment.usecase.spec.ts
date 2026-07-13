@@ -2,6 +2,7 @@ import { PaymentUseCase, CREDIT_PRODUCTS } from './payment.usecase'
 import { BadRequestException } from '@nestjs/common'
 import type { NormalizedWebhookEvent } from '@domain/port/outbound/payment-gateway.port'
 import type { WebhookEventRecord } from '@domain/port/outbound/webhook-event-repository.port'
+import { WebhookVerificationFailedError } from '@domain/model/webhook-verification-error'
 
 describe('PaymentUseCase', () => {
   let useCase: PaymentUseCase
@@ -367,14 +368,28 @@ describe('PaymentUseCase', () => {
   })
 
   describe('processWebhook', () => {
-    it('서명 검증/파싱 실패 시(null 반환) 무시한다', async () => {
+    // F-13 — 무효(서명/파싱/eventId)는 어댑터가 throw(→컨트롤러 400). null 은 정상이나 처리 대상
+    // 아닌 이벤트(무시=2xx ack)만 의미. reason='ignored'.
+    it('처리 대상 아닌 이벤트(null 반환) 는 ignored 로 무시한다', async () => {
       mockPaymentGateway.verifyAndParseWebhook.mockReturnValue(null)
 
       const result = await useCase.processWebhook(dummyBody, dummyHeaders)
 
       expect(result.processed).toBe(false)
-      expect(result.reason).toBe('invalid_or_ignored')
+      expect(result.reason).toBe('ignored')
       // null 반환 시 멱등성 조회도 호출하지 않음
+      expect(mockWebhookEventRepo.findByEventId).not.toHaveBeenCalled()
+    })
+
+    // F-13 — 어댑터가 WebhookVerificationFailedError throw 시 usecase 는 삼키지 않고 전파(컨트롤러 400)
+    it('서명검증 실패(어댑터 throw)는 삼키지 않고 전파한다', async () => {
+      mockPaymentGateway.verifyAndParseWebhook.mockImplementation(() => {
+        throw new WebhookVerificationFailedError('signature_verification_failed')
+      })
+
+      await expect(useCase.processWebhook(dummyBody, dummyHeaders)).rejects.toThrow(
+        WebhookVerificationFailedError,
+      )
       expect(mockWebhookEventRepo.findByEventId).not.toHaveBeenCalled()
     })
 

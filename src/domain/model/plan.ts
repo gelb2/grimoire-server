@@ -1,13 +1,3 @@
-/** 플랜 만기 여부 판단 — 순수 도메인 로직 */
-export function isPlanExpired(plan: string, planExpireAt: Date | null): boolean {
-  // free 플랜은 만기 없음
-  if (plan === 'free') return false
-  // 만기일 미설정 = 만기 없음
-  if (!planExpireAt) return false
-  // 만기일 경과 여부
-  return planExpireAt < new Date()
-}
-
 /**
  * CC-5 (HIGH-1 案 B) — `MembershipPlan` 정본 기반 만기 판단.
  *

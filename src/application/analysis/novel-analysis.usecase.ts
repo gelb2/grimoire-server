@@ -133,9 +133,15 @@ export class NovelAnalysisUseCase {
       // self-reference 환각 방지를 위해 분석 대상 에피소드 자신은 RAG에서 자동 제외
       results = await this.runAnalysis(episode.workId, episode.rawMd, analysisTypes, episodeId, abortSignal)
     } catch (error) {
-      // 실패(AbortedError 포함) 시 환불 — CC-1 §5-D: 차감 출처별로 정확히 복원
+      // 실패(AbortedError 포함) 시 환불 — CC-1 §5-D: 차감 출처별로 정확히 복원.
+      // F-10 — 동시성 race 로 spend 시 발생한 deficit(외상)도 함께 역전 (잔여 외상 제거).
       await this.chargePoints
-        .refundAnalysis(authorId, undefined, spentBySource as Record<CreditSource, number> | undefined)
+        .refundAnalysis(
+          authorId,
+          undefined,
+          spentBySource as Record<CreditSource, number> | undefined,
+          spendResult.deficitIncurred,
+        )
         .catch((e) => this.logger.error(`환불 실패: ${String(e)}`))
       throw error
     }

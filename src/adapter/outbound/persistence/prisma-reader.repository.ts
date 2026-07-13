@@ -64,8 +64,9 @@ export class PrismaReaderRepository implements ReaderRepositoryPort {
     const episodeIds = bookmarks.map(b => b.episodeId)
 
     // 에피소드 + 작품 + 작가 정보 조회
+    // F-8 — soft-delete 작가 작품은 라이브러리에서 제외 (dead link 방지 — slug 접근은 이미 404).
     const episodes = await this.prisma.episode.findMany({
-      where: { id: { in: episodeIds } },
+      where: { id: { in: episodeIds }, work: { author: { is: { deletedAt: null } } } },
       include: {
         work: {
           include: {
@@ -151,7 +152,8 @@ export class PrismaReaderRepository implements ReaderRepositoryPort {
     const authorIds = subscriptions.map(s => s.targetAuthorId)
 
     const works = await this.prisma.work.findMany({
-      where: { authorId: { in: authorIds } },
+      // F-8 — 구독 작가가 soft-delete 된 경우 최신작에서 제외 (dead link 방지).
+      where: { authorId: { in: authorIds }, author: { is: { deletedAt: null } } },
       include: {
         author: { select: { name: true, slug: true } },
         _count: { select: { episodes: true } },

@@ -9,7 +9,7 @@ import { FileInterceptor } from '@nestjs/platform-express'
 import { Throttle } from '@nestjs/throttler'
 import { WorkManagementUseCase } from '@application/work/work-management.usecase'
 import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
-import { CreateWorkDto, UpdateWorkDto, CreateEpisodeDto, UpdateEpisodeStatusDto, CreateShareLinkDto } from '@adapter/inbound/http/dto/work.dto'
+import { CreateWorkDto, UpdateWorkDto, CreateEpisodeDto, UpdateEpisodeStatusDto, CreateShareLinkDto, ReorderEpisodesDto } from '@adapter/inbound/http/dto/work.dto'
 import { JwtAuthGuard } from '@adapter/inbound/http/guard/jwt-auth.guard'
 
 const ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp']
@@ -46,6 +46,19 @@ export class WorkManagementController {
   @Post(':workId/episodes')
   async createEpisode(@Req() req: AuthenticatedRequest, @Param('workId') workId: string, @Body() dto: CreateEpisodeDto) {
     return this.workManagementUseCase.createEpisode(req.user.sub, workId, dto)
+  }
+
+  // F-20 (기획 §13) — 에피소드 순서 변경. body.episodeIds = 새 순서대로 나열한 작품 전체 에피소드 id.
+  // 소유권/집합 일치 검증은 UseCase 가 수행. 경로 `:id/episodes/reorder` 는 status(4 세그먼트)와
+  // 세그먼트 수가 달라 라우팅 충돌 없음.
+  @Throttle({ default: { ttl: 60000, limit: 10 } })  // 분당 10회
+  @Patch(':id/episodes/reorder')
+  async reorderEpisodes(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: ReorderEpisodesDto,
+  ) {
+    return this.workManagementUseCase.reorderEpisodes(req.user.sub, id, dto.episodeIds)
   }
 
   @Throttle({ default: { ttl: 60000, limit: 5 } })  // 분당 5회 (이미지 업로드 엄격 제한)

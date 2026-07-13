@@ -3,6 +3,7 @@ import { PrismaService } from '@infrastructure/prisma/prisma.service'
 import {
   CreditLedgerPort,
   CreditLedgerEntry,
+  CreditLedgerFilter,
   CreditBalance,
   SpendResult,
   EarnInput,
@@ -262,14 +263,29 @@ export class PrismaCreditLedgerRepository implements CreditLedgerPort {
     })
   }
 
+  /**
+   * 작가 ledger 이력 조회 (최신순) — F-21 기간/페이지 필터 지원.
+   *
+   * `filter.from`/`filter.to` 는 `createdAt` gte/lte 범위, `filter.offset` 은 skip.
+   * 미전달 시 기존 무필터 동작(최신순 limit 건) — 하위호환.
+   */
   async findByAuthor(
     authorId: string,
     limit: number,
+    filter?: CreditLedgerFilter,
   ): Promise<CreditLedgerEntry[]> {
+    const createdAt =
+      filter?.from || filter?.to
+        ? {
+            ...(filter.from ? { gte: filter.from } : {}),
+            ...(filter.to ? { lte: filter.to } : {}),
+          }
+        : undefined
     const rows = await this.prisma.creditLedger.findMany({
-      where: { authorId },
+      where: { authorId, ...(createdAt ? { createdAt } : {}) },
       orderBy: { createdAt: 'desc' },
       take: limit,
+      ...(filter?.offset ? { skip: filter.offset } : {}),
     })
     return rows.map(toDomain)
   }

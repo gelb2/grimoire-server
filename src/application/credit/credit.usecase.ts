@@ -4,6 +4,7 @@ import {
   CreditLedgerPort,
   CreditBalance,
   CreditLedgerEntry,
+  SubscriptionExpiry,
 } from '@domain/port/outbound/credit-ledger.port'
 import { MembershipPlanPort } from '@domain/port/outbound/membership-plan.port'
 
@@ -169,12 +170,65 @@ export class CreditUseCase {
    *
    * 반환 타입: `CreditLedgerEntry[]` (구 `CreditLog[]` 폴백 제거 — CC-4 Phase 3).
    * `GET /credits/logs` 응답 형태가 신 4 출처 모델(source/type/balanceAfter/expiresAt/relatedId)로 확장.
-   * shared-contracts §30 + docs/api-contract.md 변경 이력 박제.
+   *
+   * F-21 (brightMall #1) — 기간(from/to) + 오프셋 페이지네이션(limit/offset) Optional 확장.
+   *   - `options` 미전달 시 기존 동작(최신순 100건, 무필터) 그대로 — **하위호환**.
+   *   - `limit` 상한 100(대량 스크레이핑 방지), 기본 100. `offset` 은 skip.
+   *   - 응답은 여전히 `CreditLedgerEntry[]` 배열 — web(`GET /credits/logs` → `CreditLogEntry[]`)
+   *     소비 계약 미파손(hasMore 는 `length === limit` 로 클라이언트 추정).
    */
-  async getLogs(authorId: string): Promise<CreditLedgerEntry[]> {
+  async getLogs(
+    authorId: string,
+    options?: { from?: Date; to?: Date; limit?: number; offset?: number },
+  ): Promise<CreditLedgerEntry[]> {
     if (!this.ledger) {
       throw new BadRequestException('포인트 원장이 구성되지 않았습니다')
     }
-    return this.ledger.findByAuthor(authorId, 100)
+    const limit =
+      options?.limit && options.limit > 0 ? Math.min(options.limit, 100) : 100
+    const hasFilter = !!(
+      options?.from ||
+      options?.to ||
+      (options?.offset && options.offset > 0)
+    )
+    // 하위호환 — 필터 없으면 기존 2-인자 호출(무필터 최신순).
+    return hasFilter
+      ? this.ledger.findByAuthor(authorId, limit, {
+          from: options?.from,
+          to: options?.to,
+          offset: options?.offset,
+        })
+      : this.ledger.findByAuthor(authorId, limit)
+  }
+
+  /**
+   * 구독 풀 만료 예정 요약 — F-21 (brightMall #1 통합).
+   *
+   * 설계 근거(경량 신규 GET 채택): `/credits/balance` 응답 DTO(`CreditBalanceResponseDto`)는
+   * web `normalizePointBalance` 가 소비하는 계약이라 확장 시 파손 위험(CC-4 web 미갱신 관통 전례)
+   * → additive 신규 GET(`/credits/expiring`)이 하위호환상 안전.
+   *
+   * 구독 풀 pt 는 이월 금지(매월 리셋 — sensor-subscription-pool-no-rollover 정책)라 현재 구독
+   * 출처 잔액 전액이 다음 리셋일에 소멸한다. 따라서 요약 = { 현재 구독 잔액, poolResetAt }.
+   * 이미 주입된 `MembershipPlanPort.getPlan`(poolResetAt) + `ledger.getBalance`(subscription)만
+   * 재사용 — 신규 port 메서드/스키마 변경 0건.
+   *
+   * 반환 null 조건(만료 예정 없음): membershipRepo 미주입 / plan 없음 / free 등급 / 비활성 구독 /
+   * 구독 잔액 0 이하.
+   *
+   * @throws BadRequestException 포인트 원장 미구성
+   */
+  async getSubscriptionExpiry(authorId: string): Promise<SubscriptionExpiry | null> {
+    if (!this.ledger) {
+      throw new BadRequestException('포인트 원장이 구성되지 않았습니다')
+    }
+    // 구독 풀 미구성(membershipRepo 미주입) — 만료 예정 없음 (BACKWARD COMPATIBLE).
+    if (!this.membershipRepo) return null
+    const plan = await this.membershipRepo.getPlan(authorId)
+    // 활성 유료 구독만 만료 예정 대상 (free/미구독/비활성 → 소멸 예정 없음).
+    if (!plan || plan.tier === 'free' || plan.status !== 'active') return null
+    const balance = await this.ledger.getBalance(authorId)
+    if (balance.subscription <= 0) return null
+    return { expiringAmount: balance.subscription, expiresAt: plan.poolResetAt }
   }
 }

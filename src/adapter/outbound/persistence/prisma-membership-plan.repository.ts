@@ -88,17 +88,23 @@ export class PrismaMembershipPlanRepository implements MembershipPlanPort {
       }
 
       // 4. MembershipPlan + Author 캐시 갱신 (이번 달 풀로 재설정 — 이월 금지)
+      //    expiresAt/planExpireAt 도 nextResetAt 로 미러 — changeTier(§147-148, §167-169
+      //    "pro/premium expiresAt = 다음 리셋일 / planExpireAt = poolResetAt 미러")와 동일 규약.
+      //    게이팅(poolResetAt/status)에는 무영향(cosmetic)이나, 미러 미갱신 시 GET /plan·/membership
+      //    표시 expiresAt 이 리셋 후 stale 되어 정합. resetMonthlyPool 은 findPlansToReset/
+      //    checkAndResetExpiredPool 게이트로 pro/premium active 만 진입 → nextResetAt 이 항상 정답.
       await tx.membershipPlan.update({
         where: { id: plan.id },
         data: {
           monthlyPoolPoints: newPool,
           poolBalance: newPool,
           poolResetAt: nextResetAt,
+          expiresAt: nextResetAt,
         },
       })
       await tx.author.update({
         where: { id: authorId },
-        data: { pointsSubscription: newPool },
+        data: { pointsSubscription: newPool, planExpireAt: nextResetAt },
       })
     })
   }

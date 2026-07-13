@@ -1,15 +1,19 @@
-import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
+import { Injectable, Inject, NotFoundException, ForbiddenException, BadRequestException, Optional, Logger } from '@nestjs/common'
 import { randomBytes } from 'crypto'
 import { WorkRepositoryPort } from '@domain/port/outbound/work-repository.port'
 import { BlobStoragePort } from '@domain/port/outbound/blob-storage.port'
-import { Work, Episode, EpisodeStatus } from '@domain/model/work'
+import { Work, Episode, EpisodeStatus, EpisodeSummary } from '@domain/model/work'
 import { Block } from '@domain/model/block'
 import { normalizeTitle } from '@domain/model/title-normalizer'
 import { NovelAnalysisUseCase } from '@application/analysis/novel-analysis.usecase'
 import { GrantPointsUseCase } from '@application/credit/grant-points.usecase'
+import { AuditLogService } from '@application/admin/audit-log.service'
+import { looksLikeAiApology } from '@lib/ai-apology-heuristic'
 
 @Injectable()
 export class WorkManagementUseCase {
+  private readonly logger = new Logger(WorkManagementUseCase.name)
+
   constructor(
     @Inject('WorkRepositoryPort') private readonly workRepo: WorkRepositoryPort,
     @Inject('BlobStoragePort') private readonly blobStorage: BlobStoragePort,
@@ -17,6 +21,9 @@ export class WorkManagementUseCase {
     // 크레딧 개편 CC-1 (2026-05-19) — 첫 작품 보너스를 신 포인트 원장(CreditLedger)으로 적립.
     // 구 CreditUseCase.grant(Author.credits Int) → GrantPointsUseCase.grantFirstWorkBonus 교체.
     private readonly grantPoints: GrantPointsUseCase,
+    // F-5 (2026-07-11) — context/instructions AI 사과문 오염 관찰용 (관찰 전용, 차단 아님).
+    // Optional — 실 운영(app.module)에서는 주입, spec 미주입 시 관찰 skip (BACKWARD COMPATIBLE).
+    @Optional() private readonly auditLog: AuditLogService | null = null,
   ) {}
 
   /** 작품 생성 */
@@ -39,11 +46,34 @@ export class WorkManagementUseCase {
     return this.workRepo.updateWork(workId, { coverImage })
   }
 
-  /** 작품 수정 (소유권 검증) */
-  async updateWork(authorId: string, workId: string, input: { title?: string; subtitle?: string; description?: string }): Promise<Work> {
+  /** 작품 수정 (소유권 검증) — context/instructions(채팅 프로젝트 메모리·지침) 저장 포함 (F-5) */
+  async updateWork(
+    authorId: string,
+    workId: string,
+    input: { title?: string; subtitle?: string; description?: string; context?: string; instructions?: string },
+  ): Promise<Work> {
     const work = await this.workRepo.findById(workId)
     if (!work) throw new NotFoundException('작품을 찾을 수 없습니다')
     if (work.authorId !== authorId) throw new ForbiddenException('작품 수정 권한이 없습니다')
+
+    // F-5 — context/instructions 는 채팅 시스템 프롬프트 주입원. 명백한 AI 사과문 패턴은
+    // 차단하지 않고(과차단 방지) warn + AuditLog 로 관찰만 한다 (2026-05-30 오염 사건 관측).
+    // 작가 콘텐츠 보호 — 원문은 로깅하지 않고 field/length 만 박제한다.
+    for (const field of ['context', 'instructions'] as const) {
+      const value = input[field]
+      if (value && looksLikeAiApology(value)) {
+        this.logger.warn(
+          `[ai-apology-observe] work=${workId} field=${field} len=${value.length} — AI 사과문 패턴 감지 (저장 허용, 관찰)`,
+        )
+        if (this.auditLog) {
+          await this.auditLog
+            .log(authorId, 'work_context_ai_apology_suspected', workId, { field, length: value.length })
+            .catch((e) =>
+              this.logger.warn(`AuditLog 박제 실패(ai-apology-observe): ${e instanceof Error ? e.message : String(e)}`),
+            )
+        }
+      }
+    }
 
     // title이 전달되면 정규화해서 저장 (Safari Hangul shaping 버그 회피)
     const normalized = input.title !== undefined
@@ -182,6 +212,55 @@ export class WorkManagementUseCase {
     }
 
     return updated
+  }
+
+  /**
+   * 에피소드 순서 변경 (F-20 — 기획 §13, 작가 소유권 검증).
+   *
+   * `orderedEpisodeIds` 는 새 순서대로 나열한 해당 작품의 **전체** 에피소드 id 배열이어야 한다.
+   * 소유권(work.authorId === authorId) 검증 후 집합 일치를 강제한다:
+   *   - 중복 id 불가
+   *   - 작품 전체 에피소드와 개수 일치 (누락/추가 불가)
+   *   - 모든 id 가 해당 작품 소속
+   * 집합이 완전 일치할 때만 `workRepo.reorderEpisodes` 로 `$transaction` 원자 재부여하고,
+   * 재부여 후 orderNum 오름차순 목록(목록 조회와 동일 정렬)을 반환한다.
+   *
+   * @throws NotFoundException 작품 미존재
+   * @throws ForbiddenException 소유자 아님
+   * @throws BadRequestException 빈 배열 / 중복 / 개수 불일치 / 미소속 에피소드 포함
+   */
+  async reorderEpisodes(
+    authorId: string,
+    workId: string,
+    orderedEpisodeIds: string[],
+  ): Promise<EpisodeSummary[]> {
+    const work = await this.workRepo.findById(workId)
+    if (!work) throw new NotFoundException('작품을 찾을 수 없습니다')
+    if (work.authorId !== authorId) throw new ForbiddenException('에피소드 순서 변경 권한이 없습니다')
+
+    if (orderedEpisodeIds.length === 0) {
+      throw new BadRequestException('순서를 지정할 에피소드가 없습니다')
+    }
+    // 중복 검증
+    const uniqueInput = new Set(orderedEpisodeIds)
+    if (uniqueInput.size !== orderedEpisodeIds.length) {
+      throw new BadRequestException('중복된 에피소드가 포함되어 있습니다')
+    }
+
+    // 집합 일치 검증 — 작품의 전체 에피소드와 정확히 동일해야 한다 (부분 재정렬 금지)
+    const existing = await this.workRepo.findEpisodesFiltered(workId, [])
+    if (orderedEpisodeIds.length !== existing.length) {
+      throw new BadRequestException('작품의 전체 에피소드와 개수가 일치하지 않습니다')
+    }
+    const existingIds = new Set(existing.map((e) => e.id))
+    for (const id of orderedEpisodeIds) {
+      if (!existingIds.has(id)) {
+        throw new BadRequestException('작품에 속하지 않은 에피소드가 포함되어 있습니다')
+      }
+    }
+
+    await this.workRepo.reorderEpisodes(workId, orderedEpisodeIds)
+    return this.workRepo.findEpisodesFiltered(workId, [])
   }
 
   /** 에피소드 삭제 (소유권 검증) */

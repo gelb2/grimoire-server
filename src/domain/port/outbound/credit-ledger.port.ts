@@ -55,6 +55,33 @@ export interface SpendResult {
   balanceAfter: number
 }
 
+/**
+ * findByAuthor 기간/페이지 필터 (F-21 — brightMall #1 통합).
+ *
+ * 전부 Optional — 미전달 시 기존 무필터 동작 유지 (하위호환). offset 은 오프셋 페이지네이션(skip).
+ */
+export interface CreditLedgerFilter {
+  /** createdAt 이 이 시각 이상(gte) — 기간 시작 */
+  from?: Date
+  /** createdAt 이 이 시각 이하(lte) — 기간 끝 */
+  to?: Date
+  /** 오프셋 페이지네이션 (skip). 미전달/0 시 처음부터 */
+  offset?: number
+}
+
+/**
+ * 구독 풀 만료 예정 요약 (F-21 — getSubscriptionExpiry 반환).
+ *
+ * 구독 풀 pt 는 이월 금지(매월 리셋)라 현재 구독 잔액 전액이 다음 리셋일에 소멸한다.
+ * `expiringAmount` = 현재 구독 출처 잔액(pointsSubscription), `expiresAt` = 다음 풀 리셋일(poolResetAt).
+ */
+export interface SubscriptionExpiry {
+  /** 다음 리셋일에 소멸 예정인 구독 풀 pt (현재 구독 출처 잔액) */
+  expiringAmount: number
+  /** 소멸 시각 (MembershipPlan.poolResetAt) */
+  expiresAt: Date
+}
+
 /** earn 입력 — 적립 1건 */
 export interface EarnInput {
   authorId: string
@@ -116,8 +143,13 @@ export interface CreditLedgerPort {
    */
   settleDeficit(authorId: string, fromAmount: number): Promise<number>
 
-  /** 작가의 ledger 이력 조회 (최신순) */
-  findByAuthor(authorId: string, limit: number): Promise<CreditLedgerEntry[]>
+  /**
+   * 작가의 ledger 이력 조회 (최신순).
+   *
+   * F-21 (brightMall #1) — `filter`(기간 from/to + offset 페이지네이션) Optional 추가.
+   * 미전달 시 기존 무필터 동작(최신순 limit 건) 그대로 — 하위호환.
+   */
+  findByAuthor(authorId: string, limit: number, filter?: CreditLedgerFilter): Promise<CreditLedgerEntry[]>
 
   /**
    * 작가 누적 소진 pt 합 — CC-4 Phase 1 L2c 신설.

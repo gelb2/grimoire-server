@@ -54,6 +54,7 @@ describe('WorkManagementUseCase', () => {
       updateEpisodeStatus: jest.fn(),
       findBySharedToken: jest.fn(),
       findEpisodesFiltered: jest.fn(),
+      reorderEpisodes: jest.fn(),
     }
     const mockBlobStorage = { isEnabled: false, uploadImage: jest.fn(), deleteImage: jest.fn() } as any
     const mockNovelAnalysis = { indexEpisode: jest.fn().mockResolvedValue({ chunkCount: 0, tokensUsed: 0 }) } as any
@@ -126,6 +127,50 @@ describe('WorkManagementUseCase', () => {
       await useCase.updateWork('author-1', 'work-1', { description: '설명만' })
 
       expect(mockWorkRepo.updateWork).toHaveBeenCalledWith('work-1', { description: '설명만' })
+    })
+
+    // F-5 (2026-07-11) — 채팅 프로젝트 메모리(context)/지침(instructions) 저장 경로 관통
+    it('context/instructions 를 저장 경로로 관통시킨다', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.updateWork.mockResolvedValue(mockWork)
+
+      await useCase.updateWork('author-1', 'work-1', {
+        context: '세계관: 근미래 서울',
+        instructions: '문체는 건조하게',
+      })
+
+      expect(mockWorkRepo.updateWork).toHaveBeenCalledWith('work-1', {
+        context: '세계관: 근미래 서울',
+        instructions: '문체는 건조하게',
+      })
+    })
+
+    // F-5 — 명백한 AI 사과문 패턴은 차단하지 않고(저장 허용) AuditLog 로 관찰만 (원문 로깅 0)
+    it('context 에 AI 사과문 패턴이 있으면 저장은 허용하되 AuditLog 관찰을 남긴다', async () => {
+      const mockAuditLog = { log: jest.fn().mockResolvedValue(undefined) }
+      const ucWithAudit = new WorkManagementUseCase(
+        mockWorkRepo,
+        { isEnabled: false } as any,
+        { indexEpisode: jest.fn() } as any,
+        mockGrantPoints,
+        mockAuditLog as any,
+      )
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.updateWork.mockResolvedValue(mockWork)
+
+      await ucWithAudit.updateWork('author-1', 'work-1', {
+        context: '죄송합니다. 저는 AI 어시스턴트로서 도울 수 없습니다.',
+      })
+
+      // 저장은 그대로 관통 (차단 아님)
+      expect(mockWorkRepo.updateWork).toHaveBeenCalled()
+      // AuditLog 관찰 — 원문이 아니라 field/length 만 박제
+      expect(mockAuditLog.log).toHaveBeenCalledWith(
+        'author-1',
+        'work_context_ai_apology_suspected',
+        'work-1',
+        { field: 'context', length: expect.any(Number) },
+      )
     })
 
     it('작품이 없으면 NotFoundException을 던진다', async () => {
@@ -260,6 +305,80 @@ title: "테스트"
           rawContent: '본문',
         }),
       ).rejects.toThrow(ForbiddenException)
+    })
+  })
+
+  describe('reorderEpisodes (F-20 — 에피소드 순서 변경)', () => {
+    const ep1 = { ...mockEpisode, id: 'ep-1', orderNum: 1 }
+    const ep2 = { ...mockEpisode, id: 'ep-2', orderNum: 2 }
+    const ep3 = { ...mockEpisode, id: 'ep-3', orderNum: 3 }
+
+    it('소유자가 전체 에피소드를 재정렬한다 (reorderEpisodes 위임 + 재정렬 목록 반환)', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      // 1회차 = 집합 검증용(원래 순서), 2회차 = 재부여 후 반환용(새 순서)
+      mockWorkRepo.findEpisodesFiltered
+        .mockResolvedValueOnce([ep1, ep2, ep3])
+        .mockResolvedValueOnce([
+          { ...ep3, orderNum: 1 },
+          { ...ep1, orderNum: 2 },
+          { ...ep2, orderNum: 3 },
+        ])
+      mockWorkRepo.reorderEpisodes.mockResolvedValue(undefined)
+
+      const result = await useCase.reorderEpisodes('author-1', 'work-1', ['ep-3', 'ep-1', 'ep-2'])
+
+      expect(mockWorkRepo.reorderEpisodes).toHaveBeenCalledWith('work-1', ['ep-3', 'ep-1', 'ep-2'])
+      // 반환은 orderNum 오름차순(목록 조회와 동일 정렬)
+      expect(result.map((e: any) => e.id)).toEqual(['ep-3', 'ep-1', 'ep-2'])
+    })
+
+    it('작품이 없으면 NotFoundException', async () => {
+      mockWorkRepo.findById.mockResolvedValue(null)
+      await expect(
+        useCase.reorderEpisodes('author-1', 'no-work', ['ep-1']),
+      ).rejects.toThrow(NotFoundException)
+      expect(mockWorkRepo.reorderEpisodes).not.toHaveBeenCalled()
+    })
+
+    it('소유자가 아니면 ForbiddenException (재정렬 미실행)', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      await expect(
+        useCase.reorderEpisodes('other-author', 'work-1', ['ep-1', 'ep-2', 'ep-3']),
+      ).rejects.toThrow(ForbiddenException)
+      expect(mockWorkRepo.reorderEpisodes).not.toHaveBeenCalled()
+    })
+
+    it('빈 배열이면 BadRequestException', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      await expect(
+        useCase.reorderEpisodes('author-1', 'work-1', []),
+      ).rejects.toThrow(BadRequestException)
+    })
+
+    it('중복 id 가 있으면 BadRequestException', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      await expect(
+        useCase.reorderEpisodes('author-1', 'work-1', ['ep-1', 'ep-1', 'ep-2']),
+      ).rejects.toThrow(BadRequestException)
+      expect(mockWorkRepo.reorderEpisodes).not.toHaveBeenCalled()
+    })
+
+    it('작품 전체 에피소드와 개수가 다르면 BadRequestException (불일치 집합)', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.findEpisodesFiltered.mockResolvedValue([ep1, ep2, ep3])
+      await expect(
+        useCase.reorderEpisodes('author-1', 'work-1', ['ep-1', 'ep-2']),
+      ).rejects.toThrow(BadRequestException)
+      expect(mockWorkRepo.reorderEpisodes).not.toHaveBeenCalled()
+    })
+
+    it('작품에 속하지 않은 id 가 포함되면 BadRequestException (불일치 집합)', async () => {
+      mockWorkRepo.findById.mockResolvedValue(mockWork)
+      mockWorkRepo.findEpisodesFiltered.mockResolvedValue([ep1, ep2, ep3])
+      await expect(
+        useCase.reorderEpisodes('author-1', 'work-1', ['ep-1', 'ep-2', 'ep-X']),
+      ).rejects.toThrow(BadRequestException)
+      expect(mockWorkRepo.reorderEpisodes).not.toHaveBeenCalled()
     })
   })
 

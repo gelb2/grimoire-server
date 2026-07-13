@@ -139,6 +139,105 @@ describe('CreditUseCase', () => {
       expect(logs).toHaveLength(1)
       expect((logs[0] as any).source).toBe('gift')
     })
+
+    // F-21 (brightMall #1) — 기간/페이지 필터 확장 + 하위호환
+    it('F-21 — 무파라미터/무필터 옵션 시 기존 2-인자 호출 유지 (하위호환)', async () => {
+      const mockLedger = { getBalance: jest.fn(), findByAuthor: jest.fn().mockResolvedValue([]) }
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
+      // 빈 옵션 객체도 필터로 취급하지 않는다 (limit/from/to/offset 전부 미지정)
+      await uc.getLogs('author-1', {})
+      expect(mockLedger.findByAuthor).toHaveBeenCalledWith('author-1', 100)
+      expect(mockLedger.findByAuthor).toHaveBeenCalledTimes(1)
+    })
+
+    it('F-21 — from/to/offset 지정 시 3-인자(filter) 호출로 위임한다', async () => {
+      const mockLedger = { getBalance: jest.fn(), findByAuthor: jest.fn().mockResolvedValue([]) }
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
+      const from = new Date('2026-06-01T00:00:00.000Z')
+      const to = new Date('2026-07-01T00:00:00.000Z')
+      await uc.getLogs('author-1', { from, to, limit: 20, offset: 40 })
+      expect(mockLedger.findByAuthor).toHaveBeenCalledWith('author-1', 20, { from, to, offset: 40 })
+    })
+
+    it('F-21 — limit 은 100 상한으로 클램프된다 (대량 스크레이핑 방지)', async () => {
+      const mockLedger = { getBalance: jest.fn(), findByAuthor: jest.fn().mockResolvedValue([]) }
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
+      await uc.getLogs('author-1', { limit: 5000, offset: 10 })
+      expect(mockLedger.findByAuthor).toHaveBeenCalledWith('author-1', 100, {
+        from: undefined,
+        to: undefined,
+        offset: 10,
+      })
+    })
+  })
+
+  // F-21 (brightMall #1) — 구독 풀 만료 예정 요약
+  describe('getSubscriptionExpiry', () => {
+    const activePlan = {
+      id: 'plan-1',
+      authorId: 'author-1',
+      tier: 'pro',
+      monthlyPoolPoints: 93000,
+      poolBalance: 40000,
+      poolResetAt: new Date('2026-08-01T00:00:00.000Z'),
+      startedAt: new Date(),
+      expiresAt: null,
+      polarSubscriptionId: null,
+      status: 'active',
+    }
+
+    it('활성 유료 구독은 현재 구독 잔액 + poolResetAt 요약을 반환한다', async () => {
+      const mockLedger = {
+        getBalance: jest.fn().mockResolvedValue({
+          free: 0, subscription: 40000, gift: 0, charged: 0,
+          total: 40000, deficit: 0, available: 40000,
+        }),
+        findByAuthor: jest.fn(),
+      }
+      const mockMembership = { getPlan: jest.fn().mockResolvedValue(activePlan) }
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any, mockMembership as any)
+
+      const result = await uc.getSubscriptionExpiry('author-1')
+
+      expect(result).toEqual({ expiringAmount: 40000, expiresAt: activePlan.poolResetAt })
+      expect(mockMembership.getPlan).toHaveBeenCalledWith('author-1')
+    })
+
+    it('MembershipPlanPort 미주입 시 null (BACKWARD COMPATIBLE)', async () => {
+      const mockLedger = { getBalance: jest.fn(), findByAuthor: jest.fn() }
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any)
+      expect(await uc.getSubscriptionExpiry('author-1')).toBeNull()
+    })
+
+    it('free 등급/비활성 구독/plan 없음 은 null', async () => {
+      const mockLedger = { getBalance: jest.fn(), findByAuthor: jest.fn() }
+      const freePlan = { getPlan: jest.fn().mockResolvedValue({ ...activePlan, tier: 'free' }) }
+      const cancelled = { getPlan: jest.fn().mockResolvedValue({ ...activePlan, status: 'cancelled' }) }
+      const noPlan = { getPlan: jest.fn().mockResolvedValue(null) }
+
+      expect(await new CreditUseCase(mockAuthorRepo as any, mockLedger as any, freePlan as any).getSubscriptionExpiry('author-1')).toBeNull()
+      expect(await new CreditUseCase(mockAuthorRepo as any, mockLedger as any, cancelled as any).getSubscriptionExpiry('author-1')).toBeNull()
+      expect(await new CreditUseCase(mockAuthorRepo as any, mockLedger as any, noPlan as any).getSubscriptionExpiry('author-1')).toBeNull()
+      // getBalance 는 만료 대상 아닐 때 호출조차 안 함 (조기 반환)
+      expect(mockLedger.getBalance).not.toHaveBeenCalled()
+    })
+
+    it('구독 잔액이 0 이하이면 null (소멸 예정 없음)', async () => {
+      const mockLedger = {
+        getBalance: jest.fn().mockResolvedValue({
+          free: 3000, subscription: 0, gift: 0, charged: 0,
+          total: 3000, deficit: 0, available: 3000,
+        }),
+        findByAuthor: jest.fn(),
+      }
+      const mockMembership = { getPlan: jest.fn().mockResolvedValue(activePlan) }
+      const uc = new CreditUseCase(mockAuthorRepo as any, mockLedger as any, mockMembership as any)
+      expect(await uc.getSubscriptionExpiry('author-1')).toBeNull()
+    })
+
+    it('ledger 미주입 시 BadRequest', async () => {
+      await expect(useCase.getSubscriptionExpiry('author-1')).rejects.toThrow('포인트 원장이 구성되지 않았습니다')
+    })
   })
 
   describe('gift (CC-2b — ledger.transfer 신 경로)', () => {

@@ -1,4 +1,4 @@
-import { getAppEnv, isRemoteEnv } from './app-env'
+import { getAppEnv, isRemoteEnv, isProduction } from './app-env'
 
 /** 부트스트랩 시 환경 변수 검증 */
 export function validateEnv(): void {
@@ -35,12 +35,31 @@ export function validateEnv(): void {
     }
   }
 
+  // F-12 (2026-07-11) — production 필수: Polar 결제(MoR) 시크릿.
+  // 미설정 시 결제 silent 파손(webhook 은 isProduction()→reject, reconciliation 일부만 보완)
+  // → prod 부팅 차단. dev/localhost 는 관대(Polar 없이 로컬 개발 가능 — 부팅 회귀 방지).
+  const productionRequired: { key: string; label: string }[] = [
+    { key: 'POLAR_ACCESS_TOKEN', label: 'POLAR_ACCESS_TOKEN (Polar 결제 API)' },
+    { key: 'POLAR_WEBHOOK_SECRET', label: 'POLAR_WEBHOOK_SECRET (Polar 웹훅 서명 검증)' },
+  ]
+
+  for (const { key, label } of productionRequired) {
+    if (!process.env[key]) {
+      if (isProduction()) {
+        console.error(`CRITICAL: ${label}이(가) production 환경에서 설정되지 않았습니다. 서버를 시작할 수 없습니다.`)
+        process.exit(1)
+      }
+      console.warn(`[env] ${label} 미설정 — dev/localhost 관대 모드 (production 에서는 필수)`)
+    }
+  }
+
   // 선택적 API 키 — 없으면 경고만, 서버는 부팅됨
+  // (구 PAYAPP_* 그룹 제거 — PayappAdapter 폐기됨(payment-gateway.port.ts). 실사용은 Polar,
+  //  Polar 시크릿은 위 productionRequired 로 승격. 'Payment disabled' 오해성 경고 제거.)
   const optionalGroups: { keys: string[]; warning: string }[] = [
     { keys: ['GOOGLE_CLIENT_ID'], warning: 'Google OAuth disabled' },
     { keys: ['ANTHROPIC_API_KEY'], warning: 'Theme AI generation disabled' },
     { keys: ['OPENAI_API_KEY'], warning: 'RAG analysis disabled' },
-    { keys: ['PAYAPP_USER_ID', 'PAYAPP_API_KEY', 'PAYAPP_SECRET'], warning: 'Payment disabled' },
   ]
 
   for (const group of optionalGroups) {

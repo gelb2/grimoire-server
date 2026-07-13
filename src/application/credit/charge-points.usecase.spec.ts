@@ -111,6 +111,23 @@ describe('ChargePointsUseCase', () => {
       expect(result.tier).toBe('short')
       expect(result.chargedPoints).toBe(190)
     })
+
+    // F-11 (2026-07-11) — 사후 차감(응답 이미 제공) 유실 방지: 일시적 DB 오류 유계 재시도
+    it('일시적 spend 오류를 유계 재시도로 흡수한다 (1회 실패 후 성공)', async () => {
+      mockLedger.spend
+        .mockRejectedValueOnce(new Error('deadlock detected'))
+        .mockResolvedValueOnce(spendResult())
+      const result = await useCase.chargeChatTurn('author-1', 2000)
+      expect(result.chargedPoints).toBe(810)
+      expect(mockLedger.spend).toHaveBeenCalledTimes(2)
+    })
+
+    it('유계 재시도 소진 시 마지막 오류를 throw 한다 (호출자가 AuditLog 재조정)', async () => {
+      mockLedger.spend.mockRejectedValue(new Error('DB down'))
+      await expect(useCase.chargeChatTurn('author-1', 2000)).rejects.toThrow('DB down')
+      // CHAT_CHARGE_MAX_ATTEMPTS = 3 (초기 1 + 재시도 2)
+      expect(mockLedger.spend).toHaveBeenCalledTimes(3)
+    })
   })
 
   describe('isChatBlocked — 외상 상한 사전 차단 (게이트 5(c))', () => {
@@ -242,6 +259,33 @@ describe('ChargePointsUseCase', () => {
       })
       expect(mockLedger.earn).toHaveBeenCalledTimes(1)
     })
+
+    // F-10 (2026-07-11) — 동시성 race deficit 도 역전 (실패 분석의 잔여 외상 제거)
+    it('deficitIncurred 전달 시 실차감 출처 복원 + settleDeficit 로 외상 역전', async () => {
+      // 실차감 1,940pt + deficit 500pt = 2,440pt 차감된 분석을 환불
+      await useCase.refundAnalysis(
+        'author-1',
+        undefined,
+        { free: 0, subscription: 0, gift: 0, charged: 1940 },
+        500,
+      )
+      // 실차감분 출처 복원
+      expect(mockLedger.earn).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'charged', amount: 1940 }),
+      )
+      // 이 트랜잭션이 만든 외상 500pt 역전
+      expect(mockLedger.settleDeficit).toHaveBeenCalledWith('author-1', 500)
+    })
+
+    it('deficitIncurred 0/미전달 시 settleDeficit 미호출 (정상 케이스)', async () => {
+      await useCase.refundAnalysis('author-1', undefined, {
+        free: 2440,
+        subscription: 0,
+        gift: 0,
+        charged: 0,
+      })
+      expect(mockLedger.settleDeficit).not.toHaveBeenCalled()
+    })
   })
 
   describe('chargeTheme — 테마 사전 차감 (정액 590pt)', () => {
@@ -273,7 +317,7 @@ describe('ChargePointsUseCase', () => {
 
   // 크레딧 개편 CC-1 (2026-05-19) — 테마 생성 실패 환불
   describe('refundTheme — 테마 생성 실패 환불', () => {
-    it('차감 포인트(590pt)를 충전 출처로 적립한다', async () => {
+    it('spentBySource 미전달 시 전액 충전 출처로 적립한다 (구 호환 폴백)', async () => {
       await useCase.refundTheme('author-1', 'theme-1')
       expect(mockLedger.earn).toHaveBeenCalledWith({
         authorId: 'author-1',
@@ -282,6 +326,42 @@ describe('ChargePointsUseCase', () => {
         reason: 'theme_generate_refund',
         relatedId: 'theme-1',
       })
+    })
+
+    // F-9 (2026-07-11) — 출처별 정확 복원 (구독풀 차감분이 charged 로 둔갑하는 회계 왜곡 방지)
+    it('spentBySource 전달 시 차감된 출처별로 복원한다', async () => {
+      // 구독풀 590pt 로 차감된 테마를 환불 → subscription 출처로 복원 (charged 아님)
+      await useCase.refundTheme('author-1', undefined, {
+        free: 0,
+        subscription: 590,
+        gift: 0,
+        charged: 0,
+      })
+      expect(mockLedger.earn).toHaveBeenCalledWith({
+        authorId: 'author-1',
+        source: 'subscription',
+        amount: 590,
+        reason: 'theme_generate_refund',
+        relatedId: undefined,
+      })
+      // charged 로의 둔갑 적립이 없어야 한다 + 0 출처는 skip → 총 1회
+      expect(mockLedger.earn).toHaveBeenCalledTimes(1)
+    })
+
+    it('spentBySource 가 혼합 출처면 출처별로 각각 복원 (0 출처 skip)', async () => {
+      await useCase.refundTheme('author-1', undefined, {
+        free: 300,
+        subscription: 0,
+        gift: 0,
+        charged: 290,
+      })
+      expect(mockLedger.earn).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'free', amount: 300 }),
+      )
+      expect(mockLedger.earn).toHaveBeenCalledWith(
+        expect.objectContaining({ source: 'charged', amount: 290 }),
+      )
+      expect(mockLedger.earn).toHaveBeenCalledTimes(2)
     })
   })
 })

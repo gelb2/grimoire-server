@@ -272,8 +272,10 @@ export class PaymentUseCase {
     deficitCredits?: number
     reason?: string
   }> {
+    // F-13 — 무효(서명검증 실패/파싱 불가/eventId 누락)는 어댑터가 WebhookVerificationFailedError
+    // throw → 컨트롤러가 400 매핑. 여기서 null 은 "정상이나 처리 대상 아닌 이벤트"(무시=2xx ack)뿐.
     const event = this.paymentGateway.verifyAndParseWebhook(rawBody, headers)
-    if (!event) return { processed: false, reason: 'invalid_or_ignored' }
+    if (!event) return { processed: false, reason: 'ignored' }
 
     // CC-5 (PAY-P1-4) — 구독 생명주기 이벤트는 구독 webhook usecase 로 라우팅.
     if (isSubscriptionEvent(event)) {

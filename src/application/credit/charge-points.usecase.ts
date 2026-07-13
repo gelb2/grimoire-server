@@ -41,6 +41,13 @@ import { CreditSource, CREDIT_CONSUMPTION_ORDER } from '@domain/model/credit-sou
 @Injectable()
 export class ChargePointsUseCase {
   private readonly logger = new Logger(ChargePointsUseCase.name)
+  /**
+   * F-11 (2026-07-11) — 채팅 사후 차감 유계 재시도.
+   * 사후 차감(응답 이미 제공)이라 spend 유실 = revenue leak(§0). 일시적 DB 오류
+   * (deadlock/serialization/blip)를 유계 재시도로 흡수해 정규 spend 경로를 유지한다.
+   */
+  private static readonly CHAT_CHARGE_MAX_ATTEMPTS = 3
+  private static readonly CHAT_CHARGE_RETRY_BASE_MS = 50
 
   constructor(
     @Inject('CreditLedgerPort')
@@ -84,12 +91,10 @@ export class ChargePointsUseCase {
     const tiers = loadChatChargeTiers(settings)
     const tierDef = resolveChatChargeTier(inputTokens, tiers)
 
-    const result = await this.ledger.spend({
-      authorId,
-      amount: tierDef.points,
-      reason: `chat_turn:${tierDef.tier}`,
-      relatedId,
-    })
+    // F-11 — 잔액 부족은 spend 내부가 deficit(외상)로 흡수(throw 아님) → 재시도 대상은 DB 오류뿐.
+    // spend 는 단일 $transaction 이라 throw=rollback → 재시도 이중과금 없음(희박한 커밋-ack-loss
+    // 예외만, 소액). 유계 재시도 소진 시 throw → 호출자(chat.usecase)가 durable AuditLog 재조정.
+    const result = await this.spendChatChargeWithRetry(authorId, tierDef, relatedId)
 
     if (result.deficitIncurred > 0) {
       this.logger.warn(
@@ -103,6 +108,41 @@ export class ChargePointsUseCase {
       tier: tierDef.tier,
       chargedPoints: tierDef.points,
     }
+  }
+
+  /**
+   * F-11 — 채팅 사후 차감 spend 를 유계 재시도한다.
+   * 일시적 DB 오류(deadlock/serialization/connection blip)를 흡수 → 정규 spend 경로 유지
+   * (잔액 부족 시 spend 가 deficit 를 정규 생성 = 불변식 보존). 재시도 소진 시 마지막 오류 throw.
+   */
+  private async spendChatChargeWithRetry(
+    authorId: string,
+    tierDef: { tier: string; points: number },
+    relatedId?: string,
+  ): Promise<SpendResult> {
+    let lastErr: unknown
+    for (let attempt = 1; attempt <= ChargePointsUseCase.CHAT_CHARGE_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this.ledger.spend({
+          authorId,
+          amount: tierDef.points,
+          reason: `chat_turn:${tierDef.tier}`,
+          relatedId,
+        })
+      } catch (e: unknown) {
+        lastErr = e
+        if (attempt < ChargePointsUseCase.CHAT_CHARGE_MAX_ATTEMPTS) {
+          this.logger.warn(
+            `채팅 차감 재시도 ${attempt}/${ChargePointsUseCase.CHAT_CHARGE_MAX_ATTEMPTS - 1} ` +
+              `(authorId=${authorId}, tier=${tierDef.tier}): ${e instanceof Error ? e.message : String(e)}`,
+          )
+          await new Promise((r) =>
+            setTimeout(r, ChargePointsUseCase.CHAT_CHARGE_RETRY_BASE_MS * attempt),
+          )
+        }
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
   }
 
   /**
@@ -163,8 +203,83 @@ export class ChargePointsUseCase {
    *
    * @param spentBySource chargeAnalysis 의 SpendResult.spentBySource.
    *        미전달 시(구 호출 호환) 전액 charged 복원으로 폴백.
+   * @param deficitIncurred chargeAnalysis 의 SpendResult.deficitIncurred (F-10, 2026-07-11).
+   *        분석 사전 잔액 검증을 통과했으나 동시 요청 race 로 spend 시 deficit(외상)이 발생한
+   *        경우, 실차감 출처 복원만으로는 그 외상이 잔존한다(실패한 분석인데 외상 ≤2,440pt 남음).
+   *        settleDeficit 로 이 트랜잭션이 만든 외상도 역전한다(현재 deficit 상한까지 capped —
+   *        타 트랜잭션 외상 침범 없음, 이중 감액 없음).
    */
   async refundAnalysis(
+    authorId: string,
+    relatedId?: string,
+    spentBySource?: Record<CreditSource, number>,
+    deficitIncurred?: number,
+  ): Promise<void> {
+    if (!spentBySource) {
+      // spentBySource 미전달 → 구 동작 폴백 (전액 charged)
+      await this.ledger.earn({
+        authorId,
+        source: 'charged',
+        amount: ANALYSIS_POINT_COST,
+        reason: 'novel_analysis_refund',
+        relatedId,
+      })
+    } else {
+      // 출처별 복원 — 차감된 출처에 같은 금액을 되돌린다 (0 인 출처는 skip)
+      for (const source of CREDIT_CONSUMPTION_ORDER) {
+        const amount = spentBySource[source] ?? 0
+        if (amount > 0) {
+          await this.ledger.earn({
+            authorId,
+            source,
+            amount,
+            reason: 'novel_analysis_refund',
+            relatedId,
+          })
+        }
+      }
+    }
+
+    // F-10 — 이 차감이 동시성으로 만든 deficit(외상)도 역전 (실패 분석의 잔여 외상 제거).
+    if (deficitIncurred && deficitIncurred > 0) {
+      await this.ledger.settleDeficit(authorId, deficitIncurred)
+    }
+  }
+
+  /**
+   * 테마 1회 사전 차감 (§8-4 — 정액 590pt, 일일 무료 초과분).
+   *
+   * @param authorId 차감 대상
+   * @returns SpendResult — 환불 시 출처별 복원을 위해 spentBySource 를 호출자가 보유 (F-9, CC-1 §5-D).
+   * @throws BadRequestException 잔액 부족
+   */
+  async chargeTheme(authorId: string, relatedId?: string): Promise<SpendResult> {
+    const balance = await this.ledger.getBalance(authorId)
+    if (balance.available < THEME_POINT_COST) {
+      throw new BadRequestException(
+        `테마 생성은 ${THEME_POINT_COST} 포인트가 필요합니다. 포인트가 부족합니다.`,
+      )
+    }
+    return this.ledger.spend({
+      authorId,
+      amount: THEME_POINT_COST,
+      reason: 'theme_generate',
+      relatedId,
+    })
+  }
+
+  /**
+   * 테마 생성 실패 시 환불 — 차감 포인트(590pt)를 출처별로 정확히 복원 (F-9, 2026-07-11).
+   *
+   * 크레딧 개편 CC-1 (2026-05-19) — 구 GenerateThemeUseCase 의 'theme_generate_refund' 보존.
+   * 구 구현은 chargeTheme 이 void 라 spentBySource 미보존 → 항상 source='charged' 복원해
+   * subscription/free/gift 차감분이 충전으로 둔갑(§0 COGS/CAC 회계 왜곡 + 만료 정책 불일치).
+   * refundAnalysis §5-D 와 동일 패턴 — chargeTheme 의 SpendResult.spentBySource 를 받아 복원.
+   *
+   * @param spentBySource chargeTheme 의 SpendResult.spentBySource.
+   *        미전달 시(구 호출 호환) 전액 charged 복원으로 폴백.
+   */
+  async refundTheme(
     authorId: string,
     relatedId?: string,
     spentBySource?: Record<CreditSource, number>,
@@ -174,8 +289,8 @@ export class ChargePointsUseCase {
       await this.ledger.earn({
         authorId,
         source: 'charged',
-        amount: ANALYSIS_POINT_COST,
-        reason: 'novel_analysis_refund',
+        amount: THEME_POINT_COST,
+        reason: 'theme_generate_refund',
         relatedId,
       })
       return
@@ -188,48 +303,10 @@ export class ChargePointsUseCase {
           authorId,
           source,
           amount,
-          reason: 'novel_analysis_refund',
+          reason: 'theme_generate_refund',
           relatedId,
         })
       }
     }
-  }
-
-  /**
-   * 테마 1회 사전 차감 (§8-4 — 정액 590pt, 일일 무료 초과분).
-   *
-   * @param authorId 차감 대상
-   * @throws BadRequestException 잔액 부족
-   */
-  async chargeTheme(authorId: string, relatedId?: string): Promise<void> {
-    const balance = await this.ledger.getBalance(authorId)
-    if (balance.available < THEME_POINT_COST) {
-      throw new BadRequestException(
-        `테마 생성은 ${THEME_POINT_COST} 포인트가 필요합니다. 포인트가 부족합니다.`,
-      )
-    }
-    await this.ledger.spend({
-      authorId,
-      amount: THEME_POINT_COST,
-      reason: 'theme_generate',
-      relatedId,
-    })
-  }
-
-  /**
-   * 테마 생성 실패 시 환불 — 차감 포인트(590pt)를 충전 출처로 적립.
-   *
-   * 크레딧 개편 CC-1 (2026-05-19) — 구 GenerateThemeUseCase 의 'theme_generate_refund'
-   * (Author.credits +1) 환불 동작 보존. refundAnalysis 와 동일 패턴
-   * (project_analysis_refund_gap 정합 — 사전 차감 실패 시 출처 charged 복원).
-   */
-  async refundTheme(authorId: string, relatedId?: string): Promise<void> {
-    await this.ledger.earn({
-      authorId,
-      source: 'charged',
-      amount: THEME_POINT_COST,
-      reason: 'theme_generate_refund',
-      relatedId,
-    })
   }
 }
