@@ -17,21 +17,17 @@ set -u   # 미정의 변수 참조 시 에러
 # ─────────────────────────────────────────────────────────────
 # 공통 상수 (매트릭스) — GCP (docs/DEPLOY.md §1 실측 기준)
 # ─────────────────────────────────────────────────────────────
-readonly GCP_PROJECT_ID="grimoire-491708"
-readonly GCP_PROJECT_NUMBER="23295981916"
-readonly GCP_REGION="asia-northeast1"
-readonly ARTIFACT_REGISTRY_HOST="asia-northeast1-docker.pkg.dev"
-readonly ARTIFACT_REPO="grimoire-docker"
+# 계정별 값은 실행 환경에서 주입한다. 원래 운영 값은 Git 이력 자료다.
+readonly GCP_PROJECT_ID="${GCP_PROJECT_ID:-}"
+readonly GCP_REGION="${GCP_REGION:-}"
+readonly ARTIFACT_REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
+readonly ARTIFACT_REPO="${ARTIFACT_REPO:-}"
 readonly ARTIFACT_REPO_FQ="${ARTIFACT_REGISTRY_HOST}/${GCP_PROJECT_ID}/${ARTIFACT_REPO}"
-readonly IMAGE_REPO="grimoire-server"
-readonly BUILD_PLATFORM="linux/amd64"
-# Cloud Run 공개 URL pattern: https://grimoire-{server,web}-{env}-tolwmynw6a-an.a.run.app
-readonly CLOUD_RUN_URL_SUFFIX="tolwmynw6a-an.a.run.app"
+readonly IMAGE_REPO="${IMAGE_REPO:-grimoire-server}"
+readonly BUILD_PLATFORM="${BUILD_PLATFORM:-linux/amd64}"
 readonly IMAGE_KEEP_COUNT=5
-readonly EXPECTED_GCP_ACCOUNT="rainmaker8492@gmail.com"
-# Cloud Run 서비스 계정 (기본 compute SA)
-readonly CLOUD_RUN_SA="${GCP_PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-# Cloud Run 컨테이너 포트 (server)
+readonly EXPECTED_GCP_ACCOUNT="${EXPECTED_GCP_ACCOUNT:-}"
+readonly CLOUD_RUN_SA="${CLOUD_RUN_SA:-}"
 readonly CONTAINER_PORT=3000
 
 # ─────────────────────────────────────────────────────────────
@@ -66,6 +62,18 @@ validate_env() {
   esac
 }
 
+# 필수 설정 이름만 출력한다. 자격증명이나 설정 값을 출력하지 않는다.
+validate_cloud_config() {
+  local suffix name
+  case "$1" in dev) suffix=DEV ;; prod) suffix=PROD ;; *) fail "ENV must be dev or prod" ;; esac
+  if [ "$suffix" = PROD ]; then
+    [ -n "${CORS_ORIGIN_PROD:-}" ] && [ "$CORS_ORIGIN_PROD" != "*" ] || fail "CORS_ORIGIN_PROD에 본인의 웹 출처를 설정해야 합니다"
+  fi
+  for name in GCP_PROJECT_ID GCP_REGION ARTIFACT_REPO EXPECTED_GCP_ACCOUNT CLOUD_RUN_SA SERVER_SERVICE_${suffix} SERVER_RUN_URL_${suffix} PUBLIC_API_URL_${suffix} CLOUD_SQL_${suffix}; do
+    [ -n "${!name:-}" ] || fail "필수 사용자 설정 누락: $name (docs/DEPLOY.md 참고)"
+  done
+}
+
 # ENV → git 브랜치
 env_to_branch() {
   case "$1" in
@@ -78,8 +86,8 @@ env_to_branch() {
 # ENV → Cloud Run 서비스 이름 (server)
 env_to_app_name() {
   case "$1" in
-    dev) echo "grimoire-server-dev" ;;
-    prod) echo "grimoire-server-prod" ;;
+    dev) echo "${SERVER_SERVICE_DEV}" ;;
+    prod) echo "${SERVER_SERVICE_PROD}" ;;
     *) return 1 ;;
   esac
 }
@@ -87,8 +95,8 @@ env_to_app_name() {
 # ENV → Cloud Run 자동 발급 공개 URL (도메인 매핑 외 직접 접근용)
 env_to_run_url() {
   case "$1" in
-    dev) echo "https://grimoire-server-dev-${CLOUD_RUN_URL_SUFFIX}" ;;
-    prod) echo "https://grimoire-server-prod-${CLOUD_RUN_URL_SUFFIX}" ;;
+    dev) echo "${SERVER_RUN_URL_DEV}" ;;
+    prod) echo "${SERVER_RUN_URL_PROD}" ;;
     *) return 1 ;;
   esac
 }
@@ -96,8 +104,8 @@ env_to_run_url() {
 # ENV → public API URL (커스텀 도메인)
 env_to_public_api_url() {
   case "$1" in
-    dev) echo "https://dev-api.grimoire-book.com" ;;
-    prod) echo "https://api.grimoire-book.com" ;;
+    dev) echo "${PUBLIC_API_URL_DEV}" ;;
+    prod) echo "${PUBLIC_API_URL_PROD}" ;;
     *) return 1 ;;
   esac
 }
@@ -105,8 +113,8 @@ env_to_public_api_url() {
 # ENV → Cloud SQL connection name
 env_to_cloudsql_instance() {
   case "$1" in
-    dev) echo "${GCP_PROJECT_ID}:${GCP_REGION}:grimoire-db-dev" ;;
-    prod) echo "${GCP_PROJECT_ID}:${GCP_REGION}:grimoire-db-prod" ;;
+    dev) echo "${CLOUD_SQL_DEV}" ;;
+    prod) echo "${CLOUD_SQL_PROD}" ;;
     *) return 1 ;;
   esac
 }

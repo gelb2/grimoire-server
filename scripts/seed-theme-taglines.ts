@@ -9,6 +9,7 @@
  */
 
 import { PrismaClient } from '@prisma/client'
+import { requireLocalSeedTarget } from '../src/infrastructure/config/local-seed-target'
 
 // .env 파일 로드 시도
 try {
@@ -24,7 +25,9 @@ if (!process.env.DATABASE_URL) {
   process.exit(1)
 }
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient({
+  datasources: { db: { url: requireLocalSeedTarget('DATABASE_URL', ['postgresql:', 'postgres:']) } },
+})
 
 // ── 작가별 tagline + dividerIcon 데이터 ──
 

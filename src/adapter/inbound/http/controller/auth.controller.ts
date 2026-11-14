@@ -83,6 +83,7 @@ export class AuthController {
      * Optional — 미주입 시 4 endpoint 503 폴백 (회귀 보존). 실 운영은 app.module 주입.
      */
     @Optional()
+    @Inject(EmailVerificationUseCase)
     private readonly emailVerification: EmailVerificationUseCase | null = null,
   ) {}
 

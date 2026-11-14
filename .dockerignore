@@ -1,9 +1,30 @@
-node_modules
-dist
-.git
-.gitignore
-coverage
-*.md
-test-results
-.env
-.env.local
+# 빌드에 필요한 경로만 컨텍스트에 포함한다.
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**
+# 허용한 소스 하위에도 개인 설정/인증/덤프/로그를 포함하지 않는다.
+!tsconfig.build.json
+!nest-cli.json
+!prisma/
+!prisma/schema.prisma
+!prisma/migrations/
+!prisma/migrations/**
+!docker-entrypoint.sh
+
+# 운영 의존성 고지 생성에 필요한 파일만 포함
+!scripts/
+!scripts/generate-third-party-notices.mjs
+!licenses/
+!licenses/**
+**/.env*
+**/*.pem
+**/*.key
+**/*credentials*.json
+**/*service-account*.json
+**/*service_account*.json
+**/*.dump
+**/*.log
+src/**/*.spec.ts

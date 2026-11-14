@@ -4,17 +4,16 @@
  * 사슴악마 작가 등록 → 작품 생성 → 15개 MD 파일을 에피소드로 업로드
  *
  * 사용 시점: DeerDevil 시드 데이터를 API 경유로 등록할 때 일회성 실행
- * 전제조건: SEED_API_URL 환경변수 (미설정 시 dev 환경 기본값 사용),
+ * 전제조건: APP_ENV=localhost, SEED_API_URL 환경변수 (로컬 API 명시),
  *          grimoire-web/DeerDevil_MDfiles 디렉토리 존재
  * 실행: npx tsx scripts/seed-deerdevil.ts
  */
 
 import { readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
+import { requireLocalSeedTarget } from '../src/infrastructure/config/local-seed-target'
 
-const API_BASE =
-  process.env.SEED_API_URL ||
-  'https://grimoire-server-dev.salmonsmoke-9e462011.koreacentral.azurecontainerapps.io/api'
+const API_BASE = requireLocalSeedTarget('SEED_API_URL', ['http:', 'https:'])
 
 const MD_DIR = join(__dirname, '../../grimoire-web/DeerDevil_MDfiles')
 

@@ -6,17 +6,20 @@
  * 2026-04-25 변경: 평문 비번 제거 (보안 회수). SEED_ADMIN_PASSWORD env 필수.
  */
 import { PrismaClient } from '@prisma/client'
+import { requireLocalSeedTarget } from '../src/infrastructure/config/local-seed-target'
 import * as bcrypt from 'bcryptjs'
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient({
+  datasources: { db: { url: requireLocalSeedTarget('DATABASE_URL', ['postgresql:', 'postgres:']) } },
+})
 
 async function main() {
-  const slug = 'grimoireadmin'
-  const email = 'admin@grimoire-book.com'
-  const name = 'GrimoireAdmin'
+  const slug = process.env.SEED_ADMIN_SLUG
+  const email = process.env.SEED_ADMIN_EMAIL
+  const name = process.env.SEED_ADMIN_NAME || 'Local Administrator'
   const password = process.env.SEED_ADMIN_PASSWORD
-  if (!password) {
-    throw new Error('SEED_ADMIN_PASSWORD env 필수. 예: SEED_ADMIN_PASSWORD="strong-pw" npx tsx scripts/seed-admin.ts')
+  if (!password || !slug || !email) {
+    throw new Error('SEED_ADMIN_PASSWORD, SEED_ADMIN_SLUG, SEED_ADMIN_EMAIL env 필수')
   }
 
   const passwordHash = await bcrypt.hash(password, 10)
@@ -45,9 +48,12 @@ async function main() {
     console.log(`관리자 계정 생성: ${slug} (id: ${admin.id})`)
   }
 
-  console.log(`로그인: slug=${slug}, password=${password}`)
+  console.log('관리자 준비 완료. 비밀번호는 출력하지 않습니다.')
 }
 
 main()
-  .catch(console.error)
+  .catch(() => {
+    console.error('관리자 시드 실패. 설정과 DB 상태를 확인하세요.')
+    process.exitCode = 1
+  })
   .finally(() => prisma.$disconnect())

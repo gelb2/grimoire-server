@@ -1,5 +1,14 @@
 # TODO — grimoire-server
 
+
+## 공개 준비 후속
+
+- [ ] 자체 소스의 재사용 라이선스를 선택한 뒤 적용한다. MIT 적용안은 준비했으며 원고·외부 자료와 범위를 구분한다. 본인 작성자 정보와 확인된 원고 권한은 추가 진행 차단 항목으로 두지 않는다.
+- [ ] 바이너리·Docker 이미지를 외부에 배포할 때 실제 포함한 OS·네이티브 라이브러리의 고지·소스 제공 조건을 확인한다. 현재 npm 운영 의존성의 원문·버전·출처·보충 고지는 THIRD_PARTY_NOTICES.md와 생성 목록을 따른다.
+- [ ] 실제 외부 연동과 GCP 배포는 별도 허용 범위에서 검증한다. 미설정·테스트 대역 검사와 구분한다. 현재 공개·push·클라우드 변경·유료 호출·키 유효성 시험은 수행하지 않는다.
+
+Docker 빌드·Compose 기동과 Chrome·Playwright WebKit 18개 화면 검사는 2026-11-14에 통과했다. 소스 전체 유닛은 서버 1,267개, 최신 웹 289개다. 실제 Safari·CLS 측정 범위는 별도 검토 기록을 따른다.
+
 > 남은 작업만 기록한다. 완료 항목은 `CHANGELOG.md` 참조.
 
 ---
@@ -15,9 +24,11 @@
 - [ ] **CC-2b 후** — `completePaymentAtomically` 구 메서드 제거 (`@deprecated` 상태, 호출처 0건). `Payment.credits` 컬럼 물리 rename(`credits`→`points`) — 마이그레이션 동반 (MEDIUM-4)
 - [ ] CC-3(이월 금지 + 원장 단일화) / CC-4(V Phase 마이그레이션 적용) / CC-5(PAY-P1-4 Polar 구독) — `reports/CREDIT_CORE_DIAGNOSIS.md` §8 sprint 분할표
 
-### Claude Code harness 강화 (2026-04-19 도입 — 루트 `.claude/` 작업, 실제 실수 재발 방지용)
+### 당시 Claude Code harness 강화 (2026-04-19 도입 — 루트 `.claude/` 작업, 실제 실수 재발 방지용)
 
 > 실측 대비 현황: 2026-04-25 세션에서 Phase 1 P0 구현 완료 (Skills 3종, PostToolUse hook, post-edit-tsc.sh, grimoire-web pre-push 검증). 편집 직후 tsc 자동 + 재발 방지 skill 3종 배치 완료. 세부 리포트는 `grimoire-server/PROGRESS_HARNESS_P0.md` 참조.
+
+현재 작업은 루트 AGENTS.md와 .agents의 브라우저 스킬을 따른다. 아래는 당시 계획·완료 기록이며 훅·센서·배포를 자동 활성화하는 지시가 아니다.
 
 **P0 (완료 — 2026-04-25)**
 - [x] `grimoire-web/.githooks/pre-push` 설치 확인 — 실제로는 2026-04-17에 이미 이식 완료 상태 (422 bytes, 4단계 tsc/test/build/docs). 2026-04-25 세션에서 검증 PASS

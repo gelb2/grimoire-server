@@ -68,7 +68,7 @@ async function bootstrap() {
   })
 
   const port = process.env.PORT || 3000
-  await app.listen(port)
+  await app.listen(port, process.env.HOST || '0.0.0.0')
   console.log(`grimoire-server 시작 — 포트: ${port}`)
 
   // 그레이스풀 셧다운

@@ -20,6 +20,7 @@
  *   DB_PORT_TARGET             target DB port (선택, 기본 5433)
  *   DB_SSL_MODE                sslmode (선택, 기본 disable) — Auth Proxy 영역 plaintext 영역 정합
  *
+ *   LOCAL_DATABASE_URL         local 대상 전용 URL (필수, 루프백 비5432 포트, query 금지)
  *   DB_PASSWORD                (Legacy, deprecated) — DB_PASSWORD_SOURCE/TARGET 미설정 시 fallback
  *   DB_SYNC_PRESERVE_EMAILS    --preserve-accounts 사용 시 마스킹 제외할 이메일 (콤마 분리)
  *                              예: deerdevil@example.com,admin@example.com
@@ -64,9 +65,16 @@ function getPreserveEmails(): Set<string> {
 // Auth Proxy 영역 정합 — env 영역 명칭 영역 (prod/dev/local) 영역 ≠ 직접 host 영역 박제.
 function getDbUrl(env: string, role: 'source' | 'target'): string {
   if (env === 'local') {
-    // 로컬 docker-compose 기본값 — 외부 노출 영향 없음
-    const localPw = process.env.LOCAL_DB_PASSWORD || 'REMOVED_CREDENTIAL_011'
-    return `postgresql://${ADMIN}:${localPw}@localhost:5432/grimoire`
+    const raw = process.env.LOCAL_DATABASE_URL
+    if (!raw) throw new Error('LOCAL_DATABASE_URL 필수: 별도 로컬 DB를 명시하세요.')
+    const url = new URL(raw)
+    if (!['postgres:', 'postgresql:'].includes(url.protocol)
+      || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+      || !url.port || url.port === '5432' || url.search || url.hash
+      || !url.username || !url.password || url.pathname.length < 2) {
+      throw new Error('LOCAL_DATABASE_URL은 인증 정보와 DB 이름이 있는 루프백 비5432 URL이어야 합니다.')
+    }
+    return url.toString()
   }
   // 원격 영역 (prod/dev) — Auth Proxy 영역 localhost:port 영역 정합 영역 강제
   const pw = role === 'source' ? PW_SOURCE : PW_TARGET

@@ -9,13 +9,16 @@
  */
 
 import { PrismaClient } from '@prisma/client'
+import { requireLocalSeedTarget } from '../src/infrastructure/config/local-seed-target'
 
 if (!process.env.DATABASE_URL) {
   console.error('ERROR: DATABASE_URL 환경변수가 필요합니다.')
   process.exit(1)
 }
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient({
+  datasources: { db: { url: requireLocalSeedTarget('DATABASE_URL', ['postgresql:', 'postgres:']) } },
+})
 
 // 프리셋 테마 데이터 (web/src/features/theme/presets.ts 와 동기화)
 const PRESETS: Record<string, object> = {

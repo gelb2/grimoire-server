@@ -13,6 +13,7 @@
  */
 
 import { PrismaClient } from '@prisma/client'
+import { requireLocalSeedTarget } from '../src/infrastructure/config/local-seed-target'
 import * as bcrypt from 'bcryptjs'
 
 // DATABASE_URL 환경변수 확인
@@ -22,7 +23,9 @@ if (!process.env.DATABASE_URL) {
   process.exit(1)
 }
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient({
+  datasources: { db: { url: requireLocalSeedTarget('DATABASE_URL', ['postgresql:', 'postgres:']) } },
+})
 
 // ── 테마 타입 (web/src/features/theme/presets.ts 와 동일) ──
 

@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional, Inject } from '@nestjs/common'
+import { Injectable, Logger, Optional, Inject, ServiceUnavailableException } from '@nestjs/common'
 import { Polar } from '@polar-sh/sdk'
 // 경로 캡슐화된 래퍼 — 테스트 시 이 모듈을 mock하면 됨
 import { validateEvent, WebhookVerificationError } from './polar-webhooks'
@@ -30,7 +30,7 @@ import { isProduction } from '@infrastructure/config/app-env'
  *
  * 환경변수:
  * - POLAR_ACCESS_TOKEN: Organization Access Token
- * - POLAR_SERVER: 'sandbox' | 'production' (기본 'production')
+ * - POLAR_SERVER: 'sandbox' | 'production' (토큰 설정 시 명시 필수)
  *   - 'production': polar.sh (KYC 전에는 "test mode"로 표시, Stripe 테스트 카드 가능)
  *   - 'sandbox': sandbox.polar.sh (완전 격리 환경, 별도 계정/토큰 필요)
  * - POLAR_WEBHOOK_SECRET: Webhook endpoint secret
@@ -43,6 +43,7 @@ import { isProduction } from '@infrastructure/config/app-env'
 export class PolarAdapter implements PaymentGatewayPort {
   private readonly logger = new Logger(PolarAdapter.name)
   private readonly polar: Polar
+  private readonly enabled: boolean
   private readonly webhookSecret: string
   /**
    * PAY-P3-B 구멍-C 차단: SDK 호출 timeout (워커 자원 leak 차단).
@@ -61,7 +62,12 @@ export class PolarAdapter implements PaymentGatewayPort {
     @Optional() @Inject('CircuitBreakerPort') private readonly circuitBreaker?: CircuitBreakerPort,
   ) {
     const accessToken = process.env.POLAR_ACCESS_TOKEN ?? ''
-    const server = (process.env.POLAR_SERVER ?? 'production') as 'sandbox' | 'production'
+    const configuredServer = process.env.POLAR_SERVER
+    if (accessToken && configuredServer !== 'sandbox' && configuredServer !== 'production') {
+      throw new Error('Polar 활성화 시 POLAR_SERVER=sandbox 또는 production을 명시하세요')
+    }
+    const server = configuredServer === 'production' ? 'production' : 'sandbox'
+    this.enabled = Boolean(accessToken)
     this.webhookSecret = process.env.POLAR_WEBHOOK_SECRET ?? ''
 
     // PAY-P3-B: 옵션 A 채택 — Polar SDK v0.47.0 SDKOptions.timeoutMs 내장 옵션 사용 (config.d.ts L38 검증).
@@ -78,6 +84,10 @@ export class PolarAdapter implements PaymentGatewayPort {
     if (!accessToken) {
       this.logger.warn('POLAR_ACCESS_TOKEN 미설정 — 결제 기능 비활성화')
     }
+  }
+
+  private requireEnabled(): void {
+    if (!this.enabled) throw new ServiceUnavailableException('결제가 설정되지 않았습니다 — 외부 호출 차단')
   }
 
   /**
@@ -196,6 +206,7 @@ export class PolarAdapter implements PaymentGatewayPort {
 
   /** Checkout 세션 생성 */
   async initiatePayment(request: PaymentInitRequest): Promise<PaymentInitResponse> {
+    this.requireEnabled()
     const polarProductId = this.resolvePolarProductId(request.productId)
     if (!polarProductId) {
       throw new Error(
@@ -276,6 +287,7 @@ export class PolarAdapter implements PaymentGatewayPort {
     userId: string,
     returnUrl: string,
   ): Promise<PaymentInitResponse | null> {
+    if (!this.enabled) return null
     const polarProductId = this.resolveSubscriptionProductId(tier)
     // graceful §4 — env 미설정 시 null (구독 checkout 만 비활성, 나머지 정상).
     if (!polarProductId) {
@@ -560,6 +572,7 @@ export class PolarAdapter implements PaymentGatewayPort {
    * @returns NormalizedCheckout 배열 (시간순)
    */
   async listRecentCheckouts(since: Date, limit: number): Promise<NormalizedCheckout[]> {
+    this.requireEnabled()
     const safeLimit = Math.min(Math.max(limit, 1), 100)
     const collected: NormalizedCheckout[] = []
     let page = 1

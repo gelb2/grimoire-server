@@ -37,14 +37,14 @@ export class ResendEmailAdapter implements EmailServicePort {
   constructor() {
     this.apiKey = process.env.RESEND_API_KEY ?? ''
     this.fromAddress =
-      process.env.EMAIL_FROM_ADDRESS ?? 'noreply@grimoire-book.com'
+      process.env.EMAIL_FROM_ADDRESS?.trim() ?? ''
     // API key가 placeholder/빈값 시 client null — sendXxx 시도 자체 차단
-    if (this.apiKey && this.apiKey !== 'placeholder') {
+    if (this.apiKey && this.apiKey !== 'placeholder' && this.fromAddress) {
       this.client = new Resend(this.apiKey)
     } else {
       this.client = null
       this.logger.warn(
-        '[ResendEmailAdapter] RESEND_API_KEY 미설정 또는 placeholder — 외부 호출 차단 (isEnabled=false)',
+        '[ResendEmailAdapter] RESEND_API_KEY 또는 EMAIL_FROM_ADDRESS 미설정 — 외부 호출 차단 (isEnabled=false)',
       )
     }
   }

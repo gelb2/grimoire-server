@@ -34,10 +34,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GCP_PROJECT_ID: grimoire-491708
-  GCP_REGION: asia-northeast1
-  CLOUD_SQL_DEV: grimoire-491708:asia-northeast1:grimoire-db-dev
-  CLOUD_SQL_PROD: grimoire-491708:asia-northeast1:grimoire-db-prod
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  CLOUD_SQL_DEV: ${{ vars.CLOUD_SQL_DEV }}
+  CLOUD_SQL_PROD: ${{ vars.CLOUD_SQL_PROD }}
   PROXY_VERSION: v2.13.0
   # Auth Proxy 영역 binding 영역 (source=5432, target=5433 — 충돌 회피 강제)
   PORT_SOURCE: 5432
@@ -48,7 +48,7 @@ jobs:
   # 자동 야간 영역: prod → dev (PII 마스킹 강제)
   # ─────────────────────────────────────────────────────────────
   sync-prod-to-dev:
-    if: github.event_name == 'schedule'
+    if: vars.DB_SYNC_ENABLED == 'true' && vars.GCP_PROJECT_ID != '' && vars.GCP_REGION != '' && vars.CLOUD_SQL_DEV != '' && vars.CLOUD_SQL_PROD != '' && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -123,7 +123,7 @@ jobs:
   # 수동 트리거 영역 — 임의 source/target 영역 지정 영역
   # ─────────────────────────────────────────────────────────────
   sync-manual:
-    if: github.event_name == 'workflow_dispatch'
+    if: vars.DB_SYNC_ENABLED == 'true' && vars.GCP_PROJECT_ID != '' && vars.GCP_REGION != '' && vars.CLOUD_SQL_DEV != '' && vars.CLOUD_SQL_PROD != '' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

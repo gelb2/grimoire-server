@@ -17,9 +17,14 @@
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "seed:deerdevil": "npx tsx scripts/seed-deerdevil.ts",
-    "seed:classics": "npx tsx scripts/seed-classics.ts",
-    "seed:themes": "npx tsx scripts/seed-themes.ts"
+    "seed:deerdevil": "ts-node scripts/seed-deerdevil.ts",
+    "seed:classics": "ts-node scripts/seed-more-classics.ts",
+    "seed:themes": "ts-node scripts/seed-themes.ts",
+    "seed:demo": "ts-node scripts/seed-demo.ts",
+    "seed:admin": "ts-node scripts/seed-admin.ts",
+    "audit:production": "npm audit --omit=dev --audit-level=moderate",
+    "audit:all": "npm audit --audit-level=high",
+    "notices": "node scripts/generate-third-party-notices.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -97,5 +102,15 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "overrides": {
+    "uuid": "$uuid",
+    "deepmerge-ts": "8.0.2",
+    "@types/request": {
+      "form-data": "4.0.6"
+    }
+  },
+  "engines": {
+    "node": ">=22.19.0"
   }
 }

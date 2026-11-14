@@ -60,6 +60,27 @@ describe('PolarAdapter', () => {
     delete process.env.POLAR_PRODUCT_BEST
   })
 
+  describe('외부 호출 설정 경계', () => {
+    it.each([undefined, '', 'typo'])('토큰이 있고 POLAR_SERVER=%s이면 시작을 거절한다', (server) => {
+      if (server === undefined) delete process.env.POLAR_SERVER
+      else process.env.POLAR_SERVER = server
+      expect(() => new PolarAdapter()).toThrow('POLAR_SERVER')
+    })
+
+    it('토큰이 없으면 상품 설정이 있어도 SDK를 호출하지 않는다', async () => {
+      delete process.env.POLAR_ACCESS_TOKEN
+      const disabled = new PolarAdapter()
+      await expect(disabled.initiatePayment({
+        productId: 'credit-basic', productName: 'test', amount: 1000,
+        userId: 'test', returnUrl: 'http://localhost:3001',
+      })).rejects.toThrow('외부 호출 차단')
+      await expect(disabled.initiateSubscriptionCheckout('pro', 'test', 'http://localhost:3001')).resolves.toBeNull()
+      await expect(disabled.listRecentCheckouts(new Date(), 1)).rejects.toThrow('외부 호출 차단')
+      expect(mockCreate).not.toHaveBeenCalled()
+      expect(mockList).not.toHaveBeenCalled()
+    })
+  })
+
   describe('initiatePayment', () => {
     it('내부 상품 ID를 환경변수로 Polar UUID에 매핑한다', async () => {
       mockCreate.mockResolvedValue({

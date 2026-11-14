@@ -1,50 +1,73 @@
-# Grimoire Server — 로컬 개발용 Docker Compose
-# NestJS + PostgreSQL을 로컬에서 한 번에 띄우는 구성
-
+# 로컬 전용. 기존 5432와 분리하며 외부 서비스 키를 전달하지 않는다.
+# LOCAL_DB_PASSWORD / LOCAL_JWT_SECRET를 별도 env 파일로 주입한다.
+name: grimoire-local-release
 services:
-  server:
-    build: .
-    image: grimoire-server:dev
+  web:
+    build:
+      context: ../grimoire-web
+      args:
+        NEXT_PUBLIC_APP_ENV: localhost
+    image: grimoire-web:local
     ports:
-      - "3000:3000"
+      - "127.0.0.1:${LOCAL_WEB_PORT:-3001}:3001"
     environment:
-      - DATABASE_URL=postgresql://grimoireadmin:REMOVED_CREDENTIAL_011@db:5432/grimoire
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - JWT_SECRET=${JWT_SECRET:-dev-jwt-secret}
-      - PORT=3000
-      - CORS_ORIGIN=http://localhost:3001
-      - NODE_ENV=development
+      API_URL: http://server:3000/api
+      PORT: 3001
+      HOSTNAME: 0.0.0.0
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      server:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3001/login"]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 30s
+  server:
+    build: .
+    image: grimoire-server:local
+    ports:
+      - "127.0.0.1:${LOCAL_API_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://grimoire_local:${LOCAL_DB_PASSWORD:?로컬 DB 비밀번호 필요}@db:5432/grimoire_local
+      JWT_SECRET: ${LOCAL_JWT_SECRET:?로컬 JWT 비밀값 필요}
+      APP_ENV: localhost
+      NODE_ENV: development
+      PORT: 3000
+      CORS_ORIGIN: http://localhost:${LOCAL_WEB_PORT:-3001}
+      PUBLIC_API_BASE_URL: http://localhost:${LOCAL_API_PORT:-3000}/api
+      EMAIL_PROVIDER: "null"
+      POLAR_SERVER: sandbox
+      RECONCILIATION_DISABLED: "1"
+      WEBHOOK_RETRY_DISABLED: "1"
+      PAYMENT_CLEANUP_DISABLED: "1"
+      MONTHLY_POOL_RESET_DISABLED: "1"
+      USER_HARD_DELETE_DISABLED: "1"
+      AUDIT_MASK_DISABLED: "1"
     depends_on:
       db:
         condition: service_healthy
-    # 리소스 제한 — 개발 환경 기본값
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 512M
-
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
   db:
     image: postgres:16-alpine
     environment:
-      - POSTGRES_USER=grimoireadmin
-      - POSTGRES_PASSWORD=REMOVED_CREDENTIAL_011
-      - POSTGRES_DB=grimoire
+      POSTGRES_USER: grimoire_local
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?로컬 DB 비밀번호 필요}
+      POSTGRES_DB: grimoire_local
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${LOCAL_DB_PORT:-55432}:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - local_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U grimoireadmin"]
+      test: ["CMD-SHELL", "pg_isready -U grimoire_local -d grimoire_local"]
       interval: 2s
       timeout: 5s
       retries: 10
-
 volumes:
-  pgdata:
+  local_pgdata:
