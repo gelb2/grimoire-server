@@ -376,3 +376,12 @@ QA 에이전트가 매일 23:21에 아래 8항목을 자동 실행하여 CRITICA
 | 2026-04-12 #3 | NestJS 11 + Refresh Token + 보안 헤더 + npm audit | audit 양쪽 0건 |
 | 2026-04-16 | admin SameSite 통일 + helmet CSP 커스터마이징 + Next.js CSP | 보안 헤더 서버/웹 일관성 |
 | **2026-04-17** | **16항목 전수 실측 (grep + curl)** | **실제 취약점 0건, 개선 여지 5건 TODO 편입** |
+
+## 공개 후보의 의존성 확인
+
+`npm run audit:production`과 `npm run audit:all`을 구분해 실행한다. npm advisory의 알려진 범위를 검사하며 전체 보안 검증이나 외부 연동 성공을 대신하지 않는다. 패키지 lockfile과 override 변경 후 설치·빌드·마이그레이션·파서/메일 대역 검사를 다시 확인한다.
+
+- [proxy-addr 보안 공지](https://github.com/advisories/GHSA-jqcg-44mw-7w3h)
+- [Multer 보안 공지](https://github.com/expressjs/multer/security/advisories/GHSA-q7qp-rjg7-q26m)
+- [deepmerge-ts 보안 공지](https://github.com/advisories/GHSA-ggr8-5vv4-36mx)
+- [SendGrid 경로 deepmerge 잔여 공지](https://github.com/advisories/GHSA-gcqx-w48m-w2h4)

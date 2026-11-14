@@ -17,6 +17,7 @@
  */
 
 import { PrismaClient } from '@prisma/client'
+import { requireLocalSeedTarget } from '../src/infrastructure/config/local-seed-target'
 import * as bcrypt from 'bcryptjs'
 import { readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
@@ -36,7 +37,9 @@ if (!process.env.DATABASE_URL) {
   process.exit(1)
 }
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient({
+  datasources: { db: { url: requireLocalSeedTarget('DATABASE_URL', ['postgresql:', 'postgres:']) } },
+})
 
 // ── CLI 인자 파싱 ──
 
@@ -669,7 +672,7 @@ async function main() {
   console.log('╔══════════════════════════════════════╗')
   console.log('║   ProjectGrimoire 통합 시드 스크립트    ║')
   console.log('╚══════════════════════════════════════╝')
-  console.log(`DATABASE: ${process.env.DATABASE_URL?.substring(0, 40)}...`)
+  console.log('DATABASE_URL 설정 확인 완료 (접속 정보 출력 생략)')
   console.log(`옵션: ${SKIP_DEERDEVIL ? '--skip-deerdevil ' : ''}${SKIP_CLASSICS ? '--skip-classics' : ''}`.trim() || '옵션: 없음')
 
   const start = Date.now()

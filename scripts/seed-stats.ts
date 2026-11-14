@@ -5,8 +5,11 @@
  * 사용법: DATABASE_URL="postgresql://..." npx tsx scripts/seed-stats.ts
  */
 import { PrismaClient } from '@prisma/client'
+import { requireLocalSeedTarget } from '../src/infrastructure/config/local-seed-target'
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient({
+  datasources: { db: { url: requireLocalSeedTarget('DATABASE_URL', ['postgresql:', 'postgres:']) } },
+})
 
 function rand(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min

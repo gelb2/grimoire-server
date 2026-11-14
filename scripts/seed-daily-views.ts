@@ -7,8 +7,11 @@
  */
 
 import { PrismaClient } from '@prisma/client'
+import { requireLocalSeedTarget } from '../src/infrastructure/config/local-seed-target'
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient({
+  datasources: { db: { url: requireLocalSeedTarget('DATABASE_URL', ['postgresql:', 'postgres:']) } },
+})
 
 async function main() {
   console.log('=== 일별 조회수 시드 데이터 생성 ===')

@@ -8,12 +8,14 @@
 #
 # 환경변수:
 #   DB_PASSWORD_DEV         dev Cloud SQL 비밀번호 (필수)
-#   LOCAL_DB_PASSWORD       로컬 Docker DB 비밀번호 (기본 REMOVED_CREDENTIAL_011)
+#   LOCAL_DATABASE_URL      대상 로컬 DB URL (필수, 루프백 비5432 포트)
 
 set -e
 
-readonly GCP_PROJECT_ID="grimoire-491708"
-readonly CLOUD_SQL_DEV="grimoire-491708:asia-northeast1:grimoire-db-dev"
+: "${LOCAL_DATABASE_URL:?LOCAL_DATABASE_URL 필수}"
+
+readonly GCP_PROJECT_ID="${GCP_PROJECT_ID:?GCP_PROJECT_ID 필수}"
+readonly CLOUD_SQL_DEV="${CLOUD_SQL_DEV:?CLOUD_SQL_DEV 필수}"
 readonly PROXY_VERSION="v2.13.0"
 readonly DEV_PROXY_PORT=5433  # 로컬 docker 영역 5432 영역 충돌 회피
 readonly LOCAL_PORT=5432

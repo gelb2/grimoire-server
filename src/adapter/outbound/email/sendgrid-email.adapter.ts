@@ -39,14 +39,14 @@ export class SendgridEmailAdapter implements EmailServicePort {
   constructor() {
     const apiKey = process.env.SENDGRID_API_KEY ?? ''
     this.fromAddress =
-      process.env.EMAIL_FROM_ADDRESS ?? 'noreply@grimoire-book.com'
-    if (apiKey && apiKey !== 'placeholder') {
+      process.env.EMAIL_FROM_ADDRESS?.trim() ?? ''
+    if (apiKey && apiKey !== 'placeholder' && this.fromAddress) {
       sgMail.setApiKey(apiKey)
       this.enabled = true
     } else {
       this.enabled = false
       this.logger.warn(
-        '[SendgridEmailAdapter] SENDGRID_API_KEY 미설정 또는 placeholder — 외부 호출 차단 (isEnabled=false)',
+        '[SendgridEmailAdapter] SENDGRID_API_KEY 또는 EMAIL_FROM_ADDRESS 미설정 — 외부 호출 차단 (isEnabled=false)',
       )
     }
   }

@@ -217,7 +217,20 @@ describe('AuthUseCase', () => {
   // 트랙 F 강화안 A (sprint #10_7) — OAuth 자동 링크 보안 강화
   // RFC 6819 §5.1.1 / OWASP A07:2021 — email_verified=false OAuth 자동 링크 차단
   describe('googleLogin (트랙 F email_verified 차단)', () => {
+    const originalClientId = process.env.GOOGLE_CLIENT_ID
+    afterEach(() => {
+      if (originalClientId === undefined) delete process.env.GOOGLE_CLIENT_ID
+      else process.env.GOOGLE_CLIENT_ID = originalClientId
+    })
+
+    it('클라이언트 ID 미설정이면 외부 검증을 호출하지 않는다', async () => {
+      delete process.env.GOOGLE_CLIENT_ID
+      await expect(authUseCase.googleLogin('local-fixture')).rejects.toThrow('Google 로그인이 설정되지')
+      expect(mockVerifyIdToken).not.toHaveBeenCalled()
+    })
+
     beforeEach(() => {
+      process.env.GOOGLE_CLIENT_ID = 'local-test-client'
       mockVerifyIdToken.mockReset()
       mockAuthorRepo.findBySocialAccount = jest.fn()
       mockAuthorRepo.linkSocialAccount = jest.fn()

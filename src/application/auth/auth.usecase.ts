@@ -1,4 +1,4 @@
-import { Injectable, Inject, BadRequestException, UnauthorizedException } from '@nestjs/common'
+import { Injectable, Inject, BadRequestException, UnauthorizedException, ServiceUnavailableException } from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import * as bcrypt from 'bcryptjs'
 import * as crypto from 'crypto'
@@ -105,6 +105,9 @@ export class AuthUseCase {
 
   /** Google OAuth 로그인 */
   async googleLogin(googleToken: string) {
+    if (!process.env.GOOGLE_CLIENT_ID) {
+      throw new ServiceUnavailableException('Google 로그인이 설정되지 않았습니다')
+    }
     const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
 
     const ticket = await client.verifyIdToken({

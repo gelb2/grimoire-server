@@ -49,6 +49,7 @@ describe('createEmailService — EMAIL_PROVIDER 분기', () => {
 
   it('EMAIL_PROVIDER=resend + RESEND_API_KEY 실값 시 isEnabled=true', () => {
     process.env.EMAIL_PROVIDER = 'resend'
+    process.env.EMAIL_FROM_ADDRESS = 'sender@example.test'
     process.env.RESEND_API_KEY = 're_test_realkey_12345'
     const service = createEmailService()
     expect(service.isEnabled()).toBe(true)
@@ -66,6 +67,7 @@ describe('createEmailService — EMAIL_PROVIDER 분기', () => {
 
   it('EMAIL_PROVIDER=sendgrid + SENDGRID_API_KEY 실값 시 isEnabled=true', () => {
     process.env.EMAIL_PROVIDER = 'sendgrid'
+    process.env.EMAIL_FROM_ADDRESS = 'sender@example.test'
     process.env.SENDGRID_API_KEY = 'SG.realkey_12345'
     const service = createEmailService()
     expect(service.isEnabled()).toBe(true)

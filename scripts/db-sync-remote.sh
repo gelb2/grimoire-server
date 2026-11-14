@@ -31,10 +31,10 @@ MASK_FLAG="${3:-}"
 # ─────────────────────────────────────────────────────────────
 # 0. GCP 영역 상수 (Cloud SQL 영역 정합)
 # ─────────────────────────────────────────────────────────────
-readonly GCP_PROJECT_ID="grimoire-491708"
-readonly GCP_REGION="asia-northeast1"
-readonly CLOUD_SQL_DEV="grimoire-491708:asia-northeast1:grimoire-db-dev"
-readonly CLOUD_SQL_PROD="grimoire-491708:asia-northeast1:grimoire-db-prod"
+: "${GCP_PROJECT_ID:?GCP_PROJECT_ID 필수}"
+: "${GCP_REGION:?GCP_REGION 필수}"
+: "${CLOUD_SQL_DEV:?CLOUD_SQL_DEV 필수}"
+: "${CLOUD_SQL_PROD:?CLOUD_SQL_PROD 필수}"
 readonly PORT_SOURCE=5432
 readonly PORT_TARGET=5433
 readonly PROXY_VERSION="v2.13.0"

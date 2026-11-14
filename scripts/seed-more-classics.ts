@@ -11,6 +11,7 @@
  */
 
 import { PrismaClient } from '@prisma/client'
+import { requireLocalSeedTarget } from '../src/infrastructure/config/local-seed-target'
 import * as bcrypt from 'bcryptjs'
 import { parseEpisodeBlocks } from '../src/lib/md-parser'
 
@@ -21,7 +22,9 @@ if (!process.env.DATABASE_URL) {
   process.exit(1)
 }
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient({
+  datasources: { db: { url: requireLocalSeedTarget('DATABASE_URL', ['postgresql:', 'postgres:']) } },
+})
 
 // ── 작품 데이터 정의 ──────────────────────────────────────
 
@@ -1065,7 +1068,7 @@ async function main() {
     throw new Error('SEED_PASSWORD env 필수. 예: SEED_PASSWORD="strong-pw" npx tsx scripts/seed-more-classics.ts')
   }
   console.log('=== 추가 고전문학 시드 스크립트 시작 ===')
-  console.log(`DATABASE_URL: ${process.env.DATABASE_URL?.substring(0, 30)}...`)
+  console.log('DATABASE_URL 설정 확인 완료 (접속 정보 출력 생략)')
 
   const totalWorks = AUTHORS.reduce((sum, a) => sum + a.works.length, 0)
   console.log(`작가 수: ${AUTHORS.length} (신규: ${AUTHORS.filter(a => a.isNew).length})`)

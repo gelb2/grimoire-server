@@ -1,0 +1,34 @@
+[
+  {
+    "version": "0.1.0-rc.10",
+    "source": "https://raw.githubusercontent.com/ohah/hwpjs/33cf33e37465a626bb6e30964de48cc2fafc1896/LICENSE",
+    "sha256": "2a4c2e9a315ae209d1b4af7b691d15d980b9cd0859e31c6bc48f285f57f11e56",
+    "file": "_ohah_hwpjs-darwin-arm64-0.1.0-rc.10.txt",
+    "kind": "pinned-upstream-text",
+    "prefix": "@ohah/hwpjs-"
+  },
+  {
+    "name": "standardwebhooks",
+    "version": "1.0.0",
+    "source": "https://raw.githubusercontent.com/standard-webhooks/standard-webhooks/929bf0c1928b188287eaf88d0a9f0a4e87df6499/LICENSE",
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "file": "standardwebhooks-1.0.0.txt",
+    "kind": "pinned-upstream-text"
+  },
+  {
+    "name": "@nodable/entities",
+    "version": "3.1.0",
+    "source": "https://raw.githubusercontent.com/nodable/val-parsers/ac48e7ea591da372be023a481875c747535812b3/LICENSE",
+    "sha256": "750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40",
+    "file": "_nodable_entities-3.1.0.txt",
+    "kind": "pinned-upstream-text"
+  },
+  {
+    "name": "@polar-sh/sdk",
+    "version": "0.47.0",
+    "source": "https://raw.githubusercontent.com/polarsource/polar-js/7a043c39fde9d960db45699865a1157e2b7a8776/LICENSE",
+    "sha256": "3d1d4ac8236a23e45ccce5ffdfac6fffb334692355db6b0b86074195f91b2212",
+    "file": "_polar-sh_sdk-current-upstream.txt",
+    "kind": "current-upstream-supplement; absent in pinned package"
+  }
+]

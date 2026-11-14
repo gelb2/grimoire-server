@@ -4,12 +4,17 @@
  * 중앙화된 호출 함수로 모든 AI 통신을 관리한다.
  */
 import Anthropic from '@anthropic-ai/sdk'
+import { ServiceUnavailableException } from '@nestjs/common'
 
 let client: Anthropic | null = null
+let clientApiKey: string | undefined
 
 function getClient(): Anthropic {
-  if (!client) {
-    client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) throw new ServiceUnavailableException('AI 기능이 설정되지 않았습니다')
+  if (!client || clientApiKey !== apiKey) {
+    client = new Anthropic({ apiKey })
+    clientApiKey = apiKey
   }
   return client
 }

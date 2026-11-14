@@ -8,11 +8,25 @@ import { SendgridEmailAdapter } from './sendgrid-email.adapter'
 describe('SendgridEmailAdapter', () => {
   const originalEnv = { ...process.env }
 
+  beforeEach(() => {
+    process.env.EMAIL_FROM_ADDRESS = 'sender@example.test'
+  })
+
   afterEach(() => {
     process.env = { ...originalEnv }
   })
 
   describe('isEnabled / getProviderName', () => {
+    it('발신자 미설정이면 API 키가 있어도 발송하지 않는다', async () => {
+      process.env.SENDGRID_API_KEY = 'test-key'
+      delete process.env.EMAIL_FROM_ADDRESS
+      const adapter = new SendgridEmailAdapter()
+      expect(adapter.isEnabled()).toBe(false)
+      await expect(adapter.sendPaymentNotification({
+        to: 'reader@example.test', type: 'payment_success', payload: {},
+      })).rejects.toThrow('외부 호출 차단')
+    })
+
     it('SENDGRID_API_KEY 미설정 시 isEnabled=false', () => {
       delete process.env.SENDGRID_API_KEY
       const adapter = new SendgridEmailAdapter()

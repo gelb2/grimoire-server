@@ -19,9 +19,32 @@
 
 ---
 
-## 1. 환경 매트릭스 (2026-05-27 GCP 실측 기준)
+## 2026-11-13 공개 준비: 사용자 설정 주입
 
-> **이 표의 값은 절대 변경 금지**. 변경이 필요하면 이 문서를 먼저 수정하고 스크립트를 수정한다.
+현재 `deploy-common.sh`는 작성자의 프로젝트·계정·서비스 계정·도메인·OAuth ID를 기본값으로 사용하지 않는다. 아래 과거 매트릭스는 당시 구조를 설명하는 기록이다. 현재 계정이나 리소스 상태를 조회한 결과가 아니다.
+
+실행하려는 환경의 값을 셸에 export한다. `DEV` / `PROD` 중 대상 환경만 필요하다. 실제 비밀값은 저장소에 넣지 않는다.
+
+| 범위 | 필수 설정 |
+| --- | --- |
+| 공통 | `GCP_PROJECT_ID`, `GCP_REGION`, `ARTIFACT_REPO`, `EXPECTED_GCP_ACCOUNT`, `CLOUD_RUN_SA` |
+| 서버 dev | `SERVER_SERVICE_DEV`, `SERVER_RUN_URL_DEV`, `PUBLIC_API_URL_DEV`, `CLOUD_SQL_DEV` |
+| 서버 prod | 위 이름의 `DEV`를 `PROD`로 바꾼 설정 + `CORS_ORIGIN_PROD` (와일드카드 금지) |
+| 웹 dev | `WEB_SERVICE_DEV`, `WEB_RUN_URL_DEV`, `PUBLIC_WEB_URL_DEV`, `API_URL_DEV` |
+| 웹 prod | 위 이름의 `DEV`를 `PROD`로 바꾼 설정 |
+| 선택 | `IMAGE_REPO`, `BUILD_PLATFORM`, `NEXT_PUBLIC_GOOGLE_CLIENT_ID`, `NEXT_PUBLIC_RECAPTCHA_SITE_KEY`, `NEXT_PUBLIC_API_ORIGIN` |
+
+`*_RUN_URL`은 본인의 Cloud Run URL, `PUBLIC_*_URL`은 본인의 공개 HTTPS 주소, `API_URL_*`은 `/api`를 포함한 본인의 BFF 대상이다. `CLOUD_SQL_*`은 본인의 `project:region:instance`다. `CLOUD_RUN_SA`는 본인의 최소 권한 서비스 계정 이메일이다. 웹의 Google/reCAPTCHA 설정이 비면 이메일 가입·로그인을 사용한다. CSP는 같은 출처 BFF를 기본으로 쓰고 `NEXT_PUBLIC_API_ORIGIN`을 명시했을 때만 추가 API 출처를 허용한다.
+
+preflight는 필수 값 누락 시 Git fetch·gcloud 조회보다 먼저 중단한다. 값을 넣은 뒤 실행하는 기존 배포 명령은 push·Cloud Run 변경·이미지 정리를 수행한다. 이번 공개 준비에서 실행하지 않았다. 리소스·IAM·Secret·DB·버킷의 신규 생성 도구는 제공하지 않으며, 사용자가 미리 준비해야 한다. 이 스크립트의 실제 클라우드 배포 성공은 미검증이다.
+
+DB 야간 동기화 Actions는 `vars.DB_SYNC_ENABLED=true`를 명시해야 실행한다. `vars.GCP_PROJECT_ID`, `vars.GCP_REGION`, `vars.CLOUD_SQL_DEV`, `vars.CLOUD_SQL_PROD`와 본인의 기존 Secrets가 필요하다. 원격 DB 복사 스크립트는 운영 자료를 다루므로 로컬 가상 시드 대신 사용하지 않는다. 현재 로컬 시작은 [environments.md](environments.md)를 따른다.
+
+---
+
+## 1. 과거 환경 매트릭스 (2026-05-27 GCP 실측 기준)
+
+> 아래 표는 과거 구성 기록이다. 현행 스크립트의 기본값으로 복사하지 않는다.
 
 ### 공통 상수
 
